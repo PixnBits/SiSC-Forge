@@ -68,18 +68,51 @@ cd q-e-qe-7.3.1
 cd "$HOME/src/q-e-qe-7.3.1"
 
 ./configure --enable-parallel --with-scalapack=no
+```
 
-# pw = plane-wave, ph = phonons, pp = post-processing, epw = electron-phonon
+### 3a. Fix libmbd (required on gfortran 13–15 / Ubuntu 24.04+)
+
+Bare `make pw` often stops with:
+
+```text
+No rule to make target '.../MBD/libmbd.a', needed by 'pw.x'
+```
+
+or a half-built `MBD/` with only `.mod` files. Also, `mbd_c_api.F90` fails on new gfortran.
+QE only needs the **Fortran** libmbd (skip the C API):
+
+```bash
+cd "$HOME/src/q-e-qe-7.3.1"
+rm -rf MBD
+mkdir -p MBD
+(
+  cd external/mbd/src
+  export FXX=gfortran
+  export FXXOPT="-O3 -g -fallow-argument-mismatch -cpp -D__FFTW3 -D__MPI \
+    -I../../devxlib/src -I. -I../../../include"
+  make -f ../../mbd.make LIBMBD_C_API=0
+  cp libmbd.a *.mod ../../../MBD/
+)
+ls -la MBD/libmbd.a   # must exist
+```
+
+### 3b. Build packages (name the targets!)
+
+Plain `make` with **no target** only prints help and may leave `bin/` empty.
+
+```bash
+cd "$HOME/src/q-e-qe-7.3.1"
 make -j"$(nproc)" pw ph pp epw
 ```
 
-When finished you should see binaries:
+When finished:
 
 ```bash
-ls -1 bin/pw.x bin/ph.x bin/epw.x
+ls -la bin/pw.x bin/ph.x bin/epw.x
+# typically symlinks into PW/src, PHonon/PH, EPW/...
 ```
 
-If `configure` fails, read `install/config.log` and install any missing `-dev` packages it mentions.
+If `configure` fails, read `install/config.log` and install any missing `-dev` packages.
 
 ---
 
