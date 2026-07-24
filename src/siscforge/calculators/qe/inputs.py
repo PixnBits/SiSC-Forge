@@ -32,50 +32,12 @@ def resolve_pseudopotentials(
     structure: Structure,
     config: DFTConfig,
 ) -> dict[str, str]:
-    """Map elements to UPF filenames.
+    """Map elements to UPF filenames (delegates to :mod:`pseudos` helpers)."""
+    from siscforge.calculators.qe.pseudos import (
+        resolve_pseudopotentials as _resolve,
+    )
 
-    Uses ``config.pseudopotentials`` when provided; otherwise scans
-    ``config.pseudo_dir`` for ``{Element}*.upf`` (case-insensitive).
-    """
-    elements = sorted({site.specie.symbol for site in structure})
-    if config.pseudopotentials:
-        missing = [el for el in elements if el not in config.pseudopotentials]
-        if missing:
-            raise FileNotFoundError(
-                f"Pseudopotential map missing elements: {missing}. "
-                f"Provided keys: {sorted(config.pseudopotentials)}"
-            )
-        return {el: config.pseudopotentials[el] for el in elements}
-
-    if not config.pseudo_dir:
-        raise FileNotFoundError(
-            "dft.pseudo_dir is not set and dft.pseudopotentials is empty. "
-            "Point pseudo_dir at a directory of UPF files (e.g. SSSP or PseudoDojo)."
-        )
-    pseudo_dir = Path(config.pseudo_dir)
-    if not pseudo_dir.is_dir():
-        raise FileNotFoundError(f"pseudo_dir does not exist: {pseudo_dir}")
-
-    upfs = list(pseudo_dir.glob("*.upf")) + list(pseudo_dir.glob("*.UPF"))
-    resolved: dict[str, str] = {}
-    for el in elements:
-        matches = [
-            p.name
-            for p in upfs
-            if p.name.lower().startswith(el.lower())
-            or f"_{el.lower()}_" in p.name.lower()
-            or p.name.lower().startswith(f"{el.lower()}.")
-        ]
-        # Prefer exact element prefix, e.g. Nb.pbe-... or Nb_ONCV...
-        if not matches:
-            raise FileNotFoundError(
-                f"No UPF for element {el!r} in {pseudo_dir}. "
-                f"Found files: {[p.name for p in upfs[:20]]}"
-            )
-        # Prefer shorter / pbe if multiple
-        matches.sort(key=lambda n: (0 if "pbe" in n.lower() else 1, len(n)))
-        resolved[el] = matches[0]
-    return resolved
+    return _resolve(structure, config)
 
 
 def build_pw_input(

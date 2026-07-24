@@ -1,5 +1,36 @@
 # Implementation Notes — Phase 0
 
+## Slice 5 (2026-07-24) — QE hardening
+
+**After** the Phase 0 foundation commit.
+
+### Hardening changes
+| Area | Change |
+|------|--------|
+| Relaxed geometry | Parse final `CELL_PARAMETERS` + `ATOMIC_POSITIONS` from pw.x output; feed into SCF/phonon; store `relaxed_structure_cif` on the candidate |
+| Pseudos | `pseudos.py` — SSSP-friendly auto-match, explicit map validation, clear `PseudoResolutionError` messages |
+| Phonopy FD (optional) | `phonopy_fd.py` when `dft.phonon_method: phonopy_fd` (requires `phonopy`); default remains `dfpt` / `gamma` via `ph.x` |
+| Diagnostics | Richer failure messages (workdir + output tails); `quality_tag` propagated to SCF/Phonon/candidate |
+| Tests | `tests/test_qe_hardening.py` + vc-relax fixture |
+
+### Current limitations (post-hardening)
+- Phonopy FD is screening-quality (force parse from stdout, coarse mesh).
+- No automatic SSSP download — user must point `pseudo_dir` at local UPFs.
+- Still no EPW / Eliashberg (Phase 1).
+
+### Next session
+**Phase 1 start** — EPW coarse→fine grids, isotropic Eliashberg Tc, populate `ElectronPhononResult` / `performance_score`.
+
+---
+
+## Slice 4 (2026-07-24) — Formation filter, store, export polish
+
+- `siscforge.surrogates.formation` — heuristic E_hull pre-filter
+- `EvaluationStore` — JSON campaign directory
+- CSV/Markdown synthesis cards; Phase 0 exit checklist in `docs/phase0-exit.md`
+
+---
+
 ## Slice 3 (2026-07-24) — jobflow QE recipes + QECalculator + NbN golden test
 
 **Scope**: Quantum ESPRESSO relax → SCF → DFPT phonon behind the Calculator protocol. **No EPW**, Eliashberg, ML surrogates, or active learning.

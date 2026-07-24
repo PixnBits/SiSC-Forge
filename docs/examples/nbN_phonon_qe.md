@@ -25,16 +25,22 @@ This uses `MockCalculator`, structure generation, and the Si-feasibility scorer 
 
 ## Configure pseudopotentials
 
+Recommended: download [SSSP efficiency (PBE)](https://www.materialscloud.org/discover/sssp/table/efficiency) UPFs into a local folder.
+
 Edit `examples/nbn_phonon_qe.yaml`:
 
 ```yaml
 dft:
-  pseudo_dir: /path/to/your/upf
-  # optional explicit filenames:
+  pseudo_dir: /path/to/sssp_efficiency
+  # optional explicit filenames if auto-match fails:
   # pseudopotentials:
-  #   Nb: Nb.pbe-....UPF
-  #   N:  N.pbe-....UPF
+  #   Nb: Nb.pbe-spn-kjpaw_psl.1.0.0.UPF
+  #   N:  N.pbe-n-kjpaw_psl.1.0.0.UPF
+  quality_tag: screening   # or production
+  phonon_method: gamma     # dfpt | gamma | phonopy_fd
 ```
+
+Auto-resolution prefers PBE / PAW / SSSP-like filenames. Missing elements raise a clear `PseudoResolutionError` listing files present in `pseudo_dir`.
 
 Or export for the optional golden pytest:
 
@@ -63,10 +69,11 @@ If `pw.x` is missing, the CLI exits with a clear error (no silent mock fallback)
 ## What gets executed
 
 1. **Structure** — rocksalt NbN from the structure generator (`a ≈ 4.392 Å`).
-2. **SCF** — `pw.x` (`calculation='scf'`) with campaign cutoffs / k-grid.
-3. **Phonon** — `ph.x` Gamma-only DFPT (`phonon_method: gamma`) or a small q-grid (`dfpt` + `qpoints`).
-4. **Parse** → `SCFResult` + `PhononResult` on a `CandidateEvaluation`.
-5. **Si-score + rank + export** as usual.
+2. **Optional vc-relax** — when `do_relax: true`; final geometry is **re-read** from pw.x output and used for SCF/phonon.
+3. **SCF** — `pw.x` (`calculation='scf'`) with campaign cutoffs / k-grid.
+4. **Phonon** — default `ph.x` (`gamma` or `dfpt`); optional `phonopy_fd` if phonopy is installed.
+5. **Parse** → `SCFResult` + `PhononResult`; relaxed CIF attached to the candidate when available.
+6. **Si-score + rank + export** as usual.
 
 Working directories default to `{output_dir}/qe_work/`.
 

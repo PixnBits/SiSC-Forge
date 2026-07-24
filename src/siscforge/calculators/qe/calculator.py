@@ -77,10 +77,28 @@ class QECalculator(BaseCalculator):
         need_ph = dft.do_phonon
         qe_env = require_qe(need_phonon=need_ph)
 
-        structure = candidate_to_structure(candidate)
+        try:
+            structure = candidate_to_structure(candidate)
+        except ValueError as exc:
+            raise ValueError(
+                f"Cannot build QE structure for {candidate.formula} "
+                f"({candidate.candidate_id}): {exc}"
+            ) from exc
+
         work_root = Path(kwargs.get("work_dir") or dft.work_dir or self.work_root)
         cand_dir = work_root / f"{candidate.formula}_{candidate.candidate_id[:8]}"
         cand_dir.mkdir(parents=True, exist_ok=True)
+
+        # Validate pseudos early with a clear error
+        from siscforge.calculators.qe.pseudos import (
+            PseudoResolutionError,
+            resolve_pseudopotentials,
+        )
+
+        try:
+            resolved_pseudos = resolve_pseudopotentials(structure, dft)
+        except PseudoResolutionError as exc:
+            raise FileNotFoundError(str(exc)) from exc
 
         prefix = f"sf_{candidate.candidate_id[:8]}"
         wf = run_relax_scf_phonon(
@@ -97,19 +115,75 @@ class QECalculator(BaseCalculator):
         else:
             si = score_si_feasibility(candidate)
 
+        # Attach relaxed geometry to the candidate when available
+        out_candidate = candidate
+        if wf.relaxed_structure is not None:
+            try:
+                relaxed_cif = wf.relaxed_structure.to(fmt="cif")
+                lat = wf.relaxed_structure.lattice
+                out_candidate = candidate.model_copy(
+                    update={
+                        "relaxed_structure_cif": relaxed_cif,
+                        "structure_cif": relaxed_cif,
+                        "lattice_abc": (float(lat.a), float(lat.b), float(lat.c)),
+                        "lattice_angles": (
+                            float(lat.alpha),
+                            float(lat.beta),
+                            float(lat.gamma),
+                        ),
+                        "quality_tag": dft.quality_tag,
+                        "metadata": {
+                            **candidate.metadata,
+                            "relaxed": True,
+                            "pseudos": resolved_pseudos,
+                            "phonon_method": dft.phonon_method,
+                        },
+                    }
+                )
+            except Exception:  # noqa: BLE001
+                out_candidate = candidate.model_copy(
+                    update={
+                        "metadata": {
+                            **candidate.metadata,
+                            "pseudos": resolved_pseudos,
+                            "phonon_method": dft.phonon_method,
+                        },
+                        "quality_tag": dft.quality_tag,
+                    }
+                )
+        else:
+            out_candidate = candidate.model_copy(
+                update={
+                    "quality_tag": dft.quality_tag,
+                    "metadata": {
+                        **candidate.metadata,
+                        "pseudos": resolved_pseudos,
+                        "phonon_method": dft.phonon_method,
+                    },
+                }
+            )
+
         status = "ok" if wf.success else "failed"
         notes_parts = [wf.message]
         if not wf.success:
             notes_parts.append(
                 "QE workflow did not fully succeed; see step logs under " + str(cand_dir)
             )
+        notes_parts.append(f"quality_tag={dft.quality_tag}")
+        notes_parts.append(f"phonon_method={dft.phonon_method}")
 
-        # Performance proxy: not available from phonon alone in Phase 0 —
-        # leave None (ranking falls back to neutral performance).
+        # Ensure quality tags on results match campaign setting
+        scf = wf.scf
+        phonon = wf.phonon
+        if scf is not None and scf.quality_tag != dft.quality_tag:
+            scf = scf.model_copy(update={"quality_tag": dft.quality_tag})
+        if phonon is not None and phonon.quality_tag != dft.quality_tag:
+            phonon = phonon.model_copy(update={"quality_tag": dft.quality_tag})
+
         return CandidateEvaluation(
-            candidate=candidate,
-            scf=wf.scf,
-            phonon=wf.phonon,
+            candidate=out_candidate,
+            scf=scf,
+            phonon=phonon,
             si_feasibility=si,
             performance_score=None,
             composite_score=None,
@@ -128,6 +202,8 @@ class QECalculator(BaseCalculator):
                     "dft": dft.model_dump(mode="json"),
                     "work_dir": str(cand_dir),
                     "steps": [s.name for s in wf.steps],
+                    "pseudos": resolved_pseudos,
+                    "relaxed": wf.relaxed_structure is not None,
                 },
                 parent_ids=[candidate.candidate_id],
                 notes="QE relax/SCF/phonon evaluation",

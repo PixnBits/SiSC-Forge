@@ -22,7 +22,11 @@ from siscforge.calculators.qe.inputs import (
     write_ph_input,
     write_pw_input,
 )
-from siscforge.calculators.qe.parser import parse_ph_output, parse_pw_output
+from siscforge.calculators.qe.parser import (
+    parse_ph_output,
+    parse_pw_output,
+    parse_relaxed_structure,
+)
 from siscforge.models.config import DFTConfig
 from siscforge.models.results import PhononResult, SCFResult
 
@@ -194,14 +198,18 @@ def run_ph(
 
 
 def _try_read_relaxed_structure(work_dir: Path, fallback: Structure) -> Structure:
-    """Best-effort: re-read structure from pw output XML if present."""
-    # QE writes prefix.xml in outdir; parsing is version-sensitive — keep fallback.
-    for xml in (work_dir / "out").glob("*.xml"):
-        try:
-            # Optional: use ASE or custom XML parser later
-            _ = xml
-        except Exception:  # noqa: BLE001
-            pass
+    """Re-read final geometry from vc-relax ``*.out`` (CELL_PARAMETERS block)."""
+    # Prefer named outputs written by run_pw
+    for name in ("vc-relax.out", "relax.out"):
+        out = work_dir / name
+        if out.is_file():
+            parsed = parse_relaxed_structure(out, fallback=None)
+            if parsed is not None:
+                return parsed
+    for out in sorted(work_dir.glob("*.out")):
+        parsed = parse_relaxed_structure(out, fallback=None)
+        if parsed is not None:
+            return parsed
     return fallback
 
 
@@ -216,11 +224,15 @@ def run_relax_scf_phonon(
     """Execute relax (optional) → SCF → phonon (optional) in *work_dir*.
 
     This is the local sequential path used by :class:`QECalculator`.
+    After ``vc-relax``, the final geometry is parsed from the pw.x output and
+    fed into SCF / phonon. Phonon method is selected via ``config.phonon_method``:
+    ``dfpt`` / ``gamma`` (ph.x) or ``phonopy_fd`` (optional).
     """
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
-    need_ph = config.do_phonon
-    qe_env = qe_env or require_qe(need_phonon=need_ph)
+    use_phonopy = config.do_phonon and config.phonon_method == "phonopy_fd"
+    need_ph_binary = config.do_phonon and not use_phonopy
+    qe_env = qe_env or require_qe(need_phonon=need_ph_binary)
 
     result = QEWorkflowResult(work_dir=work_dir, structure=structure)
     current = structure
@@ -237,9 +249,11 @@ def run_relax_scf_phonon(
         )
         result.steps.append(step)
         if not step.success:
-            result.message = f"Relaxation failed: {step.message}"
+            result.message = (
+                f"Relaxation failed (pw.x vc-relax).\n{step.message}\n"
+                f"Check cutoffs, pseudopotentials, and {work_dir / '01_relax'}."
+            )
             result.success = False
-            # Still try to parse whatever energy is present
             if step.stdout_path.is_file():
                 result.scf = parse_pw_output(
                     step.stdout_path, quality_tag=config.quality_tag
@@ -247,9 +261,8 @@ def run_relax_scf_phonon(
             return result
         current = _try_read_relaxed_structure(work_dir / "01_relax", current)
         result.relaxed_structure = current
-        # Copy charge density / wavefunctions is complex; re-run SCF from geometry.
 
-    # 2. SCF
+    # 2. SCF on (possibly relaxed) geometry
     scf_dir = work_dir / "02_scf"
     step = run_pw(
         current,
@@ -263,30 +276,66 @@ def run_relax_scf_phonon(
     if step.stdout_path.is_file():
         result.scf = parse_pw_output(step.stdout_path, quality_tag=config.quality_tag)
     if not step.success:
-        result.message = f"SCF failed: {step.message}"
+        result.message = (
+            f"SCF failed (pw.x scf).\n{step.message}\n"
+            f"Work directory: {scf_dir}"
+        )
         result.success = False
         return result
 
-    # 3. Phonon DFPT (needs same outdir as SCF — run inside scf_dir)
+    # 3. Phonons
     if config.do_phonon:
-        step = run_ph(config, scf_dir, prefix=prefix, qe_env=qe_env)
-        result.steps.append(step)
-        # Parse ph.out and any dyn files for frequencies
-        texts: list[str] = []
-        if step.stdout_path.is_file():
-            texts.append(step.stdout_path.read_text(encoding="utf-8", errors="replace"))
-        for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
+        if use_phonopy:
+            from siscforge.calculators.qe.phonopy_fd import (
+                PhonopyNotAvailableError,
+                run_phonopy_fd,
+            )
+
             try:
-                texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
-            except OSError:
-                continue
-        combined = "\n".join(texts) if texts else ""
-        if combined:
-            result.phonon = parse_ph_output(combined, quality_tag=config.quality_tag)
-        if not step.success and result.phonon is None:
-            result.message = f"Phonon failed: {step.message}"
-            result.success = False
-            return result
+                ph, diag = run_phonopy_fd(
+                    current,
+                    config,
+                    work_dir / "03_phonopy_fd",
+                    prefix=prefix,
+                    qe_env=qe_env,
+                )
+            except PhonopyNotAvailableError as exc:
+                result.message = str(exc)
+                result.success = False
+                return result
+            result.phonon = ph
+            if ph is None:
+                result.message = (
+                    f"Phonopy FD phonon failed: {diag.get('error', diag)}\n"
+                    f"Work directory: {work_dir / '03_phonopy_fd'}"
+                )
+                result.success = False
+                return result
+        else:
+            step = run_ph(config, scf_dir, prefix=prefix, qe_env=qe_env)
+            result.steps.append(step)
+            texts: list[str] = []
+            if step.stdout_path.is_file():
+                texts.append(
+                    step.stdout_path.read_text(encoding="utf-8", errors="replace")
+                )
+            for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
+                try:
+                    texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    continue
+            combined = "\n".join(texts) if texts else ""
+            if combined:
+                result.phonon = parse_ph_output(
+                    combined, quality_tag=config.quality_tag
+                )
+            if not step.success and result.phonon is None:
+                result.message = (
+                    f"Phonon failed (ph.x).\n{step.message}\n"
+                    f"Ensure ph.x is installed and SCF finished cleanly in {scf_dir}."
+                )
+                result.success = False
+                return result
 
     result.success = result.scf is not None and result.scf.status in {"ok", "mock"}
     if result.success and config.do_phonon:

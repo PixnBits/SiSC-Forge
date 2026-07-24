@@ -6,6 +6,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from pymatgen.core import Lattice, Structure
+
 from siscforge import __version__
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import PhononResult, SCFResult
@@ -15,6 +18,8 @@ DEFAULT_IMAG_THRESHOLD_CM1 = 5.0
 
 # Ry → eV
 _RY_TO_EV = 13.605693122994
+# Bohr → Å
+_BOHR_TO_ANG = 0.529177210903
 
 
 def summarize_frequencies(
@@ -51,6 +56,111 @@ def summarize_frequencies(
         "dynamically_stable": not has_imag,
         "n_imaginary": n_imag,
     }
+
+
+def parse_relaxed_structure_from_text(
+    text: str,
+    *,
+    fallback: Structure | None = None,
+) -> Structure | None:
+    """Extract the final CELL_PARAMETERS + ATOMIC_POSITIONS from pw.x output.
+
+    Handles units: ``angstrom``, ``bohr``, ``alat`` (with alat in Bohr).
+    Positions: ``crystal`` (preferred) or ``angstrom``.
+    Returns ``None`` if blocks cannot be parsed (caller should use *fallback*).
+    """
+    # Last CELL_PARAMETERS block
+    cell_matches = list(
+        re.finditer(
+            r"CELL_PARAMETERS\s*\((?P<unit>[^)]+)\)\s*\n"
+            r"(?P<a1>[^\n]+)\n(?P<a2>[^\n]+)\n(?P<a3>[^\n]+)",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    if not cell_matches:
+        return fallback
+    cm = cell_matches[-1]
+    unit = cm.group("unit").strip().lower()
+    try:
+        matrix = np.array(
+            [
+                [float(x) for x in cm.group("a1").split()[:3]],
+                [float(x) for x in cm.group("a2").split()[:3]],
+                [float(x) for x in cm.group("a3").split()[:3]],
+            ],
+            dtype=float,
+        )
+    except (ValueError, IndexError):
+        return fallback
+
+    if unit.startswith("alat"):
+        # e.g. alat= 8.30000000  (Bohr)
+        m_alat = re.search(r"alat\s*=\s*([-\d.eE+]+)", unit)
+        alat_bohr = float(m_alat.group(1)) if m_alat else 1.0
+        matrix = matrix * alat_bohr * _BOHR_TO_ANG
+    elif "bohr" in unit:
+        matrix = matrix * _BOHR_TO_ANG
+    # angstrom: as-is
+
+    lattice = Lattice(matrix)
+
+    # Last ATOMIC_POSITIONS block (lines may be indented)
+    pos_matches = list(
+        re.finditer(
+            r"ATOMIC_POSITIONS\s*\((?P<punit>[^)]+)\)\s*\n(?P<body>(?:[ \t]*[A-Za-z][^\n]*\n?)+)",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    if not pos_matches:
+        return fallback
+    pm = pos_matches[-1]
+    punit = pm.group("punit").strip().lower()
+    species: list[str] = []
+    coords: list[list[float]] = []
+    for line in pm.group("body").strip().splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        # Skip if not an atom line
+        if not parts[0][0].isalpha():
+            continue
+        # Stop at QE section markers
+        if parts[0].lower() in {"end", "begin", "cell_parameters", "k_points"}:
+            break
+        try:
+            species.append(parts[0])
+            coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
+        except ValueError:
+            continue
+    if not species:
+        return fallback
+
+    coords_arr = np.array(coords, dtype=float)
+    if "crystal" in punit:
+        return Structure(lattice, species, coords_arr, coords_are_cartesian=False)
+    if "angstrom" in punit or "bohr" in punit:
+        if "bohr" in punit:
+            coords_arr = coords_arr * _BOHR_TO_ANG
+        return Structure(lattice, species, coords_arr, coords_are_cartesian=True)
+    # default assume crystal
+    return Structure(lattice, species, coords_arr, coords_are_cartesian=False)
+
+
+def parse_relaxed_structure(
+    path_or_text: Path | str,
+    *,
+    fallback: Structure | None = None,
+) -> Structure | None:
+    """Load pw.x output and parse the final relaxed geometry."""
+    if isinstance(path_or_text, Path) or (
+        isinstance(path_or_text, str) and Path(path_or_text).is_file()
+    ):
+        text = Path(path_or_text).read_text(encoding="utf-8", errors="replace")
+    else:
+        text = str(path_or_text)
+    return parse_relaxed_structure_from_text(text, fallback=fallback)
 
 
 def parse_pw_energy_from_text(text: str) -> float | None:

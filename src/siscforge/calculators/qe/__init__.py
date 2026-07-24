@@ -16,19 +16,29 @@ from siscforge.calculators.qe.env import (
 from siscforge.calculators.qe.parser import (
     parse_ph_output,
     parse_pw_output,
+    parse_relaxed_structure,
     summarize_frequencies,
+)
+from siscforge.calculators.qe.pseudos import (
+    PseudoResolutionError,
+    describe_pseudo_dir,
+    resolve_pseudopotentials,
 )
 
 __all__ = [
     "QECalculator",
     "QENotFoundError",
     "QENotAvailableError",
+    "PseudoResolutionError",
+    "describe_pseudo_dir",
     "jobflow_available",
     "parse_ph_output",
     "parse_pw_output",
+    "parse_relaxed_structure",
     "qe_available",
     "register_qe_calculators",
     "require_qe",
+    "resolve_pseudopotentials",
     "summarize_frequencies",
 ]
 
