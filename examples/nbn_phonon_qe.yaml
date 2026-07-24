@@ -1,19 +1,17 @@
 # Single-candidate bulk NbN phonon campaign for real Quantum ESPRESSO runs.
 #
 # Prerequisites:
-#   - Quantum ESPRESSO ≥ 7.2 with pw.x and ph.x on PATH (or QE_BIN set)
-#   - Pseudopotentials for Nb and N (SSSP or PseudoDojo UPF)
-#   - pip install -e ".[qe]"   # optional jobflow
+#   - pw.x on PATH (ph.x for DFPT; Ubuntu 6.7 ph.x may crash — see SETUP.md)
+#   - Pseudopotentials for Nb and N (SSSP)
+#   - For phonopy_fd: pip/uv install phonopy
 #
 # Dry-run (no QE):
 #   siscforge run --dry-run examples/nbn_phonon_qe.yaml
 #
-# Real QE:
-#   export SISCFORGE_PSEUDO_DIR=/path/to/upf
-#   # edit dft.pseudo_dir below to the same path
+# Real QE (Ubuntu apt: use phonopy_fd until QE ≥ 7.2 is built):
 #   siscforge run --calculator qe examples/nbn_phonon_qe.yaml
 #
-# See docs/examples/nbN_phonon_qe.md for a full walkthrough.
+# See docs/examples/nbN_phonon_qe.md and docs/SETUP.md.
 
 name: nbn_phonon_qe
 description: >
@@ -47,17 +45,22 @@ dft:
   smearing: mv
   degauss: 0.02
   # REQUIRED for real runs — directory of *.upf files
-  pseudo_dir: null
+  pseudo_dir: /usr/share/espresso/pseudo
   # Optional explicit map (overrides auto-guess from pseudo_dir):
   # pseudopotentials:
   #   Nb: Nb.pbe-spn-kjpaw_psl.1.0.0.UPF
   #   N:  N.pbe-n-kjpaw_psl.1.0.0.UPF
   do_relax: false
   do_phonon: true
-  phonon_method: gamma
+  # Ubuntu 6.7 ph.x often aborts (buffer overflow). Prefer phonopy FD on that stack.
+  # Use phonon_method: gamma or dfpt when you have a working QE ≥ 7.2 build.
+  phonon_method: phonopy_fd
+  phonopy_supercell: [2, 2, 2]
+  phonopy_distance: 0.01
   quality_tag: screening
   nproc: 1
-  work_dir: null
+  # Short scratch path avoids long outdir strings
+  work_dir: /tmp/siscforge_qe/nbn_phonon
 
 ranking:
   performance_weight: 0.5

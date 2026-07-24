@@ -85,8 +85,19 @@ class QECalculator(BaseCalculator):
                 f"({candidate.candidate_id}): {exc}"
             ) from exc
 
-        work_root = Path(kwargs.get("work_dir") or dft.work_dir or self.work_root)
-        cand_dir = work_root / f"{candidate.formula}_{candidate.candidate_id[:8]}"
+        work_root = Path(
+            kwargs.get("work_dir") or dft.work_dir or self.work_root
+        ).expanduser()
+        # Prefer a short absolute work root: long paths + Ubuntu QE 6.7 ph.x are
+        # fragile; keep campaign outputs separate from heavy scratch when possible.
+        if not work_root.is_absolute():
+            work_root = (Path.cwd() / work_root).resolve()
+        # Compact candidate directory names (formula + short id)
+        short_id = candidate.candidate_id.replace("-", "")[:8]
+        safe_formula = "".join(ch if ch.isalnum() else "" for ch in candidate.formula)[
+            :12
+        ] or "cand"
+        cand_dir = work_root / f"{safe_formula}_{short_id}"
         cand_dir.mkdir(parents=True, exist_ok=True)
 
         from siscforge.calculators.qe.pseudos import (
@@ -99,7 +110,8 @@ class QECalculator(BaseCalculator):
         except PseudoResolutionError as exc:
             raise FileNotFoundError(str(exc)) from exc
 
-        prefix = f"sf_{candidate.candidate_id[:8]}"
+        # Short prefix — some QE builds have tight internal path buffers
+        prefix = f"s{short_id}"
         if want_epw:
             wf = run_relax_scf_phonon_epw(
                 structure,

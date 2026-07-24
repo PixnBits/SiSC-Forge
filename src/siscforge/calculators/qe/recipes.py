@@ -203,11 +203,28 @@ def run_ph(
     rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
     ok = rc == 0 and out_path.is_file()
     msg = f"ph.x rc={rc}"
-    if not ok:
+    # Detect known Ubuntu/distro QE 6.7 fortify crash when reading data-file-schema.xml
+    try:
+        body = out_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        body = ""
+    if "buffer overflow detected" in body or "*** buffer overflow" in body:
+        ok = False
+        msg = (
+            "ph.x aborted with a buffer-overflow fortify trap while reading the SCF "
+            "save directory. This is a known failure mode of some distro Quantum "
+            "ESPRESSO 6.7 builds (e.g. Ubuntu) even with short paths.\n"
+            "Workarounds:\n"
+            "  1) Build QE ≥ 7.2 from source (recommended for ph.x + EPW), or\n"
+            "  2) Set dft.phonon_method: phonopy_fd and `pip install phonopy` "
+            "(uses pw.x finite differences; no ph.x; not a full EPW path).\n"
+            f"See ph.out: {out_path}"
+        )
+    elif not ok:
         try:
-            tail = out_path.read_text(encoding="utf-8", errors="replace")[-800:]
+            tail = body[-800:]
             msg += f"\n--- output tail ---\n{tail}"
-        except OSError:
+        except Exception:  # noqa: BLE001
             pass
     return QEStepResult(
         name="ph",

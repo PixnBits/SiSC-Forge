@@ -234,6 +234,12 @@ Use `--dry-run` for mock.
 ### C.5 Reality check on first EPW / phonon runs
 
 - **Always launch via mpirun**: Ubuntu’s `pw.x` / `ph.x` / `epw.x` are OpenMPI-linked. Starting them bare (without `mpirun`) often **hangs with empty output**. SiSC-Forge wraps all QE calls with `mpirun --oversubscribe -np N` when `mpirun` is on `PATH` (default `N = dft.nproc`, minimum 1).
+- **Ubuntu 6.7 `ph.x` buffer overflow**: on Ubuntu 26.04 packages, `ph.x` can abort with  
+  `*** buffer overflow detected ***` immediately while reading `*.save/data-file-schema.xml`,  
+  even for short paths and simple cells (Si, NbN). **`pw.x` still works.**  
+  - **Phonon stability workaround:** `dft.phonon_method: phonopy_fd` + `uv pip install phonopy`  
+    (finite differences via `pw.x` only; default in `examples/nbn_phonon_qe.yaml`).  
+  - **True DFPT + EPW:** build **Quantum ESPRESSO ≥ 7.2** from source (or use a non-broken package) and put that `bin/` on `PATH` / `QE_BIN`. Distro EPW still needs a working DFPT dynamical matrix from a healthy `ph.x`.
 - First real NbN EPW may take a long wall-time even at screening grids; use a few MPI ranks (e.g. `dft.nproc: 4`–`16` on a workstation).
 - Ubuntu QE **6.7** EPW inputs can differ slightly from 7.x; if `epw.x` rejects a keyword, treat the SiSC-Forge `epw.in` as a template and adjust (parser still accepts standard λ / ω_log / Tc lines).
 - Full production Wannier projections for metals are non-trivial; a failed first EPW is common — inspect `outputs/.../qe_work/**/epw.out`.
@@ -243,6 +249,26 @@ If a previous run hung, stop it (`Ctrl+C`) and kill stragglers before retrying:
 ```bash
 pkill -f 'pw.x|ph.x|epw.x'   # only if you are sure no other QE jobs matter
 ```
+
+### C.6 Optional: build QE ≥ 7.2 from source (for working `ph.x` + EPW)
+
+```bash
+# Dependencies (Ubuntu)
+sudo apt-get install -y gfortran libblas-dev liblapack-dev libfftw3-dev \
+  libopenmpi-dev openmpi-bin wget tar
+
+mkdir -p $HOME/src && cd $HOME/src
+wget https://gitlab.com/QEF/q-e/-/archive/qe-7.3.1/q-e-qe-7.3.1.tar.bz2
+tar xf q-e-qe-7.3.1.tar.bz2 && cd q-e-qe-7.3.1
+./configure --enable-parallel --with-scalapack=no
+make -j"$(nproc)" pw ph pp epw
+export QE_BIN=$HOME/src/q-e-qe-7.3.1/bin
+export PATH="$QE_BIN:$PATH"
+# Point SiSC-Forge at this build (overrides /usr/bin)
+which pw.x ph.x epw.x
+```
+
+Then re-run with `phonon_method: gamma` or `dfpt` and `qe-epw`.
 
 ---
 
