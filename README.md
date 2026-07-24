@@ -6,27 +6,31 @@ SiSC-Forge systematically searches for and evaluates silicon-compatible material
 
 ## Spec-Driven Development
 
-This repository is organized for **spec-driven development**. The authoritative source of truth for requirements and architecture lives in the documentation:
+This repository is organized for **spec-driven development**. The authoritative source of truth lives in the documentation:
 
 - **Product Requirements Document (PRD)**: [`docs/PRD/SiSC-Forge-PRD.md`](docs/PRD/SiSC-Forge-PRD.md) — Version 0.2
-- **Technical Specifications**: [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) — **Version 0.3**
+- **Technical Specifications**: [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) — Version 0.3
+- **Development Roadmap**: [`docs/ROADMAP.md`](docs/ROADMAP.md) — Practical phased implementation plan (Phases 0–4)
 
-All implementation, prioritization, and design decisions should be driven by these documents. Proposed changes to scope, architecture, or interfaces must first be reflected in the corresponding specification files.
+All implementation, prioritization, and design decisions should be driven by these documents.
 
 ## Current Status
 
-v0.3 Blueprint — Technical Specifications now contain a fully detailed **Josephson Junction Device Modeling module** (§2.8).
+v0.3 Blueprint — Complete PRD, Technical Specifications (including detailed Josephson Junction Device Modeling module), and a practical Development Roadmap are in place.
 
-Key content in the JJ module:
-- Inputs required from the materials screening pipeline (gap, Tc / pairing eigenvalue, Si-feasibility data, optional geometry)
-- Tiered theoretical approaches: simple analytic estimates (Ambegaokar–Baratoff) → Usadel → optional BdG
-- Critical current density Jc, IcRn product, gap Δ, switching energy / speed proxies, fabrication compatibility (SIS / SNS / etc.)
-- Clear interface to the candidate ranking system (shortlist-only, optional secondary ranking, explicit “approximate / ranking only” labeling)
-- Explicit version boundaries: inert stub until Phase 3; Tier-1 analytic first, research-grade solvers later
+The roadmap breaks work into five clear phases:
 
-Core materials-screening pipeline (Phases 0–2) remains unchanged and is still the immediate implementation focus.
+| Phase | Focus | Compute |
+|-------|-------|--------|
+| 0 | Foundation & local validation | Workstation only |
+| 1 | Core conventional (EPW + Eliashberg) pipeline | Workstation + small cluster |
+| 2 | Silicon Integration maturity + ranking | Workstation |
+| 3 | Unconventional (DMFT) pathway + AL maturity | Small → medium HPC |
+| 4 | Device-level Josephson modeling | Mostly analytic / shortlist |
 
-## Key Capabilities (from Specs)
+Phases 0–2 are fully workstation-validatable before any large allocation is required.
+
+## Key Capabilities
 
 - Structure generation & high-throughput screening of Si-compatible phases, alloys, dopings, strains, and interfaces
 - Automated DFT / DFPT / electron-phonon (EPW-style) calculations + Eliashberg Tc prediction
@@ -36,7 +40,7 @@ Core materials-screening pipeline (Phases 0–2) remains unchanged and is still 
 - Workflow orchestration (jobflow / atomate2 style)
 - Multi-objective ranking by predicted Tc **and** silicon-integration feasibility score
 - Export of synthesis-relevant metadata
-- **(Phase 3)** Approximate Josephson device metrics (Jc, IcRn, gap, switching energy, fabrication compatibility) for top-ranked candidates
+- (Phase 4) Approximate Josephson device metrics (Jc, IcRn, gap, switching energy, fabrication compatibility)
 
 ## Material Families
 
@@ -46,16 +50,11 @@ Core materials-screening pipeline (Phases 0–2) remains unchanged and is still 
 4. Rare-earth nickelates (infinite-layer NdNiO₂ / PrNiO₂ and bilayer family)
 5. Cuprates (YBCO and related) with buffer layers on silicon
 
-## Development Approach
+## Getting Started
 
-See the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for the phased roadmap:
-
-- Phase 0 – workstation foundation (nitrides + B:Si, phonon, Si-feasibility)
-- Phase 1 – conventional EPW + Eliashberg + active learning
-- Phase 2 – unconventional DMFT pathway + advanced Si integration
-- Phase 3 – Josephson Junction Device Modeling module (detailed in §2.8)
-
-The platform is designed so that Phases 0 and 1 can be fully validated on a single high-end workstation before large-scale compute is required.
+1. Read the [PRD](docs/PRD/SiSC-Forge-PRD.md) for vision, goals, and success metrics.
+2. Read the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for module contracts, data models, and acceptance criteria.
+3. Follow the [Development Roadmap](docs/ROADMAP.md) for the ordered implementation plan and workstation validation gates.
 
 ## License
 
@@ -63,4 +62,4 @@ The platform is designed so that Phases 0 and 1 can be fully validated on a sing
 
 ## Contributing
 
-Contributions are welcome once the core modules are in place. Please read the PRD and Technical Specifications before proposing changes.
+Contributions are welcome once the core modules are in place. Please read the PRD, Technical Specifications, and Roadmap before proposing changes.
