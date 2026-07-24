@@ -1,8 +1,8 @@
 # SiSC-Forge
 ## Technical Specifications
 
-**Version 0.2 – Implementation-Ready Blueprint**  
-*(Companion to PRD v0.2. Focus: stronger Silicon Integration, clearer Unconventional pathway interfaces, Josephson device modeling section, explicit v0.1 boundaries, actionable data/config/output contracts.)*
+**Version 0.3 – Implementation-Ready Blueprint**  
+*(Extends v0.2 with a detailed Josephson Junction Device Modeling module. Focus remains on actionable contracts, explicit version boundaries, and clear interfaces.)*
 
 ---
 
@@ -32,7 +32,7 @@ Silicon Integration & Interface Module
         │
 Candidate Ranking & Reporting
         │
-( later ) Josephson Device Metrics Calculator
+Josephson Junction Device Modeling Module  ← detailed in §2.8 (Phase 3+)
         │
 Provenance Database + Active-Learning Feedback
 ```
@@ -41,7 +41,7 @@ Provenance Database + Active-Learning Feedback
 - Decoupled engines: pure functions of `StructureCandidate` + parameters → typed Result objects.
 - ML-first filtering of expensive calculations.
 - Provenance-first (lightweight jobflow implementation of AiiDA principles).
-- Extensible Calculator registry (new calculators, including future Josephson metrics, register without core changes).
+- Extensible Calculator registry (new calculators, including the Josephson metrics calculator, register without core changes).
 - Identical code path from workstation to HPC.
 
 **v0.1 Must-Have**  
@@ -60,270 +60,215 @@ Structure generation → ML formation-energy filter → jobflow QE-SCF + basic D
 ### 2.3 DFT / DFPT / EPW Orchestration
 (P0 = phonon; P1 = full EPW + isotropic Eliashberg.)
 
-### 2.4 Unconventional (DFT+U / DMFT) Pathway  ← Strengthened
+### 2.4 Unconventional (DFT+U / DMFT) Pathway
+(See previous version for full details. Produces `leading_pairing_eigenvalue` that feeds the common `performance_score`.)
 
-**Purpose**  
-High-throughput pathway for materials where phonon-mediated pairing is secondary (infinite-layer nickelates, bilayer nickelates, cuprates). Produces a leading pairing eigenvalue that is used as the performance metric in ranking on equal footing with Eliashberg Tc.
-
-**Stack**  
-DFT (QE primary) → Wannier90 → TRIQS / solid_dmft. Impurity solver: CTHYB primary. Pairing from spin susceptibility or linearized Eliashberg in the spin-fluctuation channel.
-
-**Clear Interfaces**
-- **Input**: `StructureCandidate` (must carry family tag `"nickelate"` or `"cuprate"`, optional oxygen stoichiometry, strain tensor).
-- **Intermediate**: DFT+U result always produced first and stored as `DFTUResult`.
-- **Output**: `DMFTResult` containing:
-  - `self_energy`, `occupancy`, `mass_enhancement`
-  - `spin_susceptibility_summary`
-  - `leading_pairing_eigenvalue` (float)
-  - `pairing_symmetry` (str)
-  - `U`, `J`, `double_counting`, `solver_info`
-  - `quality_tag` (“screening” | “standard” | “production”)
-  - `converged` (bool)
-- The `leading_pairing_eigenvalue` (or a literature-calibrated temperature scale) is written into `CandidateEvaluation.performance_score` exactly as Eliashberg Tc is written for conventional candidates. Ranking and active-learning acquisition functions therefore require no special-case logic beyond a configurable normalization factor per family.
-
-**v0.1 / Early**  
-- Automated DFT → Wannier pipeline for infinite-layer RNiO₂ prototypes.  
-- Single-shot or charge-self-consistent DFT+DMFT (paramagnetic).  
-- Leading pairing eigenvalue extraction.  
-- Oxygen-vacancy enumeration treated as a structure-generation degree of freedom.  
-- DFT+U always run as a cheap proxy and stored alongside full DMFT.
-
-**Later**  
-Full frequency-dependent pairing vertex, realistic multi-orbital crystal fields under epitaxial strain, phonon + spin-fluctuation coupling, bilayer models.
-
-**Acceptance Criteria**  
-- Recovers literature occupancy and mass enhancement for bulk NdNiO₂ under standard U, J.  
-- Pipeline produces a complete `DMFTResult` from a `StructureCandidate` with minimal manual intervention for supported prototypes.  
-- Failure modes (poor Wannierization, solver non-convergence) are flagged and propagate to ranking as low-confidence.
-
-### 2.5 Silicon Integration & Interface Module  ← Strengthened
-
-**Purpose**  
-Evaluate every candidate for realistic integration onto Si and produce a quantitative, transparent Silicon Feasibility Score (0–100) together with actionable process recommendations.
-
-**Core Sub-components (all present in v0.1 unless noted)**
-
-1. **Epitaxial Matching Engine**  
-   - Input: candidate structure + target Si surface (`"Si(001)"` or `"Si(111)"`).  
-   - Algorithm: coincidental lattice matching (Zur–McGill style) + optional custom interface matcher.  
-   - Output: lowest-mismatch orientations, supercell size, biaxial strain tensor, elastic energy density (meV/Å²) using DFT-relaxed or ML elastic constants.  
-   - Critical thickness estimate (Matthews–Blakeslee or People–Bean approximation).
-
-2. **Buffer-Layer Stack Suggestor**  
-   - Pre-populated, versioned library of known buffers (TiN, ZrN, AlN, MgO, STO, YSZ, CeO₂, …) with lattice parameters, thermal expansion, chemical compatibility flags, and typical growth temperatures.  
-   - For a given candidate, propose minimal sequences that keep cumulative mismatch < 3–4 % and avoid deep Si oxidation or uncontrolled silicidation.  
-   - Simple thermodynamic check for possible silicide/silicate interlayer formation.
-
-3. **Thermal Budget & Process Window Estimator**  
-   - Maximum recommended process temperature derived from literature + calculated diffusion barriers / melting points.  
-   - Flag candidates requiring > 800 °C for > 10 min as high-risk for CMOS backend.  
-   - Oxygen / nitrogen partial-pressure window estimates (especially critical for nickelates and cuprates).
-
-4. **Membrane Transfer Simulation (v0.1 heuristic; full mechanics later)**  
-   - Estimate residual strain after release from substrate.  
-   - Simple score for membrane-transfer ease based on thickness, elastic energy, and known experimental success for similar materials.
-
-5. **Proximity-Effect Estimates (later, P3)**  
-   - Simple Usadel or microscopic estimates of induced gap / critical current in hybrid SC–Si or SC–normal structures.  
-   - Not required for v0.1 ranking.
-
-**Silicon Feasibility Score (0–100)**  
-Tunable weighted sum (defaults given; campaign-overridable):
-
-```
-S = 30×(1 − m̃) + 25×T_budget + 20×C_chem + 15×E_exp + 10×M_mem
-```
-
-where all terms are normalized to [0,1], m̃ is normalized lattice mismatch, T_budget is thermal-budget score, C_chem chemical compatibility, E_exp known experimental evidence, M_mem membrane-transfer ease.
-
-**Acceptance Criteria (v0.1)**  
-- Any nitride or MgB₂ candidate returns a complete matching report + score in < 30 s on a workstation (using pre-computed elastic constants).  
-- Score correlates with known experimental successes (NbN on Si, MgB₂ on buffered Si) within ±15 points.  
-- All components of the score are exported and human-readable.
+### 2.5 Silicon Integration & Interface Module
+(See previous version for full details. Produces quantitative Si-Feasibility Score 0–100 plus process recommendations.)
 
 ### 2.6 Candidate Ranking & Reporting
-Explicitly consumes either Eliashberg Tc or `leading_pairing_eigenvalue` via a common `performance_score` field, and always includes the full Silicon Feasibility breakdown.
+Consumes either Eliashberg Tc or `leading_pairing_eigenvalue` via a common `performance_score` field, always includes the full Silicon Feasibility breakdown, and (when enabled) can incorporate JosephsonMetrics as an optional secondary ranking or filter criterion.
 
 ### 2.7 Workflow Engine & Active Learning Loop
-Acquisition functions already support normalized performance proxies so conventional and unconventional candidates can share a campaign or be run in separate pools.
+Acquisition functions support normalized performance proxies. The Josephson module is only invoked on a configurable top-N shortlist after primary ranking.
 
-### 2.8 Josephson Junction Device Modeling  ← New section (P3 / later)
+### 2.8 Josephson Junction Device Modeling Module  ← Detailed (Phase 3+)
 
 **Purpose**  
-Provide simple, order-of-magnitude device-relevant metrics for top-ranked candidates so that materials can be filtered not only by Tc and Si-feasibility but also by approximate Josephson performance. These estimates are ranking aids and literature-consistency checks only; they are not quantitative device design values.
+Take promising superconducting candidates that already rank highly on both predicted superconducting performance and Silicon Feasibility Score, and estimate practical Josephson-junction (JJ) figures of merit. The goal is to provide order-of-magnitude, ranking-oriented device metrics that help experimental and circuit-design collaborators prioritize materials for SIS, SNS, or hybrid junctions compatible with silicon technology. These estimates are explicitly approximate and are never presented as quantitative device-design values.
 
-**Metrics to be produced (when enabled)**
-- Superconducting gap Δ (from Eliashberg or DMFT-derived estimates).
-- Critical current Ic (Ambegaokar–Baratoff or simple Usadel for SNS/SIS geometries).
-- IcRn product.
-- Characteristic voltage / switching energy estimates.
-- Simple BdG or Usadel model outputs for thin-film or hybrid geometries (optional).
+**Scope of estimates**
+- Superconducting gap Δ
+- Critical current Ic and critical current density Jc
+- IcRn product
+- Approximate switching energy and characteristic speed / frequency proxies
+- Qualitative compatibility with common JJ fabrication approaches (SIS, SNS, ramp-edge, etc.) and with the candidate’s Silicon Integration recommendations
 
-**Interfaces**
-- Input: high-fidelity electronic structure results (`ElectronPhononResult` or `DMFTResult`) + optional Silicon Integration geometry (thickness, barrier, etc.).
-- Output: `JosephsonMetrics` Pydantic model attached to `CandidateEvaluation`.
-- Disabled by default; activated per-campaign via configuration flag. Only run on the final shortlist to control cost.
+#### 2.8.1 Inputs Required from the Materials Screening Pipeline
 
-**v0.1 / v1.0**  
-Not present. Explicitly out of scope until the conventional and unconventional materials pipelines are mature.
+The module consumes already-computed results; it does not re-run expensive DFT/DMFT.
 
-**Acceptance Criteria (when implemented)**  
-- For well-known systems (Nb, NbN, MgB₂) the estimates recover experimental order of magnitude.  
-- Metrics are clearly labeled “approximate / ranking only” in all exports.  
-- Adding the calculator requires only a new Calculator class + model registration.
+**Required / strongly preferred inputs**
+- From `ElectronPhononResult` (conventional path) or `DMFTResult` (unconventional path):
+  - Superconducting gap estimate Δ (meV) — preferred from Eliashberg or from a calibrated DMFT-derived scale; fallback to BCS-like 1.76 k_B T_c with family-specific correction factors
+  - T_c or performance_score
+  - Normal-state density of states at the Fermi level N(0) when available
+  - Optional: Fermi velocity, coherence length ξ estimates, mean free path
+- From `SiFeasibilityScore` / Silicon Integration module:
+  - Recommended film thickness range
+  - Buffer stack and interface quality flags
+  - Thermal-budget constraints (affects allowed junction process temperatures)
+  - Lattice-mismatch / strain state (can affect gap and critical current)
+- From `StructureCandidate`:
+  - Material family and composition
+  - Strain tensor
+  - Provenance and quality tags
+
+**Optional user / campaign-supplied geometry parameters**
+- Junction area A (default assumes a reference area, e.g. 1 µm², and reports both Ic and Jc)
+- Barrier type and thickness for SIS (oxide, AlN, etc.)
+- Normal-metal spacer thickness and material for SNS
+- Operating temperature of interest (default: 0.5 T_c or a fixed cryogenic temperature)
+
+**Minimal viable input set for early implementation**  
+Δ (or T_c), material family, and a reference junction area are sufficient for the simplest Ambegaokar–Baratoff estimates.
+
+#### 2.8.2 Recommended Theoretical Approaches
+
+**Tier 1 – Simple analytic estimates (first implementation, Phase 3 early)**  
+Fast, transparent, and sufficient for ranking and literature-order-of-magnitude checks.
+
+- Gap Δ:
+  - Prefer value extracted from Eliashberg spectral function or from DMFT pairing calculations.
+  - Fallback: family-dependent factor × k_B T_c (e.g. ~1.76 for weak-coupling BCS-like; higher or lower for strong-coupling or unconventional cases).
+- SIS junctions (Ambegaokar–Baratoff):
+  - I_c R_n = (π Δ / 2e) tanh(Δ / 2 k_B T)
+  - At T → 0: I_c R_n ≈ π Δ / 2e
+- Critical current density: J_c = I_c / A (A = assumed or user-specified area)
+- Switching energy (order-of-magnitude):
+  - E_sw ≈ (1/2) I_c Φ_0   (or more refined expressions involving junction capacitance when available)
+- Characteristic voltage / frequency proxies derived from I_c R_n
+
+These formulas are implemented as pure functions with clear documentation of assumptions and validity ranges.
+
+**Tier 2 – Semi-microscopic (Usadel) (later research-grade)**  
+- Dirty-limit Usadel equations for SNS and SIS junctions.
+- Incorporation of interface transparency, barrier resistance, and proximity-effect induced gap in the normal region.
+- Temperature and (optionally) weak magnetic-field dependence.
+- Requires additional materials parameters (diffusion constant, interface resistance) that may be estimated from DFT or taken from literature defaults per family.
+
+**Tier 3 – Microscopic (BdG) (advanced / optional)**  
+- Bogoliubov–de Gennes calculations for clean or quasi-clean junctions, specific geometries, or atomistic interface models.
+- Significantly more expensive; reserved for final short-list candidates or dedicated follow-up studies.
+- Interfaces to existing open-source BdG codes or custom solvers via the Calculator registry.
+
+**Fabrication compatibility heuristics (all tiers)**  
+- Map material family + Silicon Integration recommendations onto known process flows:
+  - Nb / NbN / NbTiN → mature SIS (Nb/AlOx/Nb) and SNS processes
+  - MgB₂ → specialized but demonstrated junctions; higher process temperatures
+  - Nickelates / cuprates → more challenging (oxygen control, higher anisotropy); flag as research-grade
+- Output a simple compatibility tag + short rationale (e.g. “compatible with standard Nb-based SIS flow”, “requires high-temperature MgB₂ process”, “oxygen-sensitive – challenging for conventional JJ fab”).
+
+#### 2.8.3 Interface to the Candidate Ranking System
+
+- The module is registered as a standard Calculator and is **disabled by default**.
+- Activation is controlled by a campaign-level flag (`josephson.enabled: true`) and a shortlist size (e.g. top 20 by composite rank or by Pareto front of performance_score × Si-feasibility).
+- On execution it attaches a `JosephsonMetrics` object to the existing `CandidateEvaluation`.
+- Ranking can optionally:
+  - Use a secondary sort key (e.g. high I_c R_n among otherwise comparable candidates),
+  - Apply a soft filter (discard candidates whose estimated J_c falls below a campaign-defined threshold),
+  - Or simply expose the metrics in the synthesis card and export files for human review.
+- All Josephson values are written with an explicit `notes` field containing the string “approximate / ranking only” and the model tier used.
+- Provenance records the exact input Δ source, geometry assumptions, and formula version so results remain reproducible.
+
+#### 2.8.4 Version Boundaries
+
+| Version / Phase | Scope |
+|-----------------|-------|
+| v0.1 – v1.0 (Phases 0–2) | Module present only as a stub / disabled Calculator. No estimates produced. |
+| Phase 3 early | Tier-1 analytic estimates (Ambegaokar–Baratoff, gap from T_c or Eliashberg, J_c, simple switching energy, fabrication-compatibility heuristics). Runs only on configurable top-N shortlist. |
+| Phase 3 later / research-grade | Tier-2 Usadel solvers, improved proximity modeling, optional Tier-3 BdG for selected candidates, geometry optimization loops, tighter coupling to Silicon Integration membrane/buffer recommendations. |
+
+**Acceptance Criteria (Phase 3 early)**  
+- For well-characterized reference materials (Nb, NbN, MgB₂) the Tier-1 estimates recover experimental I_c R_n and gap values within a factor of ~2–3 (order-of-magnitude fidelity).  
+- Metrics appear in the CandidateEvaluation and in the exported synthesis cards with clear “approximate” labeling.  
+- Enabling the module for a shortlist of 20 candidates adds negligible wall-time compared with the preceding EPW/DMFT stages.  
+- Adding or replacing a formula requires only a new pure function + registration; the ranking and export layers remain unchanged.
 
 ---
 
-## 3. Data Models / Key Objects  ← Sharpened for actionability
+## 3. Data Models / Key Objects
 
-All models are Pydantic v2. Fields marked **(required)** must be present; others are optional or filled later.
+All models remain Pydantic v2. The JosephsonMetrics model is expanded as follows (other models unchanged from v0.2):
 
 ```python
-class StructureCandidate(BaseModel):
-    id: str                          # uuid
-    structure: Structure             # pymatgen
-    composition: Composition
-    family: str                      # "tm_nitride" | "b_doped_si" | "mgb2" | "nickelate" | "cuprate"
-    prototype: str
-    doping: dict[str, float] = {}
-    strain_tensor: Optional[list[list[float]]] = None
-    interface_info: Optional[dict] = None
-    energy_above_hull_proxy: Optional[float] = None
-    provenance: Provenance
-    metadata: dict = {}
+class JosephsonMetrics(BaseModel):
+    # Core figures of merit
+    delta: Optional[float] = None              # superconducting gap (meV)
+    Ic: Optional[float] = None                 # critical current (µA) for reference area
+    Jc: Optional[float] = None                 # critical current density (A/cm²)
+    IcRn: Optional[float] = None               # µV
+    switching_energy_est: Optional[float] = None  # aJ or eV
+    characteristic_frequency_est: Optional[float] = None  # GHz proxy
 
-class ElectronPhononResult(BaseModel):
-    lambda_total: float
-    omega_log: float                 # K
-    alpha2F: Optional[dict] = None
-    Tc_allen_dynes: Optional[float] = None
-    Tc_eliashberg: Optional[float] = None
-    mu_star: float = 0.1
-    quality_tag: str                 # "screening" | "standard" | "production"
-    converged: bool
-    metadata: CalculationMetadata
+    # Context
+    model_tier: str                            # "analytic_AB" | "Usadel" | "BdG" | ...
+    reference_area_um2: float = 1.0
+    assumed_temperature_K: Optional[float] = None
+    fabrication_compatibility: str             # short tag + rationale
+    junction_type_assumed: str                 # "SIS" | "SNS" | "hybrid" | ...
 
-class DMFTResult(BaseModel):
-    U: float
-    J: float
-    occupancy: dict
-    mass_enhancement: float
-    leading_pairing_eigenvalue: float
-    pairing_symmetry: str
-    self_energy_summary: Optional[dict] = None
-    spin_susceptibility_summary: Optional[dict] = None
-    quality_tag: str
-    converged: bool
-    metadata: CalculationMetadata
-
-class SiFeasibilityComponents(BaseModel):
-    lattice_mismatch_pct: float
-    strain_energy_meV_A2: float
-    thermal_budget_score: float      # 0–1
-    chemical_compatibility: float    # 0–1
-    known_experimental_evidence: float
-    membrane_transfer_ease: float
-    oxygen_or_nitrogen_window_score: float
-    recommended_buffers: list[str]
-    max_process_temp_C: float
-
-class SiFeasibilityScore(BaseModel):
-    components: SiFeasibilityComponents
-    composite_score: float           # 0–100
-    notes: str = ""
-
-class JosephsonMetrics(BaseModel):   # later only
-    delta: Optional[float] = None    # gap (meV)
-    Ic: Optional[float] = None       # critical current
-    IcRn: Optional[float] = None
-    switching_energy_est: Optional[float] = None
-    model: str                       # "Ambegaokar-Baratoff" | "Usadel" | ...
+    # Provenance & caveats
+    delta_source: str                          # "eliashberg" | "dmft_calibrated" | "bcs_fallback" | ...
     notes: str = "approximate / ranking only"
-
-class CandidateEvaluation(BaseModel):
-    candidate_id: str
-    structure: StructureCandidate
-    scf: Optional[SCFResult] = None
-    phonon: Optional[PhononResult] = None
-    eph: Optional[ElectronPhononResult] = None
-    dmft: Optional[DMFTResult] = None
-    si_score: Optional[SiFeasibilityScore] = None
-    josephson: Optional[JosephsonMetrics] = None   # later
-    ml_predictions: dict[str, float] = {}
-    performance_score: Optional[float] = None      # Tc or scaled pairing eigenvalue
-    final_rank_score: Optional[float] = None
-    pareto_front: bool = False
-    acquisition_score: Optional[float] = None
-    status: str
-    last_updated: datetime
+    quality_flag: str = "order_of_magnitude"
 ```
 
-These contracts are the single source of truth for module interfaces.
+`CandidateEvaluation.josephson` remains an Optional[JosephsonMetrics] field that is populated only when the module is enabled and the candidate is on the shortlist.
 
 ---
 
 ## 4. External Dependencies & Interfaces
-Primary open-source stack remains mandatory (QE + EPW, TRIQS, pymatgen, jobflow, ALIGNN/MatGL, MongoDB, Pydantic v2, etc.). VASP optional and feature-flagged.
+Primary open-source stack unchanged. Future Usadel/BdG backends will be wrapped behind the same Calculator protocol; no hard dependency is introduced in early Phase 3.
 
 ---
 
-## 5. Configuration & Input Formats  ← More actionable
+## 5. Configuration & Input Formats
 
-Campaign YAML is validated by a Pydantic `CampaignConfig` model. Required sections for v0.1:
+Campaign YAML gains an optional section (ignored until Phase 3):
 
 ```yaml
-campaign:
-  id: str
-  name: str
-  family: "tm_nitride" | "b_doped_si" | ...
-  structure_generation: { ... }
-  ml_filter: { max_e_hull_eV_atom: float, ... }
-  dft: { engine: "qe", quality_tag: "screening"|"production", ... }
-  ranking: { weights: {tc: float, si_feasibility: float, uncertainty: float} }
-  active_learning: { enabled: bool, acquisition: str, batch_size: int }
-  # later:
-  # josephson: { enabled: false }
+josephson:
+  enabled: false                    # default
+  shortlist_size: 20                # run only on top-N after primary ranking
+  model_tier: "analytic_AB"         # later: "usadel"
+  reference_area_um2: 1.0
+  assume_SIS: true
+  temperature_K: null               # null → 0.5 * Tc
+  secondary_ranking: false          # whether to use IcRn as soft sort key
 ```
 
-CLI remains `siscforge enumerate|submit|rank|train-surrogate|run`. All numerical defaults are documented in the schema; overrides are validated.
+All other configuration remains as in v0.2.
 
 ---
 
-## 6. Output Formats & Database Schema  ← Clearer
+## 6. Output Formats & Database Schema
 
-**Required exports for every ranked candidate (v0.1)**
-- Full `CandidateEvaluation` as JSON (including nested Structure and all scores).
-- CIF / POSCAR of the structure.
-- CSV summary table with columns: candidate_id, family, composition, performance_score, si_composite_score, E_hull, status, recommended_buffers, max_process_temp_C.
-- Human-readable Markdown synthesis card containing the Silicon Feasibility breakdown and process recommendations.
+When JosephsonMetrics are present they are included in:
+- The full CandidateEvaluation JSON
+- The Markdown synthesis card (clearly labeled section “Approximate Josephson Metrics (ranking aid only)”)
+- An optional extra column set in the CSV summary (Ic, Jc, IcRn, fabrication_compatibility)
 
-**Database**  
-MongoDB collections: `candidates`, `calculations`, `campaigns`, `surrogate_models`, `rankings`.  
-Every calculation record stores parent IDs so the full provenance chain is queryable.
+Database schema is unchanged; the nested JosephsonMetrics object is stored inside the evaluation document.
 
 ---
 
 ## 7. Performance & Scaling Targets
-Unchanged. Workstation numbers remain the acceptance gate for v0.1.
+Unchanged for Phases 0–2. In Phase 3 the analytic Tier-1 estimates must complete for a shortlist of 50 candidates in well under one minute on a single core.
 
 ---
 
 ## 8. Testing Strategy
-Unchanged, with the addition that Silicon Integration scoring and (later) Josephson metric estimators have their own unit tests against known reference values.
+In addition to previous tests:
+- Unit tests for each analytic formula against published Ambegaokar–Baratoff and BCS reference values.
+- Regression tests on Nb, NbN, and MgB₂ that check order-of-magnitude recovery of experimental gap and IcRn.
+- Integration test that enables the module on a tiny shortlist and verifies the JosephsonMetrics object is correctly attached and exported.
 
 ---
 
 ## 9. Development Phases & Milestones
 
-**Phase 0 (v0.1)** — Structure gen (nitrides + B:Si), formation-energy surrogate, QE phonon, heuristic Si-score (full component breakdown), ranking, MongoDB, CLI, dry-run.  
-**Exit criteria**: NbN phonon recovered; 50-candidate Nb-Ti-N strain series ranked with complete Si-feasibility cards; all unit tests green.
+**Phase 0 (v0.1)** — Structure gen (nitrides + B:Si), formation-energy surrogate, QE phonon, heuristic Si-score, ranking, MongoDB, CLI, dry-run.  
+**Exit**: NbN phonon recovered; 50-candidate strain series ranked with complete Si-feasibility cards.
 
 **Phase 1** — EPW + Eliashberg, λ/Tc surrogates, active learning, improved buffers, MgB₂.
 
-**Phase 2** — DMFT + pairing pathway with the interfaces defined above, full membrane/interface modeling, multi-objective ranking.
+**Phase 2** — DMFT + pairing pathway, full membrane/interface modeling, multi-objective ranking.
 
-**Phase 3** — Josephson device metrics calculator (section 2.8), anisotropic options, proximity refinements, generative models.
+**Phase 3** — Josephson Junction Device Modeling module (this section):
+- Early: Tier-1 analytic estimates + fabrication compatibility heuristics on configurable shortlist.
+- Later: Usadel (and optional BdG) backends, tighter geometry/Silicon-Integration coupling.
 
 ---
 
-*This document (v0.2) is implementation-ready. A competent engineer familiar with the Python scientific stack, jobflow/pymatgen and Quantum ESPRESSO can begin coding modules directly from these specifications. All acceptance criteria, v0.1 vs later flags, and data-model contracts are explicit.*
+*This document (v0.3) is implementation-ready. The Josephson module is fully specified for a clean Phase-3 implementation while remaining completely inert in earlier phases. All acceptance criteria, version boundaries, and data-model contracts are explicit.*
