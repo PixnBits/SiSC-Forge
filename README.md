@@ -8,14 +8,22 @@ SiSC-Forge systematically searches for and evaluates silicon-compatible material
 
 This repository is organized for **spec-driven development**. The authoritative source of truth for requirements and architecture lives in the documentation:
 
-- **Product Requirements Document (PRD)**: [`docs/PRD/SiSC-Forge-PRD.md`](docs/PRD/SiSC-Forge-PRD.md)
-- **Technical Specifications**: [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md)
+- **Product Requirements Document (PRD)**: [`docs/PRD/SiSC-Forge-PRD.md`](docs/PRD/SiSC-Forge-PRD.md) — **Version 0.2**
+- **Technical Specifications**: [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) — **Version 0.2**
 
 All implementation, prioritization, and design decisions should be driven by these documents. Proposed changes to scope, architecture, or interfaces must first be reflected in the corresponding specification files.
 
 ## Current Status
 
-v0.1 Blueprint — Complete, implementation-ready Product Requirements and Technical Specifications are in place. Core codebase under development following the Phase 0 workstation-first plan.
+v0.2 Blueprint — Refined, implementation-ready Product Requirements and Technical Specifications are in place. Key improvements in v0.2:
+
+- Strengthened Silicon Integration & Interface Module (epitaxial matching, buffer stacks, thermal budget, membrane transfer, quantitative Feasibility Score)
+- Expanded Unconventional (DFT+U / DMFT + pairing) pathway with clear interfaces to ranking
+- New dedicated section for future Josephson junction device modeling (Ic, IcRn, gap, switching energy)
+- Explicit v0.1 vs later markers throughout
+- Sharper, more actionable Data Models, Configuration, and Output contracts
+
+Core codebase under development following the Phase 0 workstation-first plan.
 
 ## Key Capabilities (from Specs)
 
@@ -27,6 +35,7 @@ v0.1 Blueprint — Complete, implementation-ready Product Requirements and Techn
 - Workflow orchestration (jobflow / atomate2 style)
 - Multi-objective ranking by predicted Tc **and** silicon-integration feasibility score
 - Export of synthesis-relevant metadata
+- (Later) Simple Josephson device metrics for ranking
 
 ## Material Families
 
@@ -38,7 +47,7 @@ v0.1 Blueprint — Complete, implementation-ready Product Requirements and Techn
 
 ## Development Approach
 
-See the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for the phased roadmap (Phase 0 workstation foundation → Phase 1 conventional SC pipeline → Phase 2 unconventional + advanced Si integration).
+See the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for the phased roadmap (Phase 0 workstation foundation → Phase 1 conventional SC pipeline → Phase 2 unconventional + advanced Si integration → Phase 3 Josephson metrics).
 
 The platform is designed so that Phase 0 and Phase 1 can be fully validated on a single high-end workstation before large-scale compute is required.
 
