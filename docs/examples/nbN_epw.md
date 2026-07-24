@@ -2,6 +2,8 @@
 
 Workstation path for bulk rocksalt NbN electron-phonon coupling and Tc.
 
+**Install guide (Python + QE + EPW + pseudos):** see **[docs/SETUP.md](../SETUP.md)** (Tier C).
+
 ## Prerequisites
 
 1. Quantum ESPRESSO with **EPW** (`epw.x`) and **ph.x** / **pw.x**

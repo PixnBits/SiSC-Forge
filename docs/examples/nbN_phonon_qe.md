@@ -2,6 +2,8 @@
 
 This walkthrough runs the Phase-0 **golden system**: bulk rocksalt NbN SCF + Gamma-point DFPT phonon via the `qe` calculator.
 
+**Install guide (Python + QE + pseudos):** see **[docs/SETUP.md](../SETUP.md)** (Tier B).
+
 ## Prerequisites
 
 1. **Quantum ESPRESSO ≥ 7.2** with `pw.x` and `ph.x` on your `PATH`  

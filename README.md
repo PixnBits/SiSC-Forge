@@ -52,50 +52,35 @@ Phases 0–2 are fully workstation-validatable before any large allocation is re
 
 ## Getting Started
 
-1. Read the [PRD](docs/PRD/SiSC-Forge-PRD.md) for vision, goals, and success metrics.
-2. Read the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for module contracts, data models, and acceptance criteria.
-3. Follow the [Development Roadmap](docs/ROADMAP.md) for the ordered implementation plan and workstation validation gates.
+1. **Install & run** — follow **[docs/SETUP.md](docs/SETUP.md)** (Python, optional QE, optional EPW).
+2. Read the [PRD](docs/PRD/SiSC-Forge-PRD.md) for vision, goals, and success metrics.
+3. Read the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for module contracts and data models.
+4. Follow the [Development Roadmap](docs/ROADMAP.md) for phased implementation and validation gates.
 
-### Install (Phase 0 skeleton)
+### Quick start (this machine — Python only)
 
-Requires **Python ≥ 3.11**.
+Requires **Python ≥ 3.11**. No Quantum ESPRESSO needed for dry-run.
 
 ```bash
-python -m pip install -e ".[dev]"
+# from the repo root (e.g. projects/SiSC-Forge/main)
+uv venv .venv && source .venv/bin/activate   # or: python3 -m venv .venv
+uv pip install -e ".[dev]"                   # or: pip install -e ".[dev]"
 pytest -q
-```
-
-### Dry-run CLI
-
-Phase 0 provides data models, **structure generation**, **Si-feasibility scoring**, a **mock calculator**, and **QE recipes** (optional real DFT/phonon):
-
-```bash
-siscforge enumerate -c examples/nbti_n_strain.yaml
 siscforge run --dry-run examples/nbti_n_strain.yaml
-siscforge run --dry-run examples/dummy_campaign.yaml
-```
-
-### Real Quantum ESPRESSO (optional)
-
-Requires `pw.x` / `ph.x` on `PATH` and UPF pseudopotentials. See [docs/examples/nbN_phonon_qe.md](docs/examples/nbN_phonon_qe.md).
-
-```bash
-# edit dft.pseudo_dir in the YAML first
-siscforge run --calculator qe examples/nbn_phonon_qe.yaml
-```
-
-### EPW + isotropic Tc (Phase 1, optional)
-
-Requires `epw.x` (+ Wannier90). See [docs/examples/nbN_epw.md](docs/examples/nbN_epw.md).
-
-```bash
 siscforge run --dry-run examples/nbn_epw.yaml
-siscforge run --calculator qe-epw examples/nbn_epw.yaml
 ```
 
-`--dry-run` always uses the mock calculator (no QE/EPW required). If QE/EPW is requested but missing, the CLI fails with a clear message.
+Full tiers (QE phonon, EPW + NbN scientific gate, env vars, pseudos): **[docs/SETUP.md](docs/SETUP.md)**.
 
-See [docs/implementation-notes.md](docs/implementation-notes.md) for calculator switching and limitations.
+### Other short links
+
+| Topic | Doc |
+|-------|-----|
+| Setup (all tiers) | [docs/SETUP.md](docs/SETUP.md) |
+| NbN phonon (real QE) | [docs/examples/nbN_phonon_qe.md](docs/examples/nbN_phonon_qe.md) |
+| NbN EPW + Tc | [docs/examples/nbN_epw.md](docs/examples/nbN_epw.md) |
+| Implementation notes | [docs/implementation-notes.md](docs/implementation-notes.md) |
+| Phase 0 exit checklist | [docs/phase0-exit.md](docs/phase0-exit.md) |
 
 ## License
 
