@@ -8,22 +8,23 @@ SiSC-Forge systematically searches for and evaluates silicon-compatible material
 
 This repository is organized for **spec-driven development**. The authoritative source of truth for requirements and architecture lives in the documentation:
 
-- **Product Requirements Document (PRD)**: [`docs/PRD/SiSC-Forge-PRD.md`](docs/PRD/SiSC-Forge-PRD.md) — **Version 0.2**
-- **Technical Specifications**: [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) — **Version 0.2**
+- **Product Requirements Document (PRD)**: [`docs/PRD/SiSC-Forge-PRD.md`](docs/PRD/SiSC-Forge-PRD.md) — Version 0.2
+- **Technical Specifications**: [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) — **Version 0.3**
 
 All implementation, prioritization, and design decisions should be driven by these documents. Proposed changes to scope, architecture, or interfaces must first be reflected in the corresponding specification files.
 
 ## Current Status
 
-v0.2 Blueprint — Refined, implementation-ready Product Requirements and Technical Specifications are in place. Key improvements in v0.2:
+v0.3 Blueprint — Technical Specifications now contain a fully detailed **Josephson Junction Device Modeling module** (§2.8).
 
-- Strengthened Silicon Integration & Interface Module (epitaxial matching, buffer stacks, thermal budget, membrane transfer, quantitative Feasibility Score)
-- Expanded Unconventional (DFT+U / DMFT + pairing) pathway with clear interfaces to ranking
-- New dedicated section for future Josephson junction device modeling (Ic, IcRn, gap, switching energy)
-- Explicit v0.1 vs later markers throughout
-- Sharper, more actionable Data Models, Configuration, and Output contracts
+Key content in the JJ module:
+- Inputs required from the materials screening pipeline (gap, Tc / pairing eigenvalue, Si-feasibility data, optional geometry)
+- Tiered theoretical approaches: simple analytic estimates (Ambegaokar–Baratoff) → Usadel → optional BdG
+- Critical current density Jc, IcRn product, gap Δ, switching energy / speed proxies, fabrication compatibility (SIS / SNS / etc.)
+- Clear interface to the candidate ranking system (shortlist-only, optional secondary ranking, explicit “approximate / ranking only” labeling)
+- Explicit version boundaries: inert stub until Phase 3; Tier-1 analytic first, research-grade solvers later
 
-Core codebase under development following the Phase 0 workstation-first plan.
+Core materials-screening pipeline (Phases 0–2) remains unchanged and is still the immediate implementation focus.
 
 ## Key Capabilities (from Specs)
 
@@ -35,7 +36,7 @@ Core codebase under development following the Phase 0 workstation-first plan.
 - Workflow orchestration (jobflow / atomate2 style)
 - Multi-objective ranking by predicted Tc **and** silicon-integration feasibility score
 - Export of synthesis-relevant metadata
-- (Later) Simple Josephson device metrics for ranking
+- **(Phase 3)** Approximate Josephson device metrics (Jc, IcRn, gap, switching energy, fabrication compatibility) for top-ranked candidates
 
 ## Material Families
 
@@ -47,9 +48,14 @@ Core codebase under development following the Phase 0 workstation-first plan.
 
 ## Development Approach
 
-See the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for the phased roadmap (Phase 0 workstation foundation → Phase 1 conventional SC pipeline → Phase 2 unconventional + advanced Si integration → Phase 3 Josephson metrics).
+See the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for the phased roadmap:
 
-The platform is designed so that Phase 0 and Phase 1 can be fully validated on a single high-end workstation before large-scale compute is required.
+- Phase 0 – workstation foundation (nitrides + B:Si, phonon, Si-feasibility)
+- Phase 1 – conventional EPW + Eliashberg + active learning
+- Phase 2 – unconventional DMFT pathway + advanced Si integration
+- Phase 3 – Josephson Junction Device Modeling module (detailed in §2.8)
+
+The platform is designed so that Phases 0 and 1 can be fully validated on a single high-end workstation before large-scale compute is required.
 
 ## License
 
