@@ -8,6 +8,7 @@ for workstation Phase-0 use.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,23 +66,40 @@ def _run_cmd(
     stdout_path: Path,
     env: dict[str, str] | None = None,
 ) -> int:
-    """Run *cmd* in *cwd*, tee stdout/stderr to *stdout_path*."""
+    """Run *cmd* in *cwd*, tee stdout/stderr to *stdout_path*.
+
+    stdin is closed so MPI-linked QE binaries never wait on the TTY.
+    """
+    run_env = os.environ.copy()
+    # Avoid OpenMPI fabric probes hanging on desktop installs.
+    run_env.setdefault("OMPI_MCA_btl", "^openib")
+    if env:
+        run_env.update(env)
     with stdout_path.open("w", encoding="utf-8") as fh:
         proc = subprocess.run(
             cmd,
             cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
             stdout=fh,
             stderr=subprocess.STDOUT,
-            env=env,
+            env=run_env,
             check=False,
         )
     return int(proc.returncode)
 
 
 def _mpi_prefix(qe_env: QEEnvironment, nproc: int) -> list[str]:
-    if nproc <= 1 or not qe_env.mpirun:
+    """Wrap QE executables with mpirun when available.
+
+    Ubuntu/distro ``pw.x`` / ``ph.x`` / ``epw.x`` are typically OpenMPI-linked and
+    **hang if started without mpirun**, even for a single rank. Always launch
+    via mpirun when ``mpirun`` is on PATH.
+    """
+    if not qe_env.mpirun:
         return []
-    return [qe_env.mpirun, "-np", str(nproc)]
+    n = max(1, int(nproc))
+    # --oversubscribe helps single-node workstations with flexible rank counts
+    return [qe_env.mpirun, "--oversubscribe", "-np", str(n)]
 
 
 def run_pw(
@@ -97,14 +115,19 @@ def run_pw(
     qe_env = qe_env or require_qe(need_phonon=False)
     assert qe_env.pw is not None
 
-    work_dir = Path(work_dir)
+    work_dir = Path(work_dir).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
-    outdir = work_dir / "out"
+    outdir = (work_dir / "out").resolve()
     outdir.mkdir(exist_ok=True)
+
+    # Ensure pseudo_dir is absolute in the input deck
+    dft = config
+    if dft.pseudo_dir:
+        dft = dft.model_copy(update={"pseudo_dir": str(Path(dft.pseudo_dir).resolve())})
 
     pw_in = build_pw_input(
         structure,
-        config,
+        dft,
         calculation=calculation,
         prefix=prefix,
         outdir=str(outdir),
@@ -151,8 +174,8 @@ def run_ph(
     qe_env = qe_env or require_qe(need_phonon=True)
     assert qe_env.ph is not None
 
-    work_dir = Path(work_dir)
-    outdir = work_dir / "out"
+    work_dir = Path(work_dir).resolve()
+    outdir = (work_dir / "out").resolve()
     qpts = list(config.qpoints) + [2, 2, 2]
     nq1, nq2, nq3 = int(qpts[0]), int(qpts[1]), int(qpts[2])
 

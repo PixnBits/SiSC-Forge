@@ -231,11 +231,18 @@ epw.x not found; EPW / Eliashberg steps require Quantum ESPRESSO EPW.
 Exit code **3**. There is **no** silent fallback to mock when you pass `--calculator qe-epw`.  
 Use `--dry-run` for mock.
 
-### C.5 Reality check on first EPW runs
+### C.5 Reality check on first EPW / phonon runs
 
+- **Always launch via mpirun**: Ubuntu’s `pw.x` / `ph.x` / `epw.x` are OpenMPI-linked. Starting them bare (without `mpirun`) often **hangs with empty output**. SiSC-Forge wraps all QE calls with `mpirun --oversubscribe -np N` when `mpirun` is on `PATH` (default `N = dft.nproc`, minimum 1).
 - First real NbN EPW may take a long wall-time even at screening grids; use a few MPI ranks (e.g. `dft.nproc: 4`–`16` on a workstation).
 - Ubuntu QE **6.7** EPW inputs can differ slightly from 7.x; if `epw.x` rejects a keyword, treat the SiSC-Forge `epw.in` as a template and adjust (parser still accepts standard λ / ω_log / Tc lines).
 - Full production Wannier projections for metals are non-trivial; a failed first EPW is common — inspect `outputs/.../qe_work/**/epw.out`.
+
+If a previous run hung, stop it (`Ctrl+C`) and kill stragglers before retrying:
+
+```bash
+pkill -f 'pw.x|ph.x|epw.x'   # only if you are sure no other QE jobs matter
+```
 
 ---
 

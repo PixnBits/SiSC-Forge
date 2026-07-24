@@ -31,12 +31,6 @@ class EPWWorkflowResult(QEWorkflowResult):
     epw_steps: list[QEStepResult] = field(default_factory=list)
 
 
-def _mpi_prefix(qe_env: QEEnvironment, nproc: int) -> list[str]:
-    if nproc <= 1 or not qe_env.mpirun:
-        return []
-    return [qe_env.mpirun, "-np", str(nproc)]
-
-
 def run_epw(
     config: DFTConfig,
     work_dir: Path,
@@ -45,19 +39,22 @@ def run_epw(
     qe_env: QEEnvironment | None = None,
 ) -> tuple[QEStepResult, ElectronPhononResult | None]:
     """Write and run ``epw.x`` in *work_dir*; parse stdout into ElectronPhononResult."""
+    # Local import avoids circular issues; reuse MPI-safe launcher from recipes.
+    from siscforge.calculators.qe.recipes import _mpi_prefix, _run_cmd
+
     qe_env = qe_env or require_epw()
     assert qe_env.epw is not None
 
-    work_dir = Path(work_dir)
+    work_dir = Path(work_dir).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
-    outdir = work_dir / "out"
+    outdir = (work_dir / "out").resolve()
     outdir.mkdir(exist_ok=True)
 
     epw_text = build_epw_input(
         config,
         prefix=prefix,
         outdir=str(outdir),
-        dvscf_dir=str(work_dir / "save"),
+        dvscf_dir=str((work_dir / "save").resolve()),
     )
     in_path = work_dir / "epw.in"
     out_path = work_dir / "epw.out"
@@ -71,15 +68,7 @@ def run_epw(
         cmd.extend(["-npool", str(config.epw.npool)])
     cmd.extend(["-in", in_path.name])
 
-    with out_path.open("w", encoding="utf-8") as fh:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(work_dir),
-            stdout=fh,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-    rc = int(proc.returncode)
+    rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
     ok = rc == 0 and out_path.is_file()
     msg = f"epw.x rc={rc}"
     if not ok:
