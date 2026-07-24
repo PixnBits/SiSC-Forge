@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from siscforge.calculators.qe.parser import (
     parse_frequency_list,
     parse_ph_output,
@@ -36,6 +38,18 @@ def test_parse_ph_gamma_fixture() -> None:
     assert 500.0 < ph.max_frequency_cm1 < 520.0
     assert ph.has_imaginary_modes is False
     assert ph.dynamically_stable is True
+
+
+def test_parse_ph_qe7_dual_unit_format() -> None:
+    """QE ≥ 7 prints freq as THz then cm-1 on the same line."""
+    path = FIXTURES / "ph_qe7_dual_unit.out"
+    ph = parse_ph_output(path)
+    assert ph.status == "ok"
+    assert ph.n_modes == 6
+    assert ph.min_frequency_cm1 == pytest.approx(-248.561155, rel=1e-5)
+    assert ph.max_frequency_cm1 == pytest.approx(70.354733, rel=1e-5)
+    assert ph.has_imaginary_modes is True
+    assert ph.dynamically_stable is False
 
 
 def test_parse_ph_imaginary_fixture() -> None:

@@ -263,11 +263,29 @@ def _thz_to_cm1(thz: float) -> float:
 
 
 def parse_frequencies_from_text(text: str) -> list[float]:
-    """Best-effort extraction of phonon frequencies in cm⁻¹ from various dumps."""
+    """Best-effort extraction of phonon frequencies in cm⁻¹ from various dumps.
+
+    Handles:
+    - QE ≥ 7: ``freq ( 1) = -7.45 [THz] = -248.56 [cm-1]``
+    - QE 6.x: ``freq ( 1) = 248.56 [cm-1]`` or ``... = 12.3 i [cm-1]``
+    - phonopy YAML frequencies in THz
+    """
     freqs: list[float] = []
 
-    # Unified QE-style lines: freq ( N) = value [cm-1]  or  value i [cm-1]
-    # Imaginary modes (trailing "i") are stored as negative cm⁻¹.
+    # Prefer cm⁻¹ from dual-unit QE lines (THz then cm-1)
+    for m in re.finditer(
+        r"freq\s*\(\s*\d+\s*\)\s*=\s*[-\d.]+\s*\[THz\]\s*=\s*([-\d.]+)\s*(i)?\s*\[cm-1\]",
+        text,
+        re.IGNORECASE,
+    ):
+        val = float(m.group(1))
+        if m.group(2):
+            val = -abs(val)
+        freqs.append(val)
+    if freqs:
+        return freqs
+
+    # Single-unit QE lines: freq ( N) = value [cm-1]  or  value i [cm-1]
     for m in re.finditer(
         r"freq\s*\(\s*\d+\s*\)\s*=\s*([-\d.]+)\s*(i)?\s*\[cm-1\]",
         text,
@@ -280,7 +298,19 @@ def parse_frequencies_from_text(text: str) -> list[float]:
     if freqs:
         return freqs
 
-    # omega( 1) = 123.4 [cm-1]  (optional imaginary)
+    # omega( 1) = 123.4 [cm-1]  (optional imaginary); dual-unit first
+    for m in re.finditer(
+        r"omega\s*\(\s*\d+\s*\)\s*=\s*[-\d.]+\s*\[THz\]\s*=\s*([-\d.]+)\s*(i)?\s*\[cm-1\]",
+        text,
+        re.IGNORECASE,
+    ):
+        val = float(m.group(1))
+        if m.group(2):
+            val = -abs(val)
+        freqs.append(val)
+    if freqs:
+        return freqs
+
     for m in re.finditer(
         r"omega\s*\(\s*\d+\s*\)\s*=\s*([-\d.]+)\s*(i)?\s*\[cm-1\]",
         text,
