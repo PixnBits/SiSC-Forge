@@ -77,6 +77,7 @@ Full tiers (QE phonon, EPW + NbN scientific gate, env vars, pseudos): **[docs/SE
 | Topic | Doc |
 |-------|-----|
 | Setup (all tiers) | [docs/SETUP.md](docs/SETUP.md) |
+| Build working `ph.x` / EPW from source | [docs/build-qe-from-source.md](docs/build-qe-from-source.md) |
 | NbN phonon (real QE) | [docs/examples/nbN_phonon_qe.md](docs/examples/nbN_phonon_qe.md) |
 | NbN EPW + Tc | [docs/examples/nbN_epw.md](docs/examples/nbN_epw.md) |
 | Implementation notes | [docs/implementation-notes.md](docs/implementation-notes.md) |

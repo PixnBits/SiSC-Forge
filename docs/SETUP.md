@@ -250,25 +250,126 @@ If a previous run hung, stop it (`Ctrl+C`) and kill stragglers before retrying:
 pkill -f 'pw.x|ph.x|epw.x'   # only if you are sure no other QE jobs matter
 ```
 
-### C.6 Optional: build QE ≥ 7.2 from source (for working `ph.x` + EPW)
+### C.6 Build QE ≥ 7.2 from source (working `ph.x` + EPW)
+
+Ubuntu’s packaged `ph.x` (6.7) can abort with a fortify buffer overflow. Build a
+**private** QE ≥ 7.2 tree and put its `bin/` **before** `/usr/bin` on `PATH`.
+
+Full copy-paste procedure: see the “Build a working `ph.x`” section below
+(same content as the step-by-step used on the Ryzen workstation).
+
+#### Dependencies
 
 ```bash
-# Dependencies (Ubuntu)
-sudo apt-get install -y gfortran libblas-dev liblapack-dev libfftw3-dev \
-  libopenmpi-dev openmpi-bin wget tar
-
-mkdir -p $HOME/src && cd $HOME/src
-wget https://gitlab.com/QEF/q-e/-/archive/qe-7.3.1/q-e-qe-7.3.1.tar.bz2
-tar xf q-e-qe-7.3.1.tar.bz2 && cd q-e-qe-7.3.1
-./configure --enable-parallel --with-scalapack=no
-make -j"$(nproc)" pw ph pp epw
-export QE_BIN=$HOME/src/q-e-qe-7.3.1/bin
-export PATH="$QE_BIN:$PATH"
-# Point SiSC-Forge at this build (overrides /usr/bin)
-which pw.x ph.x epw.x
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential gfortran \
+  libblas-dev liblapack-dev libfftw3-dev \
+  libopenmpi-dev openmpi-bin \
+  wget tar
 ```
 
-Then re-run with `phonon_method: gamma` or `dfpt` and `qe-epw`.
+#### Download and compile (QE 7.3.1 — stable `./configure` path)
+
+```bash
+mkdir -p "$HOME/src" && cd "$HOME/src"
+wget -O q-e-qe-7.3.1.tar.bz2 \
+  https://gitlab.com/QEF/q-e/-/archive/qe-7.3.1/q-e-qe-7.3.1.tar.bz2
+tar xf q-e-qe-7.3.1.tar.bz2
+cd q-e-qe-7.3.1
+
+./configure --enable-parallel --with-scalapack=no
+make -j"$(nproc)" pw ph pp epw
+```
+
+Expect ~10–30 minutes on a modern desktop. Binaries land in `./bin/`.
+
+#### Put the new build first on PATH
+
+```bash
+# Session only
+export QE_BIN="$HOME/src/q-e-qe-7.3.1/bin"
+export PATH="$QE_BIN:$PATH"
+
+# Verify you are NOT still using /usr/bin
+which -a pw.x ph.x epw.x
+# first line of each should be .../q-e-qe-7.3.1/bin/...
+pw.x -v 2>&1 | head -5
+```
+
+Persist for future shells (optional):
+
+```bash
+echo 'export QE_BIN="$HOME/src/q-e-qe-7.3.1/bin"' >> ~/.bashrc
+echo 'export PATH="$QE_BIN:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Smoke-test `ph.x` (must show JOB DONE, no buffer overflow)
+
+```bash
+WORKDIR=/tmp/qe73_ph_smoke
+rm -rf "$WORKDIR" && mkdir -p "$WORKDIR/out" && cd "$WORKDIR"
+PSEUDO=/usr/share/espresso/pseudo
+
+cat > scf.in <<EOF
+&CONTROL
+  calculation='scf', outdir='$WORKDIR/out', prefix='x',
+  pseudo_dir='$PSEUDO'
+/
+&SYSTEM
+  ibrav=0, nat=2, ntyp=2, ecutwfc=40, ecutrho=320,
+  occupations='smearing', smearing='mv', degauss=0.02
+/
+&ELECTRONS
+  conv_thr=1.0d-8
+/
+ATOMIC_SPECIES
+ Nb 92.9 Nb.pbe-spn-kjpaw_psl.0.3.0.UPF
+ N  14.0 N.pbe-n-radius_5.UPF
+ATOMIC_POSITIONS crystal
+ Nb 0.0 0.0 0.0
+ N  0.5 0.5 0.5
+K_POINTS automatic
+  2 2 2 0 0 0
+CELL_PARAMETERS angstrom
+  4.392 0 0
+  0 4.392 0
+  0 0 4.392
+EOF
+
+mpirun --oversubscribe -np 1 pw.x -in scf.in < /dev/null > scf.out 2>&1
+grep 'JOB DONE' scf.out
+
+cat > ph.in <<EOF
+&inputph
+  tr2_ph=1.0d-12, prefix='x', outdir='$WORKDIR/out',
+  fildyn='x.dyn', ldisp=.false.
+/
+0.0 0.0 0.0
+EOF
+
+mpirun --oversubscribe -np 1 ph.x -in ph.in < /dev/null > ph.out 2>&1
+grep -E 'JOB DONE|buffer overflow' ph.out
+# Expect: JOB DONE   and no "buffer overflow"
+```
+
+#### Re-run SiSC-Forge with DFPT (not phonopy_fd)
+
+```bash
+cd ~/projects/SiSC-Forge/main
+source .venv/bin/activate
+export QE_BIN="$HOME/src/q-e-qe-7.3.1/bin"
+export PATH="$QE_BIN:$PATH"
+export SISCFORGE_PSEUDO_DIR=/usr/share/espresso/pseudo
+
+# Use gamma/dfpt, not phonopy_fd, for EPW readiness:
+# in examples/nbn_phonon_qe.yaml and examples/nbn_epw.yaml set:
+#   phonon_method: gamma
+
+siscforge run --calculator qe examples/nbn_phonon_qe.yaml
+siscforge run --calculator qe-epw examples/nbn_epw.yaml
+```
 
 ---
 
