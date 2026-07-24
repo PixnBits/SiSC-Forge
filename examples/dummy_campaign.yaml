@@ -1,0 +1,43 @@
+# Minimal SiSC-Forge campaign for Phase 0 dry-run demos.
+# Usage:
+#   siscforge run --dry-run examples/dummy_campaign.yaml
+
+name: dummy_nitride_dry_run
+description: >
+  Tiny mock campaign over a few TM nitrides under mild epitaxial strain.
+  No DFT is executed; the mock calculator fills schema-valid placeholders.
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+  formulas:
+    - NbN
+    - TiN
+    - ZrN
+    - Nb0.5Ti0.5N
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+    - -0.01
+  max_candidates: 5
+
+calculators:
+  - name: mock
+    parameters:
+      note: dry-run only
+
+ranking:
+  performance_weight: 0.6
+  si_feasibility_weight: 0.4
+  prefer_dynamically_stable: true
+
+josephson:
+  enabled: false
+
+output_dir: outputs/dummy_nitride_dry_run
+export_formats:
+  - json
+  - csv

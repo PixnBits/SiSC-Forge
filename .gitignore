@@ -99,6 +99,7 @@ cython_debug/
 # Scientific / project specific
 data/
 results/
+outputs/
 *.db
 *.sqlite
 *.h5

@@ -1,0 +1,58 @@
+# Nb-Ti-N composition + epitaxial strain series on Si(001)
+# Usage:
+#   siscforge run --dry-run examples/nbti_n_strain.yaml
+#   siscforge enumerate -c examples/nbti_n_strain.yaml
+
+name: nbti_n_si001_strain
+description: >
+  Small Nb-Ti-N rocksalt campaign: binary end-members plus ternary
+  Nb_x Ti_{1-x} N compositions under mild biaxial strain on Si(001).
+  Dry-run uses the mock calculator for SCF/phonon placeholders and the
+  real Phase-0 Silicon Feasibility scorer.
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+  # Binary end-members
+  metals:
+    - Nb
+    - Ti
+  # Ternary alloy grid (x = Nb fraction on metal sublattice)
+  ternary_metals:
+    - Nb
+    - Ti
+  x_values:
+    - 0.25
+    - 0.5
+    - 0.75
+  supercell: [2, 2, 1]
+  substrates:
+    - Si(001)
+  # Biaxial in-plane strain fractions relative to bulk
+  strain_values:
+    - -0.02
+    - 0.0
+    - 0.02
+  poisson_ratio: 0.25
+  seed: 42
+  max_candidates: 20
+
+calculators:
+  - name: mock
+    parameters:
+      note: dry-run only
+
+ranking:
+  performance_weight: 0.55
+  si_feasibility_weight: 0.45
+  prefer_dynamically_stable: true
+
+josephson:
+  enabled: false
+
+output_dir: outputs/nbti_n_si001_strain
+export_formats:
+  - json
+  - csv

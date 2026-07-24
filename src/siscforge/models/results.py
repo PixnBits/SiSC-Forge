@@ -1,0 +1,136 @@
+"""Calculation result models for Phase 0 / v0.1.
+
+Only the minimal fields needed for dry-run orchestration, ranking, and export
+are defined here. DFT parsers and EPW/DMFT fields arrive in later phases.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+from siscforge.models.provenance import Provenance
+
+
+class SCFResult(BaseModel):
+    """Minimal self-consistent field (or total-energy) result.
+
+    Populated by real QE calculators later; the mock calculator fills
+    placeholder values with ``status="mock"``.
+    """
+
+    total_energy_eV: float | None = None
+    """Total energy in eV (per formula unit when applicable)."""
+
+    energy_above_hull_eV_per_atom: float | None = None
+    """Formation / hull energy proxy used for pre-filtering."""
+
+    band_gap_eV: float | None = None
+    """Optional band gap; None for metals."""
+
+    is_metallic: bool | None = None
+    """Whether the SCF indicates a metallic ground state."""
+
+    status: str = "unknown"
+    """Run status: ``ok``, ``failed``, ``mock``, etc."""
+
+    quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
+    """Calculation quality tier."""
+
+    raw: dict[str, Any] = Field(default_factory=dict)
+    """Catch-all for engine-specific extras."""
+
+    provenance: Provenance = Field(default_factory=Provenance)
+
+
+class PhononResult(BaseModel):
+    """Minimal phonon / DFPT result for Phase 0 dynamical-stability checks."""
+
+    min_frequency_cm1: float | None = None
+    """Lowest phonon frequency in cm⁻¹ (negative ⇒ imaginary mode)."""
+
+    has_imaginary_modes: bool = False
+    """True if any physically meaningful imaginary modes were found."""
+
+    dynamically_stable: bool = True
+    """Convenience flag: not ``has_imaginary_modes`` under campaign thresholds."""
+
+    n_modes: int | None = None
+    """Total number of phonon modes reported (optional)."""
+
+    max_frequency_cm1: float | None = None
+    """Highest phonon frequency in cm⁻¹ (optional)."""
+
+    status: str = "unknown"
+    quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
+    raw: dict[str, Any] = Field(default_factory=dict)
+    provenance: Provenance = Field(default_factory=Provenance)
+
+
+class SiFeasibilityComponents(BaseModel):
+    """Individual terms that feed the composite Silicon Feasibility Score.
+
+    Each component is on a 0–100 scale (higher = more feasible). Weights are
+    applied in :class:`SiFeasibilityScore` / the scoring module (later).
+    """
+
+    lattice_mismatch: float = Field(default=50.0, ge=0.0, le=100.0)
+    """Score from epitaxial lattice mismatch to Si (or buffer)."""
+
+    thermal_budget: float = Field(default=50.0, ge=0.0, le=100.0)
+    """Score from process thermal-budget compatibility with CMOS."""
+
+    chemical_compatibility: float = Field(default=50.0, ge=0.0, le=100.0)
+    """Rule-based chemical / interdiffusion compatibility with Si."""
+
+    buffer_availability: float = Field(default=50.0, ge=0.0, le=100.0)
+    """Whether suitable buffer stacks exist in the library."""
+
+    process_maturity: float = Field(default=50.0, ge=0.0, le=100.0)
+    """Heuristic for industrial / lab process maturity of the family."""
+
+    @field_validator(
+        "lattice_mismatch",
+        "thermal_budget",
+        "chemical_compatibility",
+        "buffer_availability",
+        "process_maturity",
+    )
+    @classmethod
+    def _clamp_component(cls, v: float) -> float:
+        if not 0.0 <= v <= 100.0:
+            raise ValueError("Si-feasibility component scores must be in [0, 100]")
+        return float(v)
+
+
+class SiFeasibilityScore(BaseModel):
+    """Composite Silicon Feasibility Score (0–100) with component breakdown."""
+
+    total: float = Field(default=50.0, ge=0.0, le=100.0)
+    """Weighted composite score; higher means more Si-process friendly."""
+
+    components: SiFeasibilityComponents = Field(default_factory=SiFeasibilityComponents)
+    """Per-term breakdown for transparency and re-weighting."""
+
+    lattice_mismatch_pct: float | None = None
+    """Raw lattice mismatch percentage vs Si (or vs chosen buffer)."""
+
+    recommended_buffers: list[str] = Field(default_factory=list)
+    """Suggested buffer-layer stacks (names / formulas)."""
+
+    recommended_thickness_nm: tuple[float, float] | None = None
+    """Optional (min, max) recommended film thickness in nm."""
+
+    notes: str = ""
+    """Human-readable rationale or caveats."""
+
+    version: str = "0.1"
+    """Scoring-rule version for provenance."""
+
+    @field_validator("total")
+    @classmethod
+    def _validate_total(cls, v: float) -> float:
+        if not 0.0 <= v <= 100.0:
+            raise ValueError("Si-feasibility total score must be in [0, 100]")
+        return float(v)

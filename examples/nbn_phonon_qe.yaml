@@ -1,0 +1,70 @@
+# Single-candidate bulk NbN phonon campaign for real Quantum ESPRESSO runs.
+#
+# Prerequisites:
+#   - Quantum ESPRESSO ≥ 7.2 with pw.x and ph.x on PATH (or QE_BIN set)
+#   - Pseudopotentials for Nb and N (SSSP or PseudoDojo UPF)
+#   - pip install -e ".[qe]"   # optional jobflow
+#
+# Dry-run (no QE):
+#   siscforge run --dry-run examples/nbn_phonon_qe.yaml
+#
+# Real QE:
+#   export SISCFORGE_PSEUDO_DIR=/path/to/upf
+#   # edit dft.pseudo_dir below to the same path
+#   siscforge run --calculator qe examples/nbn_phonon_qe.yaml
+#
+# See docs/examples/nbN_phonon_qe.md for a full walkthrough.
+
+name: nbn_phonon_qe
+description: >
+  Golden-system bulk rocksalt NbN: optional vc-relax skipped by default;
+  SCF + Gamma-point DFPT phonon for dynamical-stability check.
+version: "0.1"
+dry_run: false
+
+enumeration:
+  material_families:
+    - tm_nitride
+  formulas:
+    - NbN
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 1
+
+calculators:
+  - name: qe
+    parameters: {}
+
+dft:
+  engine: qe
+  ecutwfc: 50.0
+  ecutrho: 400.0
+  kpoints: [4, 4, 4]
+  conv_thr: 1.0e-8
+  occupations: smearing
+  smearing: mv
+  degauss: 0.02
+  # REQUIRED for real runs — directory of *.upf files
+  pseudo_dir: null
+  # Optional explicit map (overrides auto-guess from pseudo_dir):
+  # pseudopotentials:
+  #   Nb: Nb.pbe-spn-kjpaw_psl.1.0.0.UPF
+  #   N:  N.pbe-n-kjpaw_psl.1.0.0.UPF
+  do_relax: false
+  do_phonon: true
+  phonon_method: gamma
+  quality_tag: screening
+  nproc: 1
+  work_dir: null
+
+ranking:
+  performance_weight: 0.5
+  si_feasibility_weight: 0.5
+  prefer_dynamically_stable: true
+
+output_dir: outputs/nbn_phonon_qe
+export_formats:
+  - json
+  - csv

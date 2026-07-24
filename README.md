@@ -56,6 +56,38 @@ Phases 0–2 are fully workstation-validatable before any large allocation is re
 2. Read the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for module contracts, data models, and acceptance criteria.
 3. Follow the [Development Roadmap](docs/ROADMAP.md) for the ordered implementation plan and workstation validation gates.
 
+### Install (Phase 0 skeleton)
+
+Requires **Python ≥ 3.11**.
+
+```bash
+python -m pip install -e ".[dev]"
+pytest -q
+```
+
+### Dry-run CLI
+
+Phase 0 provides data models, **structure generation**, **Si-feasibility scoring**, a **mock calculator**, and **QE recipes** (optional real DFT/phonon):
+
+```bash
+siscforge enumerate -c examples/nbti_n_strain.yaml
+siscforge run --dry-run examples/nbti_n_strain.yaml
+siscforge run --dry-run examples/dummy_campaign.yaml
+```
+
+### Real Quantum ESPRESSO (optional)
+
+Requires `pw.x` / `ph.x` on `PATH` and UPF pseudopotentials. See [docs/examples/nbN_phonon_qe.md](docs/examples/nbN_phonon_qe.md).
+
+```bash
+# edit dft.pseudo_dir in the YAML first
+siscforge run --calculator qe examples/nbn_phonon_qe.yaml
+```
+
+`--dry-run` always uses the mock calculator (no QE required). If QE is requested but missing, the CLI fails with a clear message.
+
+See [docs/implementation-notes.md](docs/implementation-notes.md) for calculator switching and limitations.
+
 ## License
 
 [MIT License](LICENSE)

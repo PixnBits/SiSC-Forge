@@ -1,0 +1,272 @@
+"""Parse Quantum ESPRESSO / phonopy-style outputs into SCFResult and PhononResult."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from siscforge import __version__
+from siscforge.models.provenance import Provenance
+from siscforge.models.results import PhononResult, SCFResult
+
+# Acoustic-mode noise floor: |ω| below this (cm⁻¹) is treated as numerical zero.
+DEFAULT_IMAG_THRESHOLD_CM1 = 5.0
+
+# Ry → eV
+_RY_TO_EV = 13.605693122994
+
+
+def summarize_frequencies(
+    frequencies_cm1: list[float],
+    *,
+    imag_threshold_cm1: float = DEFAULT_IMAG_THRESHOLD_CM1,
+) -> dict[str, Any]:
+    """Summarize a flat list of phonon frequencies (cm⁻¹).
+
+    Imaginary modes are represented as **negative** real numbers (QE convention
+    in many dumps) or as values with an ``i`` suffix already converted to negative.
+    """
+    if not frequencies_cm1:
+        return {
+            "min_frequency_cm1": None,
+            "max_frequency_cm1": None,
+            "n_modes": 0,
+            "has_imaginary_modes": False,
+            "dynamically_stable": True,
+            "n_imaginary": 0,
+        }
+
+    freqs = [float(f) for f in frequencies_cm1]
+    min_f = min(freqs)
+    max_f = max(freqs)
+    # Count modes clearly below -threshold (ignore tiny acoustic noise)
+    n_imag = sum(1 for f in freqs if f < -abs(imag_threshold_cm1))
+    has_imag = n_imag > 0
+    return {
+        "min_frequency_cm1": min_f,
+        "max_frequency_cm1": max_f,
+        "n_modes": len(freqs),
+        "has_imaginary_modes": has_imag,
+        "dynamically_stable": not has_imag,
+        "n_imaginary": n_imag,
+    }
+
+
+def parse_pw_energy_from_text(text: str) -> float | None:
+    """Extract final total energy in eV from pw.x stdout / PWOutput text."""
+    # Prefer the last "!    total energy" line (converged).
+    pattern = re.compile(
+        r"!\s*total energy\s*=\s*([-\d.Ee+]+)\s*Ry",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(text)
+    if matches:
+        return float(matches[-1]) * _RY_TO_EV
+
+    # Fallback: "total energy              =" without bang
+    pattern2 = re.compile(
+        r"total energy\s*=\s*([-\d.Ee+]+)\s*Ry",
+        re.IGNORECASE,
+    )
+    matches2 = pattern2.findall(text)
+    if matches2:
+        return float(matches2[-1]) * _RY_TO_EV
+    return None
+
+
+def parse_pw_output(
+    path_or_text: Path | str,
+    *,
+    quality_tag: str = "screening",
+    extra_raw: dict[str, Any] | None = None,
+) -> SCFResult:
+    """Parse a pw.x output file (or raw text) into :class:`SCFResult`."""
+    if isinstance(path_or_text, Path) or (
+        isinstance(path_or_text, str) and Path(path_or_text).is_file()
+    ):
+        path = Path(path_or_text)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        source_name = str(path)
+    else:
+        text = str(path_or_text)
+        source_name = "<string>"
+
+    energy = parse_pw_energy_from_text(text)
+    job_done = "JOB DONE" in text.upper() or "job done" in text.lower()
+    status = "ok" if energy is not None else ("failed" if not job_done else "ok")
+
+    # Metallic indicator: smearing / Fermi energy present
+    is_metallic = bool(
+        re.search(r"the Fermi energy is", text, re.IGNORECASE)
+        or re.search(r"occupations\s*=\s*['\"]?smearing", text, re.IGNORECASE)
+    )
+
+    raw: dict[str, Any] = {"source": source_name, "job_done": job_done}
+    if extra_raw:
+        raw.update(extra_raw)
+
+    # Attempt pymatgen PWOutput if file path
+    try:
+        if source_name != "<string>" and Path(source_name).is_file():
+            from pymatgen.io.pwscf import PWOutput
+
+            pwo = PWOutput(source_name)
+            if energy is None and getattr(pwo, "final_energy", None) is not None:
+                # pymatgen may return Ry or eV depending on version — store raw too
+                raw["pymatgen_final_energy"] = pwo.final_energy
+                energy = float(pwo.final_energy)
+                # Heuristic: if |E| < 50, likely already eV for tiny cells; NbN ~ hundreds Ry
+                # Leave as-is; user can inspect raw.
+    except Exception as exc:  # noqa: BLE001
+        raw["pymatgen_parse_error"] = str(exc)
+
+    return SCFResult(
+        total_energy_eV=energy,
+        energy_above_hull_eV_per_atom=None,
+        band_gap_eV=0.0 if is_metallic else None,
+        is_metallic=is_metallic if energy is not None else None,
+        status=status,
+        quality_tag=quality_tag,  # type: ignore[arg-type]
+        raw=raw,
+        provenance=Provenance(
+            source="qe_parser.pw",
+            software={"siscforge": __version__},
+            notes=f"parsed from {source_name}",
+        ),
+    )
+
+
+_FREQ_LINE = re.compile(
+    r"(?:freq\s*\(|omega\s*\(|frequency\s*=)\s*[^\d\-]*"
+    r"([-\d.]+)\s*(?:\[cm-1\]|cm-1|/cm|\[cm\^-1\])?",
+    re.IGNORECASE,
+)
+# phonopy band.yaml style: frequency: 1.234  (often THz)
+_PHONOPY_FREQ = re.compile(r"^\s*-\s*frequency:\s*([-\d.eE+]+)\s*$", re.MULTILINE)
+# Simple list: "frequencies:" then numbers
+_NUMBER = re.compile(r"([-\d.]+)\s*(?:i)?")
+
+
+def _thz_to_cm1(thz: float) -> float:
+    return thz * 33.35641
+
+
+def parse_frequencies_from_text(text: str) -> list[float]:
+    """Best-effort extraction of phonon frequencies in cm⁻¹ from various dumps."""
+    freqs: list[float] = []
+
+    # Unified QE-style lines: freq ( N) = value [cm-1]  or  value i [cm-1]
+    # Imaginary modes (trailing "i") are stored as negative cm⁻¹.
+    for m in re.finditer(
+        r"freq\s*\(\s*\d+\s*\)\s*=\s*([-\d.]+)\s*(i)?\s*\[cm-1\]",
+        text,
+        re.IGNORECASE,
+    ):
+        val = float(m.group(1))
+        if m.group(2):
+            val = -abs(val)
+        freqs.append(val)
+    if freqs:
+        return freqs
+
+    # omega( 1) = 123.4 [cm-1]  (optional imaginary)
+    for m in re.finditer(
+        r"omega\s*\(\s*\d+\s*\)\s*=\s*([-\d.]+)\s*(i)?\s*\[cm-1\]",
+        text,
+        re.IGNORECASE,
+    ):
+        val = float(m.group(1))
+        if m.group(2):
+            val = -abs(val)
+        freqs.append(val)
+    if freqs:
+        return freqs
+
+    # phonopy band.yaml / mesh.yaml frequencies in THz
+    ph_matches = _PHONOPY_FREQ.findall(text)
+    if ph_matches:
+        return [_thz_to_cm1(float(x)) for x in ph_matches]
+
+    # Explicit "frequencies_cm1:" JSON-ish list
+    m = re.search(r"frequencies_cm1\s*[:=]\s*\[([^\]]+)\]", text, re.IGNORECASE)
+    if m:
+        return [float(x) for x in re.findall(r"[-\d.eE+]+", m.group(1))]
+
+    return freqs
+
+
+def parse_ph_output(
+    path_or_text: Path | str,
+    *,
+    quality_tag: str = "screening",
+    imag_threshold_cm1: float = DEFAULT_IMAG_THRESHOLD_CM1,
+    extra_raw: dict[str, Any] | None = None,
+) -> PhononResult:
+    """Parse ph.x / matdyn / phonopy text into :class:`PhononResult`."""
+    if isinstance(path_or_text, Path) or (
+        isinstance(path_or_text, str) and Path(path_or_text).is_file()
+    ):
+        path = Path(path_or_text)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        source_name = str(path)
+    else:
+        text = str(path_or_text)
+        source_name = "<string>"
+
+    freqs = parse_frequencies_from_text(text)
+    summary = summarize_frequencies(freqs, imag_threshold_cm1=imag_threshold_cm1)
+    job_done = "JOB DONE" in text.upper() or bool(freqs)
+    status = "ok" if freqs else "failed"
+
+    raw: dict[str, Any] = {
+        "source": source_name,
+        "job_done": job_done,
+        "frequencies_cm1": freqs,
+        "n_imaginary": summary["n_imaginary"],
+        "imag_threshold_cm1": imag_threshold_cm1,
+    }
+    if extra_raw:
+        raw.update(extra_raw)
+
+    return PhononResult(
+        min_frequency_cm1=summary["min_frequency_cm1"],
+        max_frequency_cm1=summary["max_frequency_cm1"],
+        n_modes=summary["n_modes"] or None,
+        has_imaginary_modes=summary["has_imaginary_modes"],
+        dynamically_stable=summary["dynamically_stable"],
+        status=status,
+        quality_tag=quality_tag,  # type: ignore[arg-type]
+        raw=raw,
+        provenance=Provenance(
+            source="qe_parser.ph",
+            software={"siscforge": __version__},
+            notes=f"parsed from {source_name}",
+        ),
+    )
+
+
+def parse_frequency_list(
+    frequencies_cm1: list[float],
+    *,
+    quality_tag: str = "screening",
+    imag_threshold_cm1: float = DEFAULT_IMAG_THRESHOLD_CM1,
+) -> PhononResult:
+    """Build a :class:`PhononResult` from an explicit frequency list (cm⁻¹)."""
+    summary = summarize_frequencies(
+        frequencies_cm1, imag_threshold_cm1=imag_threshold_cm1
+    )
+    return PhononResult(
+        min_frequency_cm1=summary["min_frequency_cm1"],
+        max_frequency_cm1=summary["max_frequency_cm1"],
+        n_modes=summary["n_modes"] or None,
+        has_imaginary_modes=summary["has_imaginary_modes"],
+        dynamically_stable=summary["dynamically_stable"],
+        status="ok" if frequencies_cm1 else "failed",
+        quality_tag=quality_tag,  # type: ignore[arg-type]
+        raw={"frequencies_cm1": list(frequencies_cm1)},
+        provenance=Provenance(
+            source="qe_parser.frequency_list",
+            software={"siscforge": __version__},
+        ),
+    )

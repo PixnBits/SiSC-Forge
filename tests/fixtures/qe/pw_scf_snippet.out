@@ -1,0 +1,52 @@
+     Program PWSCF v.7.2 starts on  1Jan2024 at 12: 0: 0
+
+     Parallel version (MPI), running on     1 processors
+
+     Reading input from scf.in
+
+     Current dimensions of program PWSCF are:
+     Max number of different atomic species (ntypx) = 10
+     Max number of k-points (npk) =  40000
+     Max angular momentum in pseudopotentials (lmaxx) =  4
+
+     Subspace diagonalization in iterative solution of the eigenvalue problem:
+     one sub-group parallelization is active
+     using a serial algorithm
+
+     Parallelization info
+     --------------------
+     sticks:   dense  smooth     PW     G-vecs:    dense   smooth      PW
+     Min         123     123     45                 890      890     234
+     Max         123     123     45                 890      890     234
+     Sum         123     123     45                 890      890     234
+
+     Using Slab Decomposition
+
+     bravais-lattice index     =            2
+     lattice parameter (alat)  =       8.3000  a.u.
+     unit-cell volume          =     571.7872 (a.u.)^3
+     number of atoms/cell      =            2
+     number of atomic types    =            2
+     number of electrons       =         19.00
+     number of Kohn-Sham states=           14
+     kinetic-energy cutoff     =      50.0000  Ry
+     charge density cutoff     =     400.0000  Ry
+     convergence threshold     =      1.0E-08
+     mixing beta               =       0.7000
+     number of iterations used =            8  plain     mixing
+     Exchange-correlation= PBE
+                           (   1   4   3   4   0   0   0)
+
+     the Fermi energy is    12.3456 ev
+
+     !    total energy              =    -120.45678912 Ry
+     estimated scf accuracy    <       1.2E-09 Ry
+
+     The total energy is the sum of the following terms:
+
+     one-electron contribution =     -80.00000000 Ry
+     hartree contribution      =      40.00000000 Ry
+     xc contribution           =     -50.00000000 Ry
+     ewald contribution        =     -30.45678912 Ry
+
+     JOB DONE.

@@ -1,0 +1,212 @@
+"""Campaign configuration models (YAML-loadable)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+from pydantic import BaseModel, Field, field_validator
+
+
+class RankingConfig(BaseModel):
+    """Weights and options for multi-objective ranking."""
+
+    performance_weight: float = Field(default=0.6, ge=0.0, le=1.0)
+    si_feasibility_weight: float = Field(default=0.4, ge=0.0, le=1.0)
+    prefer_dynamically_stable: bool = True
+    """If True, candidates with imaginary phonons are demoted."""
+
+
+class EnumerationConfig(BaseModel):
+    """Parameters controlling structure enumeration.
+
+    Supported material families (Phase 0):
+    - ``tm_nitride``: binary rocksalt nitrides and simple ternary AₓB₁₋ₓN
+    - ``b_doped_si``: heavily boron-doped silicon supercells
+    """
+
+    material_families: list[str] = Field(default_factory=lambda: ["tm_nitride"])
+
+    formulas: list[str] = Field(default_factory=list)
+    """Optional explicit formulas (e.g. ``NbN``, ``Nb0.5Ti0.5N``).
+
+    When empty, binaries are taken from ``metals`` and ternaries from
+    ``ternary_metals`` × ``x_values``.
+    """
+
+    metals: list[str] = Field(default_factory=list)
+    """Transition metals for binary MN nitrides (default: Nb, Ti, Zr, Hf)."""
+
+    ternary_metals: list[str] = Field(default_factory=list)
+    """Exactly two metals for AₓB₁₋ₓN enumeration (e.g. ``[Nb, Ti]``)."""
+
+    x_values: list[float] = Field(default_factory=list)
+    """Stoichiometry grid for ternary AₓB₁₋ₓN (x = fraction of first metal)."""
+
+    substrates: list[str] = Field(default_factory=lambda: ["Si(001)"])
+    """Substrate labels used for strain application and Si-scoring."""
+
+    strain_values: list[float] = Field(default_factory=lambda: [0.0])
+    """Biaxial in-plane strain fractions applied to bulk (e.g. -0.02, 0.0, 0.02)."""
+
+    poisson_ratio: float = Field(default=0.25, ge=0.0, le=0.5)
+    """Poisson ratio used when relaxing the out-of-plane lattice under biaxial strain."""
+
+    supercell: list[int] = Field(default_factory=lambda: [2, 2, 1])
+    """Supercell size for ternary substitution (must yield enough metal sites)."""
+
+    b_concentrations: list[float] = Field(default_factory=list)
+    """B atomic fractions for ``b_doped_si`` (e.g. 0.05, 0.10)."""
+
+    bsi_supercell: list[int] = Field(default_factory=lambda: [2, 2, 2])
+    """Supercell for B:Si generation."""
+
+    seed: int = 42
+    """RNG seed for reproducible random-substitution ternaries."""
+
+    max_candidates: int = Field(default=50, ge=1)
+
+
+class CalculatorConfig(BaseModel):
+    """Which calculators to run and with what overrides."""
+
+    name: str = "mock"
+    """Registered calculator name (``mock``, ``qe``, ``quantum-espresso``)."""
+
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class DFTConfig(BaseModel):
+    """DFT / phonon engine settings for the Quantum ESPRESSO calculator.
+
+    Used when the active calculator is ``qe`` (ignored for mock / dry-run).
+    """
+
+    engine: Literal["mock", "qe"] = "mock"
+    """Preferred engine name (CLI ``--calculator`` overrides)."""
+
+    ecutwfc: float = 50.0
+    """Plane-wave kinetic-energy cutoff (Ry)."""
+
+    ecutrho: float = 400.0
+    """Charge-density cutoff (Ry)."""
+
+    kpoints: list[int] = Field(default_factory=lambda: [4, 4, 4])
+    """Monkhorst–Pack k-grid for SCF / relax."""
+
+    conv_thr: float = 1.0e-8
+    """Electronic convergence threshold (Ry)."""
+
+    forc_conv_thr: float = 1.0e-3
+    """Force convergence threshold for ionic relaxation (a.u.)."""
+
+    press_conv_thr: float = 0.5
+    """Pressure convergence threshold for cell relaxation (kbar)."""
+
+    occupations: str = "smearing"
+    smearing: str = "mv"
+    degauss: float = 0.02
+    """Marzari–Vanderbilt smearing width (Ry) for metals."""
+
+    pseudo_dir: str | None = None
+    """Directory containing UPF pseudopotentials. Required for real QE runs."""
+
+    pseudopotentials: dict[str, str] = Field(default_factory=dict)
+    """Element → UPF filename map. Auto-guessed from ``pseudo_dir`` when empty."""
+
+    work_dir: str | None = None
+    """Base working directory for QE runs (default: ``{output_dir}/qe_work``)."""
+
+    nproc: int = 1
+    """MPI ranks for ``pw.x`` / ``ph.x`` (``mpirun -np N`` when > 1)."""
+
+    phonon_method: Literal["dfpt", "gamma"] = "dfpt"
+    """``dfpt`` = ph.x DFPT; ``gamma`` = Gamma-only dynamical matrix (faster screen)."""
+
+    qpoints: list[int] = Field(default_factory=lambda: [2, 2, 2])
+    """q-grid for DFPT (ignored for pure Gamma)."""
+
+    tr2_ph: float = 1.0e-12
+    """DFPT threshold."""
+
+    do_relax: bool = True
+    """Run ionic/cell relaxation before SCF + phonon."""
+
+    do_phonon: bool = True
+    """Run phonon step after SCF."""
+
+    quality_tag: Literal["screening", "production"] = "screening"
+
+
+class JosephsonConfig(BaseModel):
+    """Josephson module settings (ignored until Phase 3)."""
+
+    enabled: bool = False
+    shortlist_size: int = 20
+    model_tier: str = "analytic_AB"
+    reference_area_um2: float = 1.0
+    assume_SIS: bool = True
+    temperature_K: float | None = None
+    secondary_ranking: bool = False
+
+
+class CampaignConfig(BaseModel):
+    """Top-level YAML campaign definition.
+
+    Load with :meth:`CampaignConfig.from_yaml` or validate a dict via
+    ``CampaignConfig.model_validate(...)``.
+    """
+
+    name: str = "unnamed_campaign"
+    description: str = ""
+    version: str = "0.1"
+
+    dry_run: bool = False
+    """Force mock calculator path when True (also set by CLI ``--dry-run``)."""
+
+    enumeration: EnumerationConfig = Field(default_factory=EnumerationConfig)
+    calculators: list[CalculatorConfig] = Field(
+        default_factory=lambda: [CalculatorConfig(name="mock")]
+    )
+    dft: DFTConfig = Field(default_factory=DFTConfig)
+    ranking: RankingConfig = Field(default_factory=RankingConfig)
+    josephson: JosephsonConfig = Field(default_factory=JosephsonConfig)
+
+    output_dir: str = "outputs"
+    export_formats: list[Literal["json", "csv"]] = Field(
+        default_factory=lambda: ["json"]
+    )
+
+    extras: dict[str, Any] = Field(default_factory=dict)
+    """Escape hatch for forward-compatible campaign keys."""
+
+    @field_validator("name")
+    @classmethod
+    def _name_nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("campaign name must be non-empty")
+        return v
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> CampaignConfig:
+        """Load and validate a campaign YAML file."""
+        path = Path(path)
+        with path.open(encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"Campaign YAML root must be a mapping: {path}")
+        return cls.model_validate(data)
+
+    def to_yaml(self, path: str | Path) -> None:
+        """Serialize this config to YAML (for debugging / templates)."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            yaml.safe_dump(
+                self.model_dump(mode="json"),
+                fh,
+                default_flow_style=False,
+                sort_keys=False,
+            )
