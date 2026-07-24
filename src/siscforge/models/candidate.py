@@ -78,6 +78,14 @@ class StructureCandidate(BaseModel):
     """How this candidate was generated (enumerator name, import, mock, …)."""
 
     metadata: dict[str, Any] = Field(default_factory=dict)
+    """Free-form extras (e.g. ``energy_above_hull_proxy``, filter notes)."""
+
+    energy_above_hull_proxy: float | None = None
+    """Heuristic E_hull proxy (eV/atom) from the Phase-0 formation filter."""
+
+    relaxed_structure_cif: str | None = None
+    """CIF of the geometry after QE relaxation (when available)."""
+
     provenance: Provenance = Field(default_factory=Provenance)
 
     @field_validator("formula")

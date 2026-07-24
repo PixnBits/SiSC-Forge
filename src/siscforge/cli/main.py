@@ -1,9 +1,9 @@
 """SiSC-Forge CLI entry point (``siscforge``).
 
 Phase 0 subcommands:
-  - ``enumerate`` — generate structure candidates (nitrides / B:Si + strain)
-  - ``rank``      — rank existing evaluation JSON
-  - ``run``       — load campaign, evaluate (dry-run/mock), rank, export
+  - ``enumerate`` — generate structure candidates (+ optional formation filter)
+  - ``rank``      — rank evaluations from JSON or a campaign store
+  - ``run``       — load campaign, filter, evaluate, rank, persist, export
 """
 
 from __future__ import annotations
@@ -19,15 +19,19 @@ from siscforge import __version__
 from siscforge.calculators import ensure_builtins_loaded, list_calculators
 from siscforge.calculators import get as get_calculator
 from siscforge.export import (
+    export_campaign_bundle,
     write_candidates_json,
     write_evaluations_csv,
     write_evaluations_json,
+    write_synthesis_cards,
 )
 from siscforge.models.candidate import CandidateEvaluation
 from siscforge.models.config import CampaignConfig
 from siscforge.ranking import rank_evaluations
 from siscforge.silicon.feasibility import score_si_feasibility
+from siscforge.store import EvaluationStore
 from siscforge.structure.generator import generate_candidates, generate_fake_candidates
+from siscforge.surrogates.formation import FormationEnergyFilter
 
 app = typer.Typer(
     name="siscforge",
@@ -96,6 +100,11 @@ def enumerate_cmd(
         "--score-si/--no-score-si",
         help="Attach Silicon Feasibility scores (printed as a column).",
     ),
+    apply_filter: bool = typer.Option(
+        True,
+        "--filter/--no-filter",
+        help="Apply campaign formation-energy pre-filter when a campaign is set.",
+    ),
 ) -> None:
     """Enumerate structure candidates (nitrides / B:Si + epitaxial strain)."""
     if campaign is not None:
@@ -109,9 +118,23 @@ def enumerate_cmd(
                 "strain_values": [0.0],
                 "max_candidates": n or 5,
             },
+            formation_filter={"enabled": False},
         )
 
     candidates = generate_candidates(config, n=n)
+    n_raw = len(candidates)
+
+    if apply_filter and campaign is not None:
+        filt = FormationEnergyFilter(config.formation_filter)
+        fres = filt.filter(candidates)
+        candidates = fres.kept
+        console.print(
+            f"[dim]Formation filter:[/dim] kept {fres.n_kept}/{n_raw} "
+            f"(rejected {fres.n_rejected})"
+        )
+    else:
+        candidates = [FormationEnergyFilter().annotate(c) for c in candidates]
+
     table = Table(title=f"Enumerated candidates ({len(candidates)})")
     table.add_column("ID", style="dim", max_width=12)
     table.add_column("Formula")
@@ -119,6 +142,7 @@ def enumerate_cmd(
     table.add_column("Substrate")
     table.add_column("Strain")
     table.add_column("a (Å)", justify="right")
+    table.add_column("E_hull*", justify="right")
     if score_si:
         table.add_column("Si-score", justify="right")
 
@@ -130,12 +154,16 @@ def enumerate_cmd(
             c.substrate or "—",
             f"{c.in_plane_strain:.3f}" if c.in_plane_strain is not None else "—",
             f"{c.lattice_abc[0]:.3f}" if c.lattice_abc else "—",
+            f"{c.energy_above_hull_proxy:.3f}"
+            if c.energy_above_hull_proxy is not None
+            else "—",
         ]
         if score_si:
             si = score_si_feasibility(c)
             row.append(f"{si.total:.1f}")
         table.add_row(*row)
     console.print(table)
+    console.print("[dim]* E_hull is a Phase-0 heuristic proxy (eV/atom), not DFT.[/dim]")
 
     if output is not None:
         path = write_candidates_json(candidates, output)
@@ -151,9 +179,8 @@ def enumerate_cmd(
 def rank_cmd(
     input_json: Path = typer.Argument(
         ...,
-        help="JSON file of CandidateEvaluation objects (list).",
+        help="JSON file of CandidateEvaluation objects (list), or a store directory.",
         exists=True,
-        dir_okay=False,
         readable=True,
     ),
     output: Path | None = typer.Option(
@@ -167,14 +194,26 @@ def rank_cmd(
         "--csv",
         help="Optional CSV summary path.",
     ),
+    markdown: Path | None = typer.Option(
+        None,
+        "--markdown",
+        "--md",
+        help="Optional Markdown synthesis cards path.",
+    ),
 ) -> None:
-    """Rank evaluation records from a JSON file and print a table."""
-    with input_json.open(encoding="utf-8") as fh:
-        raw = json.load(fh)
-    if not isinstance(raw, list):
-        raise typer.BadParameter("Input JSON must be a list of evaluations")
+    """Rank evaluation records from a JSON file or campaign store directory."""
+    if input_json.is_dir():
+        store = EvaluationStore(input_json)
+        evaluations = store.load_evaluations(ranked=False)
+        if not evaluations:
+            raise typer.BadParameter(f"No evaluations found in store {input_json}")
+    else:
+        with input_json.open(encoding="utf-8") as fh:
+            raw = json.load(fh)
+        if not isinstance(raw, list):
+            raise typer.BadParameter("Input JSON must be a list of evaluations")
+        evaluations = [CandidateEvaluation.model_validate(item) for item in raw]
 
-    evaluations = [CandidateEvaluation.model_validate(item) for item in raw]
     ranked = rank_evaluations(evaluations)
     _print_rank_table(ranked)
 
@@ -184,6 +223,13 @@ def rank_cmd(
     if csv_output is not None:
         path = write_evaluations_csv(ranked, csv_output)
         console.print(f"[green]Wrote[/green] {path}")
+    if markdown is not None:
+        path = write_synthesis_cards(ranked, markdown)
+        console.print(f"[green]Wrote[/green] {path}")
+
+    if input_json.is_dir():
+        store = EvaluationStore(input_json)
+        store.save_evaluations(ranked, ranked=True)
 
 
 # ---------------------------------------------------------------------------
@@ -240,26 +286,58 @@ def run_cmd(
         "-o",
         help="Override campaign output directory.",
     ),
+    no_filter: bool = typer.Option(
+        False,
+        "--no-filter",
+        help="Skip the formation-energy pre-filter.",
+    ),
 ) -> None:
-    """Load a campaign, evaluate candidates, rank, and export results."""
+    """Load a campaign, filter, evaluate candidates, rank, persist, and export."""
     config = CampaignConfig.from_yaml(campaign)
     if dry_run:
         config = config.model_copy(update={"dry_run": True})
 
     out = Path(output_dir) if output_dir is not None else Path(config.output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    store = EvaluationStore(out)
 
-    # 1. Enumerate real structures
+    # 1. Enumerate
     candidates = generate_candidates(config)
+    n_raw = len(candidates)
     console.print(
-        f"[bold]Campaign[/bold] {config.name}: {len(candidates)} structure candidates"
+        f"[bold]Campaign[/bold] {config.name}: {n_raw} structure candidates enumerated"
     )
 
-    # 2. Select calculator
+    # 2. Formation-energy pre-filter
+    filter_cfg = config.formation_filter
+    if no_filter:
+        filter_cfg = filter_cfg.model_copy(update={"enabled": False})
+    fres = FormationEnergyFilter(filter_cfg).filter(candidates)
+    candidates = fres.kept
+    store.save_filter_summary(
+        {
+            **fres.summary(),
+            "n_enumerated": n_raw,
+            "filter_config": filter_cfg.model_dump(mode="json"),
+        }
+    )
+    store.save_candidates(candidates)
+    if filter_cfg.enabled:
+        console.print(
+            f"[bold]Formation filter[/bold] kept {fres.n_kept}/{n_raw} "
+            f"(rejected {fres.n_rejected}, max E_hull={filter_cfg.max_e_hull_eV_per_atom})"
+        )
+    else:
+        console.print("[bold]Formation filter[/bold] disabled — keeping all candidates")
+
+    if not candidates:
+        console.print("[red]No candidates left after filtering.[/red]")
+        raise typer.Exit(code=1)
+
+    # 3. Select calculator
     calc_name = _resolve_calculator_name(
         config, dry_run=dry_run, calculator=calculator
     )
-    # Normalize aliases
     if calc_name in {"quantum-espresso", "quantum_espresso", "espresso"}:
         calc_name = "qe"
 
@@ -273,12 +351,12 @@ def run_cmd(
 
     calc_params: dict = {}
     for c in config.calculators:
-        if c.name in {calc_name, "qe", "quantum-espresso", "mock"}:
-            if c.name == calc_name or (calc_name == "qe" and c.name in {"qe", "quantum-espresso"}):
-                calc_params = dict(c.parameters)
-                break
+        if c.name == calc_name or (
+            calc_name == "qe" and c.name in {"qe", "quantum-espresso"}
+        ):
+            calc_params = dict(c.parameters)
+            break
 
-    # Inject campaign DFT settings for the QE calculator
     if calc_name == "qe":
         calc_params = {**calc_params, "dft": config.dft}
         if config.dft.work_dir is None:
@@ -291,14 +369,14 @@ def run_cmd(
     else:
         console.print(f"[bold]Calculator[/bold] {calc_name}")
 
-    # 3. Score Si-feasibility + evaluate
+    # 4. Score Si-feasibility + evaluate
     evaluations: list[CandidateEvaluation] = []
     for cand in candidates:
         si = score_si_feasibility(cand)
         params = {**calc_params, "si_feasibility": si}
         try:
             result = calc.run(cand, **params)
-        except Exception as exc:  # noqa: BLE001 — surface QENotAvailableError cleanly
+        except Exception as exc:  # noqa: BLE001
             from siscforge.calculators.qe import QENotAvailableError
 
             if isinstance(exc, QENotAvailableError):
@@ -308,24 +386,50 @@ def run_cmd(
             raise typer.Exit(code=1) from exc
         if not isinstance(result, CandidateEvaluation):
             raise typer.Exit(code=1)
-        # Ensure the real Si score is on the evaluation even if calculator ignores kwargs.
-        if result.si_feasibility is None or result.si_feasibility.version.endswith("mock"):
+        if result.si_feasibility is None or result.si_feasibility.version.endswith(
+            "mock"
+        ):
             result = result.model_copy(update={"si_feasibility": si})
+        # Keep annotated candidate (hull proxy) on the evaluation
+        if result.candidate.energy_above_hull_proxy is None:
+            result = result.model_copy(update={"candidate": cand})
         evaluations.append(result)
+        store.append_evaluation(result)
 
-    # 4. Rank
+    # 5. Rank + persist ranked
     ranked = rank_evaluations(evaluations, config.ranking)
+    store.save_evaluations(ranked, ranked=True)
+    store.save_evaluations(ranked, ranked=False)  # canonical evaluations.json
+    store.save_campaign(config)
+    store.save_meta(
+        {
+            "siscforge_version": __version__,
+            "calculator": calc_name,
+            "n_candidates": len(candidates),
+            "n_evaluations": len(ranked),
+            "campaign": config.name,
+        }
+    )
     _print_rank_table(ranked, title=f"Ranked results — {config.name}")
 
-    # 5. Export
-    json_path = write_evaluations_json(ranked, out / "evaluations.json")
-    console.print(f"[green]Wrote[/green] {json_path}")
-    if "csv" in config.export_formats:
-        csv_path = write_evaluations_csv(ranked, out / "evaluations.csv")
-        console.print(f"[green]Wrote[/green] {csv_path}")
-    write_candidates_json(candidates, out / "candidates.json")
-    config.to_yaml(out / "campaign_resolved.yaml")
-    console.print(f"[dim]Outputs in {out.resolve()}[/dim]")
+    # 6. Export bundle
+    formats = list(config.export_formats)
+    written = export_campaign_bundle(
+        ranked,
+        out,
+        formats=formats,
+        campaign_name=config.name,
+        candidates=candidates,
+    )
+    # Always write synthesis cards for Phase 0 polish
+    if "markdown" not in formats and "md" not in formats:
+        cards = write_synthesis_cards(
+            ranked, out / "synthesis_cards.md", campaign_name=config.name
+        )
+        written["markdown"] = cards
+    for label, path in written.items():
+        console.print(f"[green]Wrote[/green] {label}: {path}")
+    console.print(f"[dim]Store root: {store.root.resolve()}[/dim]")
 
 
 def _print_rank_table(
@@ -335,10 +439,13 @@ def _print_rank_table(
 ) -> None:
     table = Table(title=title)
     table.add_column("#", justify="right", style="cyan")
+    table.add_column("ID", style="dim", max_width=10)
     table.add_column("Formula")
+    table.add_column("Family")
     table.add_column("Strain", justify="right")
+    table.add_column("E_hull*", justify="right")
     table.add_column("Perf", justify="right")
-    table.add_column("Si-score", justify="right")
+    table.add_column("Si", justify="right")
     table.add_column("Composite", justify="right", style="bold")
     table.add_column("Stable")
     table.add_column("Status")
@@ -353,10 +460,15 @@ def _print_rank_table(
         strain = "—"
         if ev.candidate.in_plane_strain is not None:
             strain = f"{ev.candidate.in_plane_strain:+.3f}"
+        hull = ev.candidate.energy_above_hull_proxy
+        hull_s = f"{hull:.3f}" if hull is not None else "—"
         table.add_row(
             str(ev.rank or "—"),
+            ev.candidate.candidate_id[:8] + "…",
             ev.candidate.formula,
+            ev.candidate.material_family,
             strain,
+            hull_s,
             perf,
             si,
             comp,

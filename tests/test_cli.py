@@ -82,9 +82,12 @@ def test_run_dry_run(campaign_yaml: Path, tmp_path: Path) -> None:
     assert (out_dir / "evaluations.json").is_file()
     assert (out_dir / "candidates.json").is_file()
     assert (out_dir / "evaluations.csv").is_file()
+    assert (out_dir / "synthesis_cards.md").is_file()
+    assert (out_dir / "formation_filter.json").is_file()
+    assert (out_dir / "store_meta.json").is_file()
 
     evaluations = json.loads((out_dir / "evaluations.json").read_text())
-    assert 3 <= len(evaluations) <= 5
+    assert 1 <= len(evaluations) <= 5
     for item in evaluations:
         ev = CandidateEvaluation.model_validate(item)
         assert ev.status == "mock"

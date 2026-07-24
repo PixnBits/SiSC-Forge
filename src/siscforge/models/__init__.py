@@ -6,6 +6,7 @@ from siscforge.models.config import (
     CampaignConfig,
     DFTConfig,
     EnumerationConfig,
+    FormationFilterConfig,
     JosephsonConfig,
     RankingConfig,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "CandidateEvaluation",
     "DFTConfig",
     "EnumerationConfig",
+    "FormationFilterConfig",
     "JosephsonConfig",
     "PhononResult",
     "Provenance",

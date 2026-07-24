@@ -44,10 +44,17 @@ calculators:
     parameters:
       note: dry-run only
 
+formation_filter:
+  enabled: true
+  max_e_hull_eV_per_atom: 0.25
+  max_strain_magnitude: 0.05
+  keep_top_n: null
+
 ranking:
   performance_weight: 0.55
   si_feasibility_weight: 0.45
   prefer_dynamically_stable: true
+  prefer_low_hull: true
 
 josephson:
   enabled: false
@@ -56,3 +63,4 @@ output_dir: outputs/nbti_n_si001_strain
 export_formats:
   - json
   - csv
+  - markdown

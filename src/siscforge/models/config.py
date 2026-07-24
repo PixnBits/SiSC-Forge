@@ -17,6 +17,35 @@ class RankingConfig(BaseModel):
     prefer_dynamically_stable: bool = True
     """If True, candidates with imaginary phonons are demoted."""
 
+    prefer_low_hull: bool = True
+    """If True, lower energy_above_hull_proxy improves ranking slightly."""
+
+
+class FormationFilterConfig(BaseModel):
+    """Heuristic formation-energy pre-filter (Phase 0 stub; not a trained GNN).
+
+    Candidates with ``energy_above_hull_proxy`` above ``max_e_hull_eV_per_atom``
+    are dropped before expensive calculators run. Set ``enabled: false`` to
+    keep the full enumerated set.
+    """
+
+    enabled: bool = True
+    max_e_hull_eV_per_atom: float = Field(default=0.25, ge=0.0)
+    """Reject candidates whose hull proxy exceeds this (eV/atom)."""
+
+    max_strain_magnitude: float | None = Field(default=0.05, ge=0.0)
+    """Optional: reject |in_plane_strain| above this fraction (None = no limit)."""
+
+    prefer_families: list[str] = Field(
+        default_factory=lambda: ["tm_nitride", "b_doped_si", "mgb2_boride"]
+    )
+    """Families that receive a stability bonus in the proxy."""
+
+    keep_top_n: int | None = Field(default=None, ge=1)
+    """After filtering, keep only the N lowest-hull candidates (None = keep all)."""
+
+    version: str = "0.1-heuristic"
+
 
 class EnumerationConfig(BaseModel):
     """Parameters controlling structure enumeration.
@@ -121,8 +150,14 @@ class DFTConfig(BaseModel):
     nproc: int = 1
     """MPI ranks for ``pw.x`` / ``ph.x`` (``mpirun -np N`` when > 1)."""
 
-    phonon_method: Literal["dfpt", "gamma"] = "dfpt"
-    """``dfpt`` = ph.x DFPT; ``gamma`` = Gamma-only dynamical matrix (faster screen)."""
+    phonon_method: Literal["dfpt", "gamma", "phonopy_fd"] = "dfpt"
+    """``dfpt`` = ph.x DFPT; ``gamma`` = Gamma-only; ``phonopy_fd`` = optional FD."""
+
+    phonopy_supercell: list[int] = Field(default_factory=lambda: [2, 2, 2])
+    """Supercell for optional phonopy finite-displacement phonons."""
+
+    phonopy_distance: float = 0.01
+    """Displacement amplitude (Å) for phonopy FD (when enabled)."""
 
     qpoints: list[int] = Field(default_factory=lambda: [2, 2, 2])
     """q-grid for DFPT (ignored for pure Gamma)."""
@@ -170,12 +205,13 @@ class CampaignConfig(BaseModel):
         default_factory=lambda: [CalculatorConfig(name="mock")]
     )
     dft: DFTConfig = Field(default_factory=DFTConfig)
+    formation_filter: FormationFilterConfig = Field(default_factory=FormationFilterConfig)
     ranking: RankingConfig = Field(default_factory=RankingConfig)
     josephson: JosephsonConfig = Field(default_factory=JosephsonConfig)
 
     output_dir: str = "outputs"
-    export_formats: list[Literal["json", "csv"]] = Field(
-        default_factory=lambda: ["json"]
+    export_formats: list[Literal["json", "csv", "markdown"]] = Field(
+        default_factory=lambda: ["json", "csv"]
     )
 
     extras: dict[str, Any] = Field(default_factory=dict)

@@ -42,6 +42,14 @@ def compute_composite_score(
         if evaluation.phonon.has_imaginary_modes or not evaluation.phonon.dynamically_stable:
             composite *= 0.5
 
+    if config.prefer_low_hull:
+        hull = evaluation.candidate.energy_above_hull_proxy
+        if hull is None and evaluation.scf is not None:
+            hull = evaluation.scf.energy_above_hull_eV_per_atom
+        if hull is not None:
+            # Soft demotion: ~0 at 0 eV/atom, ~15% at 0.25 eV/atom
+            composite *= max(0.5, 1.0 - float(hull))
+
     return round(composite, 4)
 
 
