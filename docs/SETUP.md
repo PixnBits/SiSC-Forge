@@ -96,115 +96,105 @@ Outputs land under `outputs/<campaign_name>/` (JSON, CSV, synthesis cards).
 
 ---
 
-## Tier B — Quantum ESPRESSO (phonon / SCF only)
+## Tier B + C — Quantum ESPRESSO, EPW, and pseudos
 
-### B.1 Install Quantum ESPRESSO
+You need:
 
-You need at least:
+| Binary | Role | Tier |
+|--------|------|------|
+| `pw.x` | SCF / relax | B, C |
+| `ph.x` | DFPT phonon | B, C |
+| `epw.x` | Electron-phonon Wannier | C |
+| `wannier90.x` | Wannierization | C |
+| UPF files | Pseudopotentials (Nb, N, …) | B, C |
 
-| Binary | Role |
-|--------|------|
-| `pw.x` | SCF / relax |
-| `ph.x` | DFPT phonon |
+**When to install:** only if you want **real** DFT / phonon / EPW numbers (NbN scientific gate, MgB₂ golden, production campaigns). Skip if you are only developing Python/CLI logic — Tier A is enough.
 
-**Options (pick one):**
+**Machine note:** a high-core workstation (e.g. 16–32 cores, ≥64 GB RAM) is ideal. Screening NbN phonon is minutes–hours; full EPW is longer.
 
-1. **Distribution package** (if available): e.g. Ubuntu `quantum-espresso` (version may be older).
-2. **Source / official build** — [Quantum ESPRESSO](https://www.quantum-espresso.org/) ≥ 7.2 recommended.
-3. **Conda-forge** (when available for your platform):
+---
 
-   ```bash
-   conda install -c conda-forge qe
-   ```
+### Ubuntu / Debian packages (recommended on this project’s host)
 
-4. **Module system** on HPC: `module load quantum-espresso` (site-specific).
-
-Confirm:
+Ubuntu ships **QE 6.7** with `pw.x`, `ph.x`, **and** `epw.x`, plus an **SSSP** data package and **Wannier90**.  
+SiSC-Forge docs prefer QE ≥ 7.2 for production EPW, but **6.7 is fine for a first screening gate** (order-of-magnitude λ / Tc). Upgrade later if you need newer EPW features.
 
 ```bash
-which pw.x ph.x
-pw.x -v    # or check --help
+# One shot: Tier B + C binaries and SSSP UPFs (~70–150 MB download)
+sudo apt-get update
+sudo apt-get install -y \
+  quantum-espresso \
+  quantum-espresso-data-sssp \
+  wannier90 \
+  openmpi-bin
 ```
 
-If binaries are not on `PATH`, point SiSC-Forge at them:
+Verify:
 
 ```bash
-export QE_BIN=/path/to/qe/bin          # directory containing pw.x, ph.x
-# optional alias also accepted:
-# export QUANTUM_ESPRESSO_BIN=/path/to/qe/bin
+which pw.x ph.x epw.x wannier90.x
+pw.x -h 2>&1 | head -3
+ls /usr/share/espresso/pseudo/Nb*.UPF /usr/share/espresso/pseudo/N*.UPF
 ```
 
-### B.2 Pseudopotentials (UPF)
+SSSP files live at:
 
-SiSC-Forge does **not** vendor UPFs. Recommended: [SSSP efficiency (PBE)](https://www.materialscloud.org/discover/sssp/table/efficiency).
+```text
+/usr/share/espresso/pseudo/
+  Nb.pbe-spn-kjpaw_psl.0.3.0.UPF
+  N.pbe-n-radius_5.UPF
+  ...
+```
+
+Optional env for pytest / convenience:
 
 ```bash
-mkdir -p $HOME/pseudos/sssp_efficiency
-# Download Nb and N (and any other elements you need) UPFs into that directory
-export SISCFORGE_PSEUDO_DIR=$HOME/pseudos/sssp_efficiency
+export SISCFORGE_PSEUDO_DIR=/usr/share/espresso/pseudo
+# binaries are already on PATH via /usr/bin — no QE_BIN needed
 ```
 
-In campaign YAML (`examples/nbn_phonon_qe.yaml`):
+### Other install options
+
+1. **Source / official build** — [Quantum ESPRESSO](https://www.quantum-espresso.org/) ≥ 7.2 (best long-term for production EPW).
+2. **Conda-forge** (when packages exist for your platform): `conda install -c conda-forge qe`.
+3. **HPC modules**: `module load quantum-espresso` (site-specific).
+
+If binaries are not on `PATH`:
+
+```bash
+export QE_BIN=/path/to/qe/bin
+# also accepted: QUANTUM_ESPRESSO_BIN
+```
+
+### Configure campaigns to use system SSSP
+
+Edit YAML (or copy examples and patch `pseudo_dir`):
 
 ```yaml
+# examples/nbn_phonon_qe.yaml  and/or  examples/nbn_epw.yaml
 dft:
-  pseudo_dir: /home/YOU/pseudos/sssp_efficiency
-  # optional if auto-match fails:
+  pseudo_dir: /usr/share/espresso/pseudo
+  # optional explicit map if auto-match ever fails:
   # pseudopotentials:
-  #   Nb: Nb.pbe-....UPF
-  #   N:  N.pbe-....UPF
+  #   Nb: Nb.pbe-spn-kjpaw_psl.0.3.0.UPF
+  #   N:  N.pbe-n-radius_5.UPF
 ```
 
-### B.3 Run real phonon (no EPW)
+### B.3 Run real phonon only (Tier B)
 
 ```bash
 source .venv/bin/activate
-# edit dft.pseudo_dir in examples/nbn_phonon_qe.yaml first
+# ensure dft.pseudo_dir is set in the YAML
 siscforge run --calculator qe examples/nbn_phonon_qe.yaml
 ```
 
 Details: [docs/examples/nbN_phonon_qe.md](examples/nbN_phonon_qe.md).
 
----
-
-## Tier C — EPW + Wannier90 (Phase 1 scientific gate)
-
-### C.1 Extra binaries
-
-| Binary | Role |
-|--------|------|
-| `epw.x` | Electron-phonon Wannier (QE EPW package) |
-| `wannier90.x` | Wannierization (usually required with EPW) |
-
-QE must be **built with EPW** (not all minimal packages include `epw.x`).  
-Wannier90 is often installed separately: [wannier90.org](http://www.wannier.org/).
-
-```bash
-which epw.x wannier90.x
-export QE_BIN=/path/to/qe/bin   # if needed
-```
-
-### C.2 Configure the NbN EPW campaign
-
-Edit [examples/nbn_epw.yaml](../examples/nbn_epw.yaml):
-
-```yaml
-dft:
-  pseudo_dir: /home/YOU/pseudos/sssp_efficiency   # REQUIRED
-  do_epw: true
-  epw:
-    enabled: true
-    nkf: [6, 6, 6]    # screening; raise for production
-    nqf: [6, 6, 6]
-    mu_star: 0.10
-```
-
-### C.3 Run the Phase 1 scientific gate (bulk NbN)
+### C.3 Run the Phase 1 scientific gate (Tier C — bulk NbN EPW)
 
 ```bash
 source .venv/bin/activate
-export QE_BIN=/path/to/qe/bin              # if not on PATH
-export SISCFORGE_PSEUDO_DIR=$HOME/pseudos/sssp_efficiency
+export SISCFORGE_PSEUDO_DIR=/usr/share/espresso/pseudo
 
 siscforge run --calculator qe-epw examples/nbn_epw.yaml
 ```
@@ -217,13 +207,14 @@ siscforge run --calculator qe-epw examples/nbn_epw.yaml
 | ω_log | ~150 – 500 K |
 | Tc | ~8 – 25 K (exp. bulk NbN ~16 K) |
 
-Results: `outputs/nbn_epw_screening/evaluations.json` (fields `electron_phonon.lambda_total`, `Tc_allen_dynes` / `Tc_eliashberg`, `performance_score`).
+Results: `outputs/nbn_epw_screening/evaluations.json`  
+(`electron_phonon.lambda_total`, `Tc_allen_dynes` / `Tc_eliashberg`, `performance_score`).
 
-Optional pytest gate (same stack):
+Optional pytest gate:
 
 ```bash
 export SISCFORGE_RUN_EPW=1
-export SISCFORGE_PSEUDO_DIR=$HOME/pseudos/sssp_efficiency
+export SISCFORGE_PSEUDO_DIR=/usr/share/espresso/pseudo
 pytest tests/test_epw.py -k real_epw -v
 ```
 
@@ -233,13 +224,18 @@ Details: [docs/examples/nbN_epw.md](examples/nbN_epw.md).
 
 ```text
 QE not available:
-Quantum ESPRESSO is not available (pw.x not found).
 ...
 epw.x not found; EPW / Eliashberg steps require Quantum ESPRESSO EPW.
 ```
 
 Exit code **3**. There is **no** silent fallback to mock when you pass `--calculator qe-epw`.  
 Use `--dry-run` for mock.
+
+### C.5 Reality check on first EPW runs
+
+- First real NbN EPW may take a long wall-time even at screening grids; use a few MPI ranks (e.g. `dft.nproc: 4`–`16` on a workstation).
+- Ubuntu QE **6.7** EPW inputs can differ slightly from 7.x; if `epw.x` rejects a keyword, treat the SiSC-Forge `epw.in` as a template and adjust (parser still accepts standard λ / ω_log / Tc lines).
+- Full production Wannier projections for metals are non-trivial; a failed first EPW is common — inspect `outputs/.../qe_work/**/epw.out`.
 
 ---
 
