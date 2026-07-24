@@ -15,7 +15,7 @@ All implementation, prioritization, and design decisions should be driven by the
 
 ## Current Status
 
-v0.1 Blueprint — Complete, implementation-ready Product Requirements and Technical Specifications. Core codebase under development.
+v0.1 Blueprint — Complete, implementation-ready Product Requirements and Technical Specifications are in place. Core codebase under development following the Phase 0 workstation-first plan.
 
 ## Key Capabilities (from Specs)
 
@@ -44,7 +44,7 @@ The platform is designed so that Phase 0 and Phase 1 can be fully validated on a
 
 ## License
 
-MIT License (to be finalized).
+[MIT License](LICENSE)
 
 ## Contributing
 
