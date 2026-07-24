@@ -106,13 +106,67 @@ class CalculatorConfig(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
-class DFTConfig(BaseModel):
-    """DFT / phonon engine settings for the Quantum ESPRESSO calculator.
+class EPWConfig(BaseModel):
+    """Electron-phonon Wannier (EPW) + isotropic Tc settings (Phase 1).
 
-    Used when the active calculator is ``qe`` (ignored for mock / dry-run).
+    Workstation defaults are intentionally coarse (screening). Raise grids and
+    set ``quality_tag: production`` for production campaigns.
     """
 
-    engine: Literal["mock", "qe"] = "mock"
+    enabled: bool = False
+    """When True (or calculator is ``qe-epw``), run EPW after phonon."""
+
+    # Coarse (screening) vs denser grids — EPW nk/nq are interpolation grids
+    nkf: list[int] = Field(default_factory=lambda: [6, 6, 6])
+    """Fine k-grid for electron-phonon interpolation (screening default)."""
+
+    nqf: list[int] = Field(default_factory=lambda: [6, 6, 6])
+    """Fine q-grid for electron-phonon interpolation (screening default)."""
+
+    nkc: list[int] = Field(default_factory=lambda: [4, 4, 4])
+    """Coarse k-grid consistent with Wannierization / NSCF."""
+
+    nqc: list[int] = Field(default_factory=lambda: [2, 2, 2])
+    """Coarse q-grid (should match DFPT q-mesh when possible)."""
+
+    nbndsub: int | None = None
+    """Number of Wannier bands; None → leave for EPW auto / user .win."""
+
+    bands_skipped: int = 0
+    """Bands below the Wannier window to skip."""
+
+    mu_star: float = Field(default=0.10, ge=0.0, le=0.3)
+    """Coulomb pseudopotential μ* for Allen–Dynes / Eliashberg."""
+
+    fsthick: float = 0.4
+    """Fermi surface thickness (eV) for EPW sampling."""
+
+    degaussw: float = 0.05
+    """Smearing for electronic delta functions (eV)."""
+
+    degaussq: float = 0.05
+    """Smearing for phonons in EPW (eV)."""
+
+    eliashberg: bool = True
+    """If True, request isotropic Eliashberg in EPW when supported."""
+
+    allen_dynes_fallback: bool = True
+    """Always compute Allen–Dynes Tc from λ, ω_log as a robust fallback."""
+
+    wdata_prefix: str = "siscforge"
+    """Prefix for wannier90 / EPW data files."""
+
+    npool: int = 1
+    """EPW pools (passed to epw.x -npool when > 1)."""
+
+
+class DFTConfig(BaseModel):
+    """DFT / phonon / EPW engine settings for the Quantum ESPRESSO calculator.
+
+    Used when the active calculator is ``qe`` or ``qe-epw`` (ignored for mock).
+    """
+
+    engine: Literal["mock", "qe", "qe-epw"] = "mock"
     """Preferred engine name (CLI ``--calculator`` overrides)."""
 
     ecutwfc: float = 50.0
@@ -170,6 +224,12 @@ class DFTConfig(BaseModel):
 
     do_phonon: bool = True
     """Run phonon step after SCF."""
+
+    do_epw: bool = False
+    """Run EPW + isotropic Tc after phonon (requires epw.x). Also set via EPWConfig.enabled."""
+
+    epw: EPWConfig = Field(default_factory=EPWConfig)
+    """EPW / Eliashberg knobs (used when do_epw or calculator is qe-epw)."""
 
     quality_tag: Literal["screening", "production"] = "screening"
 

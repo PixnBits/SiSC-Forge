@@ -1,0 +1,68 @@
+# Bulk NbN EPW + isotropic Tc (Phase 1)
+#
+# Dry-run (mock e-ph moments, no QE/EPW):
+#   siscforge run --dry-run examples/nbn_epw.yaml
+#
+# Real EPW (requires pw.x, ph.x, epw.x, Wannier90, UPF for Nb+N):
+#   # set dft.pseudo_dir below
+#   siscforge run --calculator qe-epw examples/nbn_epw.yaml
+#
+# See docs/examples/nbN_epw.md
+
+name: nbn_epw_screening
+description: >
+  Single-candidate bulk rocksalt NbN: SCF + phonon + EPW screening grids
+  with Allen–Dynes / isotropic Eliashberg Tc.
+version: "0.1"
+dry_run: false
+
+enumeration:
+  material_families:
+    - tm_nitride
+  formulas:
+    - NbN
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 1
+
+calculators:
+  - name: qe-epw
+
+formation_filter:
+  enabled: false
+
+dft:
+  engine: qe-epw
+  ecutwfc: 50.0
+  ecutrho: 400.0
+  kpoints: [4, 4, 4]
+  qpoints: [2, 2, 2]
+  do_relax: false
+  do_phonon: true
+  do_epw: true
+  phonon_method: gamma
+  quality_tag: screening
+  pseudo_dir: null
+  epw:
+    enabled: true
+    nkf: [6, 6, 6]
+    nqf: [6, 6, 6]
+    nkc: [4, 4, 4]
+    nqc: [2, 2, 2]
+    mu_star: 0.10
+    eliashberg: true
+    allen_dynes_fallback: true
+    fsthick: 0.4
+
+ranking:
+  performance_weight: 0.65
+  si_feasibility_weight: 0.35
+  prefer_dynamically_stable: true
+
+output_dir: outputs/nbn_epw_screening
+export_formats:
+  - json
+  - csv
+  - markdown

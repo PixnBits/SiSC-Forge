@@ -6,12 +6,14 @@ from siscforge.models.config import (
     CampaignConfig,
     DFTConfig,
     EnumerationConfig,
+    EPWConfig,
     FormationFilterConfig,
     JosephsonConfig,
     RankingConfig,
 )
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
+    ElectronPhononResult,
     PhononResult,
     SCFResult,
     SiFeasibilityComponents,
@@ -23,6 +25,8 @@ __all__ = [
     "CampaignConfig",
     "CandidateEvaluation",
     "DFTConfig",
+    "EPWConfig",
+    "ElectronPhononResult",
     "EnumerationConfig",
     "FormationFilterConfig",
     "JosephsonConfig",

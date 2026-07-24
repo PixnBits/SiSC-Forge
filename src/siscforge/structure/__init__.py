@@ -6,6 +6,7 @@ from siscforge.structure.generator import (
     generate_candidates,
     structure_to_candidate,
 )
+from siscforge.structure.mgb2 import build_mgb2, mgb2_metadata
 from siscforge.structure.nitrides import (
     ROCKSALT_LATTICE_CONSTANTS,
     build_binary_nitride,
@@ -28,8 +29,10 @@ __all__ = [
     "apply_epitaxial_strain",
     "build_b_doped_si",
     "build_binary_nitride",
+    "build_mgb2",
     "build_ternary_nitride",
     "enumerate_b_doped_si",
+    "mgb2_metadata",
     "enumerate_from_config",
     "enumerate_nitrides",
     "generate_candidates",

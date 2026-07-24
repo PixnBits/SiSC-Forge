@@ -12,6 +12,7 @@ from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import CampaignConfig, EnumerationConfig
 from siscforge.models.provenance import Provenance
 from siscforge.structure.bsi import enumerate_b_doped_si
+from siscforge.structure.mgb2 import build_mgb2, mgb2_metadata
 from siscforge.structure.nitrides import (
     composition_fractions,
     enumerate_nitrides,
@@ -125,6 +126,17 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
             )
             for structure, meta in pairs:
                 bulk_items.append((structure, meta, "b_doped_si"))
+        elif family == "mgb2_boride":
+            # Phase 1 skeleton: bulk MgB2 prototype (optionally listed formulas)
+            formulas = enum.formulas or ["MgB2"]
+            for formula in formulas:
+                if formula.replace("₂", "2").upper() not in {"MGB2", "MG B2"}:
+                    # Still allow only MgB2 for now
+                    if "Mg" not in formula or "B" not in formula:
+                        continue
+                structure = build_mgb2()
+                meta = {**mgb2_metadata(), "formula": "MgB2", "kind": "binary"}
+                bulk_items.append((structure, meta, "mgb2_boride"))
         else:
             # Unknown family: skip rather than hard-fail so mixed campaigns work.
             continue

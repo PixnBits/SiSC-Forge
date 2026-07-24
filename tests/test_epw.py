@@ -1,0 +1,191 @@
+"""Phase 1 EPW / Allen–Dynes / ElectronPhononResult tests (mock-safe)."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from siscforge.calculators import get, list_calculators
+from siscforge.calculators.qe.eliashberg import allen_dynes_tc, isotropic_eliashberg_tc_from_moments
+from siscforge.calculators.qe.env import epw_available
+from siscforge.calculators.qe.epw_parser import parse_epw_output
+from siscforge.calculators.qe.epw_recipes import electron_phonon_from_lambda_omega
+from siscforge.calculators.qe.epw_references import (
+    NBN_FIXTURE_LAMBDA,
+    NBN_FIXTURE_MU_STAR,
+    NBN_FIXTURE_OMEGA_LOG_K,
+    NBN_LAMBDA_RANGE,
+    NBN_OMEGA_LOG_K_RANGE,
+    NBN_TC_K_RANGE,
+)
+from siscforge.models.candidate import CandidateEvaluation
+from siscforge.models.config import DFTConfig, EPWConfig
+from siscforge.models.results import ElectronPhononResult
+from siscforge.ranking import rank_evaluations
+from siscforge.structure.generator import structure_to_candidate
+from siscforge.structure.mgb2 import build_mgb2
+from siscforge.structure.nitrides import build_binary_nitride
+
+FIXTURES = Path(__file__).parent / "fixtures" / "qe"
+
+
+def test_qe_epw_registered() -> None:
+    names = list_calculators()
+    assert "qe-epw" in names
+    assert "epw" in names
+    assert get("qe-epw").name == "qe-epw"
+
+
+def test_allen_dynes_known_range() -> None:
+    # Classic strong-coupling-ish: λ=1.0, ω_log=300 K, μ*=0.1 → Tc ~ 15–20 K
+    tc = allen_dynes_tc(1.0, 300.0, 0.1)
+    assert 5.0 < tc < 40.0
+    assert allen_dynes_tc(0.0, 300.0, 0.1) == 0.0
+    assert allen_dynes_tc(0.2, 300.0, 0.25) == 0.0  # denom non-positive
+
+
+def test_parse_epw_fixture() -> None:
+    path = FIXTURES / "epw_nbn_snippet.out"
+    eph = parse_epw_output(path, mu_star=0.1, quality_tag="screening")
+    assert eph.lambda_total == pytest.approx(1.048, rel=1e-3)
+    assert eph.omega_log is not None
+    # 24.15 meV → K
+    assert eph.omega_log == pytest.approx(24.15 * 11.6045, rel=1e-2)
+    assert eph.Tc_allen_dynes is not None
+    assert eph.Tc_allen_dynes > 5.0
+    assert eph.converged is True
+    assert eph.status == "ok"
+    assert eph.best_tc_K() is not None
+
+
+def test_nbn_fixture_moments_in_reference_range() -> None:
+    eph = electron_phonon_from_lambda_omega(
+        NBN_FIXTURE_LAMBDA,
+        NBN_FIXTURE_OMEGA_LOG_K,
+        mu_star=NBN_FIXTURE_MU_STAR,
+    )
+    assert NBN_LAMBDA_RANGE[0] <= eph.lambda_total <= NBN_LAMBDA_RANGE[1]
+    assert NBN_OMEGA_LOG_K_RANGE[0] <= eph.omega_log <= NBN_OMEGA_LOG_K_RANGE[1]
+    tc = eph.best_tc_K()
+    assert tc is not None
+    assert NBN_TC_K_RANGE[0] <= tc <= NBN_TC_K_RANGE[1]
+
+
+def test_mock_fills_electron_phonon() -> None:
+    s = build_binary_nitride("Nb")
+    cand = structure_to_candidate(s, material_family="tm_nitride", formula="NbN")
+    result = get("mock").run(cand)
+    assert isinstance(result, CandidateEvaluation)
+    assert result.electron_phonon is not None
+    assert result.electron_phonon.status == "mock"
+    assert result.performance_score is not None
+    assert result.performance_score == pytest.approx(
+        result.electron_phonon.Tc_allen_dynes, rel=1e-6
+    )
+
+
+def test_ranking_prefers_higher_tc() -> None:
+    calc = get("mock")
+    low = calc.run(
+        structure_to_candidate(
+            build_binary_nitride("Nb"),
+            material_family="tm_nitride",
+            formula="NbN",
+        )
+    )
+    high = low.model_copy(
+        update={
+            "performance_score": 30.0,
+            "electron_phonon": ElectronPhononResult(
+                lambda_total=1.2,
+                omega_log=300.0,
+                Tc_allen_dynes=30.0,
+                converged=True,
+                status="mock",
+                quality_tag="mock",
+            ),
+            "candidate": low.candidate.model_copy(
+                update={"candidate_id": "high-tc-id"}
+            ),
+        }
+    )
+    low = low.model_copy(
+        update={
+            "performance_score": 5.0,
+            "candidate": low.candidate.model_copy(
+                update={"candidate_id": "low-tc-id"}
+            ),
+        }
+    )
+    ranked = rank_evaluations([low, high])
+    assert ranked[0].candidate.candidate_id == "high-tc-id"
+    assert ranked[0].performance_score == 30.0
+
+
+def test_mgb2_structure() -> None:
+    s = build_mgb2()
+    assert len(s) == 3
+    assert s.composition.reduced_formula in {"MgB2", "B2Mg"}
+    cand = structure_to_candidate(s, material_family="mgb2_boride", formula="MgB2")
+    assert cand.material_family == "mgb2_boride"
+    assert cand.structure_cif
+
+
+def test_epw_config_round_trip() -> None:
+    cfg = DFTConfig(
+        do_epw=True,
+        epw=EPWConfig(enabled=True, nkf=[8, 8, 8], mu_star=0.12),
+    )
+    data = cfg.model_dump()
+    restored = DFTConfig.model_validate(data)
+    assert restored.do_epw is True
+    assert restored.epw.nkf == [8, 8, 8]
+    assert restored.epw.mu_star == 0.12
+
+
+def test_isotropic_eliashberg_factor() -> None:
+    tc0 = allen_dynes_tc(1.2, 300.0, 0.1)
+    tc1 = isotropic_eliashberg_tc_from_moments(1.2, 300.0, 0.1, omega_2_K=400.0)
+    assert tc1 >= tc0 * 0.9  # correction should not collapse Tc
+
+
+@pytest.mark.skipif(
+    os.environ.get("SISCFORGE_RUN_EPW") != "1",
+    reason="Set SISCFORGE_RUN_EPW=1 for real EPW NbN regression",
+)
+@pytest.mark.skipif(not epw_available(), reason="epw.x not available")
+def test_nbn_real_epw_optional(tmp_path: Path) -> None:
+    """Optional real EPW on bulk NbN (screening grids)."""
+    pseudo = os.environ.get("SISCFORGE_PSEUDO_DIR")
+    if not pseudo:
+        pytest.skip("SISCFORGE_PSEUDO_DIR not set")
+
+    cand = structure_to_candidate(
+        build_binary_nitride("Nb"),
+        material_family="tm_nitride",
+        formula="NbN",
+    )
+    calc = get("qe-epw")
+    dft = DFTConfig(
+        engine="qe-epw",
+        ecutwfc=40.0,
+        ecutrho=320.0,
+        kpoints=[2, 2, 2],
+        qpoints=[1, 1, 1],
+        pseudo_dir=pseudo,
+        do_relax=False,
+        do_phonon=True,
+        do_epw=True,
+        phonon_method="gamma",
+        epw=EPWConfig(enabled=True, nkf=[4, 4, 4], nqf=[4, 4, 4], mu_star=0.1),
+        quality_tag="screening",
+        work_dir=str(tmp_path / "epw_nbn"),
+    )
+    result = calc.run(cand, dft=dft, work_dir=str(tmp_path / "epw_nbn"))
+    assert result.electron_phonon is not None
+    assert result.electron_phonon.lambda_total is not None
+    assert result.performance_score is not None
+    lo, hi = NBN_TC_K_RANGE
+    assert lo * 0.5 <= result.performance_score <= hi * 1.5

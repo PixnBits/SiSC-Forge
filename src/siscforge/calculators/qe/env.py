@@ -20,6 +20,8 @@ class QEEnvironment:
     ph: str | None = None
     q2r: str | None = None
     matdyn: str | None = None
+    epw: str | None = None
+    wannier90: str | None = None
     mpirun: str | None = None
     jobflow: bool = False
     notes: list[str] = field(default_factory=list)
@@ -32,6 +34,11 @@ class QEEnvironment:
     @property
     def phonon_available(self) -> bool:
         return self.pw is not None and self.ph is not None
+
+    @property
+    def epw_available(self) -> bool:
+        """True when epw.x is present (wannier90 recommended but optional for detection)."""
+        return self.epw is not None
 
 
 def _which(name: str) -> str | None:
@@ -54,6 +61,8 @@ def detect_qe_environment() -> QEEnvironment:
     ph = resolve("ph.x")
     q2r = resolve("q2r.x")
     matdyn = resolve("matdyn.x")
+    epw = resolve("epw.x")
+    wannier90 = resolve("wannier90.x") or _which("wannier90.x")
     mpirun = _which("mpirun") or _which("mpiexec")
 
     if not pw:
@@ -62,12 +71,22 @@ def detect_qe_environment() -> QEEnvironment:
         )
     if pw and not ph:
         notes.append("ph.x not found; phonon (DFPT) steps will fail.")
+    if not epw:
+        notes.append(
+            "epw.x not found; EPW / Eliashberg steps require Quantum ESPRESSO EPW."
+        )
+    if epw and not wannier90:
+        notes.append(
+            "wannier90.x not found; EPW typically needs Wannier90 on PATH."
+        )
 
     return QEEnvironment(
         pw=pw,
         ph=ph,
         q2r=q2r,
         matdyn=matdyn,
+        epw=epw,
+        wannier90=wannier90,
         mpirun=mpirun,
         jobflow=jobflow_available(),
         notes=notes,
@@ -89,7 +108,7 @@ def qe_available() -> bool:
     return detect_qe_environment().available
 
 
-def require_qe(*, need_phonon: bool = True) -> QEEnvironment:
+def require_qe(*, need_phonon: bool = True, need_epw: bool = False) -> QEEnvironment:
     """Return a validated :class:`QEEnvironment` or raise :class:`QENotAvailableError`."""
     env = detect_qe_environment()
     if not env.available:
@@ -108,4 +127,26 @@ def require_qe(*, need_phonon: bool = True) -> QEEnvironment:
             "Install the full Quantum ESPRESSO suite, or set dft.do_phonon: false "
             "for SCF-only runs."
         )
+    if need_epw and not env.epw_available:
+        raise QENotAvailableError(
+            "epw.x not found. Electron-phonon (EPW) requires Quantum ESPRESSO built with EPW.\n"
+            "Install QE with EPW support, ensure epw.x is on PATH (or set QE_BIN),\n"
+            "and typically install Wannier90 (wannier90.x).\n"
+            "For dry-run without EPW: siscforge run --dry-run <campaign.yaml>\n"
+            "Or disable EPW: dft.do_epw: false / use --calculator qe without EPW."
+        )
     return env
+
+
+class EPWNotAvailableError(QENotAvailableError):
+    """Alias for EPW-specific availability failures."""
+
+
+def epw_available() -> bool:
+    """Return True if ``epw.x`` is on PATH."""
+    return detect_qe_environment().epw_available
+
+
+def require_epw() -> QEEnvironment:
+    """Require pw.x, ph.x, and epw.x for a full conventional pathway run."""
+    return require_qe(need_phonon=True, need_epw=True)

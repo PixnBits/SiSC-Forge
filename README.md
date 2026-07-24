@@ -84,7 +84,16 @@ Requires `pw.x` / `ph.x` on `PATH` and UPF pseudopotentials. See [docs/examples/
 siscforge run --calculator qe examples/nbn_phonon_qe.yaml
 ```
 
-`--dry-run` always uses the mock calculator (no QE required). If QE is requested but missing, the CLI fails with a clear message.
+### EPW + isotropic Tc (Phase 1, optional)
+
+Requires `epw.x` (+ Wannier90). See [docs/examples/nbN_epw.md](docs/examples/nbN_epw.md).
+
+```bash
+siscforge run --dry-run examples/nbn_epw.yaml
+siscforge run --calculator qe-epw examples/nbn_epw.yaml
+```
+
+`--dry-run` always uses the mock calculator (no QE/EPW required). If QE/EPW is requested but missing, the CLI fails with a clear message.
 
 See [docs/implementation-notes.md](docs/implementation-notes.md) for calculator switching and limitations.
 

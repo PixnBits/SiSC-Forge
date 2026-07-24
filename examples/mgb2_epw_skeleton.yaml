@@ -1,0 +1,56 @@
+# MgB₂ EPW skeleton campaign (Phase 1)
+# Structure prototype is available via siscforge.structure.mgb2.
+# Full golden Tc recovery is the next follow-up session.
+#
+# Dry-run:
+#   siscforge run --dry-run examples/mgb2_epw_skeleton.yaml
+#
+# Note: enumeration currently uses formula labels; attach build_mgb2()
+# structures via a future enumerator hook or custom script for real EPW.
+
+name: mgb2_epw_skeleton
+description: >
+  Skeleton campaign for bulk MgB2 conventional pathway. Use dry-run to
+  exercise ranking with mock e-ph; point pseudo_dir + qe-epw for real runs
+  after Wannier projections are prepared.
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families:
+    - mgb2_boride
+  formulas:
+    - MgB2
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 1
+
+calculators:
+  - name: mock
+
+formation_filter:
+  enabled: false
+
+dft:
+  engine: qe-epw
+  do_relax: false
+  do_phonon: true
+  do_epw: true
+  quality_tag: screening
+  pseudo_dir: null
+  epw:
+    enabled: true
+    nkf: [8, 8, 8]
+    nqf: [8, 8, 8]
+    mu_star: 0.10
+
+ranking:
+  performance_weight: 0.7
+  si_feasibility_weight: 0.3
+
+output_dir: outputs/mgb2_epw_skeleton
+export_formats:
+  - json
+  - csv

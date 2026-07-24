@@ -1,4 +1,59 @@
-# Implementation Notes — Phase 0
+# Implementation Notes
+
+## Slice 6 (2026-07-24) — Phase 1 EPW + isotropic Tc
+
+**Scope**: Conventional superconductivity pathway (EPW + Allen–Dynes / isotropic Eliashberg). No anisotropic Eliashberg, DMFT, AL, or trained GNN.
+
+### Data model
+- `ElectronPhononResult` — λ, ω_log (K), μ*, Tc_allen_dynes, Tc_eliashberg, converged, wannier_ok, quality_tag
+- `CandidateEvaluation.electron_phonon` + `performance_score` = best Tc (K)
+
+### Modules (`siscforge.calculators.qe`)
+| Module | Role |
+|--------|------|
+| `eliashberg.py` | Allen–Dynes + strong-coupling closed-form proxy |
+| `epw_inputs.py` | Screening `epw.in` template |
+| `epw_parser.py` | Parse EPW stdout → `ElectronPhononResult` |
+| `epw_recipes.py` | `run_relax_scf_phonon_epw` on top of phonon flow |
+| `epw_references.py` | NbN / MgB₂ order-of-magnitude gates |
+
+### Calculators
+- **`qe`** — phonon path; set `dft.do_epw: true` to append EPW
+- **`qe-epw`** / **`epw`** — always enables EPW (requires `epw.x`)
+- **`mock`** — fills mock `ElectronPhononResult` + Tc-based `performance_score` (dry-run unchanged)
+
+### Config
+```yaml
+dft:
+  do_epw: true
+  epw:
+    enabled: true
+    nkf: [6, 6, 6]   # screening fine k
+    nqf: [6, 6, 6]
+    mu_star: 0.10
+    eliashberg: true
+```
+
+### CLI
+```bash
+siscforge run --dry-run examples/nbn_epw.yaml
+siscforge run --calculator qe-epw examples/nbn_epw.yaml   # needs epw.x
+```
+
+### Golden systems
+- NbN: fixtures + mock-safe tests; optional `SISCFORGE_RUN_EPW=1`
+- MgB₂: `structure/mgb2.py` + `examples/mgb2_epw_skeleton.yaml`
+
+### Limitations
+- Isotropic only (no anisotropic Eliashberg / SCDFT)
+- EPW input is a screening template; production Wannier projections need hand-tuning
+- NSCF + full Wannier prep not fully automated
+- Real EPW optional for CI (same pattern as real QE)
+
+### Next session (best single focus)
+**MgB₂ golden EPW completion** — real/production grids, Wannier projections for MgB₂, and literature Tc recovery gate — *or* a lightweight λ/Tc surrogate stub for pre-filtering before EPW.
+
+---
 
 ## Slice 5 (2026-07-24) — QE hardening
 
@@ -16,10 +71,6 @@
 ### Current limitations (post-hardening)
 - Phonopy FD is screening-quality (force parse from stdout, coarse mesh).
 - No automatic SSSP download — user must point `pseudo_dir` at local UPFs.
-- Still no EPW / Eliashberg (Phase 1).
-
-### Next session
-**Phase 1 start** — EPW coarse→fine grids, isotropic Eliashberg Tc, populate `ElectronPhononResult` / `performance_score`.
 
 ---
 

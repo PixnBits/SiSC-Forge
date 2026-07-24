@@ -16,7 +16,9 @@ ensure_builtins_loaded()
 # Optional QE exports (always importable; binaries may still be missing)
 from siscforge.calculators.qe import (  # noqa: E402
     QECalculator,
+    QEEpwCalculator,
     QENotAvailableError,
+    epw_available,
     qe_available,
 )
 
@@ -25,9 +27,11 @@ __all__ = [
     "Calculator",
     "MockCalculator",
     "QECalculator",
+    "QEEpwCalculator",
     "QENotAvailableError",
     "clear_registry",
     "ensure_builtins_loaded",
+    "epw_available",
     "get",
     "list_calculators",
     "qe_available",

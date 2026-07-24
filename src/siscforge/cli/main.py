@@ -277,7 +277,7 @@ def run_cmd(
         None,
         "--calculator",
         "-C",
-        help="Calculator name: mock | qe | quantum-espresso. "
+        help="Calculator name: mock | qe | qe-epw | epw | quantum-espresso. "
         "Ignored when --dry-run is set.",
     ),
     output_dir: Path | None = typer.Option(
@@ -340,6 +340,8 @@ def run_cmd(
     )
     if calc_name in {"quantum-espresso", "quantum_espresso", "espresso"}:
         calc_name = "qe"
+    if calc_name in {"epw", "qe_epw", "qe+epw"}:
+        calc_name = "qe-epw"
 
     ensure_builtins_loaded()
     try:
@@ -352,19 +354,29 @@ def run_cmd(
     calc_params: dict = {}
     for c in config.calculators:
         if c.name == calc_name or (
-            calc_name == "qe" and c.name in {"qe", "quantum-espresso"}
+            calc_name in {"qe", "qe-epw"}
+            and c.name in {"qe", "qe-epw", "quantum-espresso", "epw"}
         ):
             calc_params = dict(c.parameters)
             break
 
-    if calc_name == "qe":
-        calc_params = {**calc_params, "dft": config.dft}
-        if config.dft.work_dir is None:
+    if calc_name in {"qe", "qe-epw"}:
+        dft = config.dft
+        if calc_name == "qe-epw":
+            dft = dft.model_copy(
+                update={
+                    "do_epw": True,
+                    "epw": dft.epw.model_copy(update={"enabled": True}),
+                }
+            )
+        calc_params = {**calc_params, "dft": dft}
+        if dft.work_dir is None:
             calc_params.setdefault("work_dir", str(out / "qe_work"))
         console.print(
-            f"[bold]Calculator[/bold] qe  "
-            f"(pseudo_dir={config.dft.pseudo_dir!r}, "
-            f"do_relax={config.dft.do_relax}, do_phonon={config.dft.do_phonon})"
+            f"[bold]Calculator[/bold] {calc_name}  "
+            f"(pseudo_dir={dft.pseudo_dir!r}, "
+            f"do_relax={dft.do_relax}, do_phonon={dft.do_phonon}, "
+            f"do_epw={dft.do_epw or dft.epw.enabled})"
         )
     else:
         console.print(f"[bold]Calculator[/bold] {calc_name}")

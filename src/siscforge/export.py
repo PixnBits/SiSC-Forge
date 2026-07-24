@@ -67,6 +67,16 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "substrate": cand.substrate or "",
         "in_plane_strain": cand.in_plane_strain,
         "performance_score": ev.performance_score,
+        "lambda_total": (
+            ev.electron_phonon.lambda_total if ev.electron_phonon else None
+        ),
+        "omega_log_K": ev.electron_phonon.omega_log if ev.electron_phonon else None,
+        "Tc_allen_dynes": (
+            ev.electron_phonon.Tc_allen_dynes if ev.electron_phonon else None
+        ),
+        "Tc_eliashberg": (
+            ev.electron_phonon.Tc_eliashberg if ev.electron_phonon else None
+        ),
         "si_feasibility_total": si.total if si else None,
         "si_lattice_mismatch": comps.lattice_mismatch if comps else None,
         "si_thermal_budget": comps.thermal_budget if comps else None,
@@ -109,6 +119,10 @@ CSV_FIELDNAMES = [
     "substrate",
     "in_plane_strain",
     "performance_score",
+    "lambda_total",
+    "omega_log_K",
+    "Tc_allen_dynes",
+    "Tc_eliashberg",
     "si_feasibility_total",
     "si_lattice_mismatch",
     "si_thermal_budget",
@@ -213,6 +227,22 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- imaginary modes: {ph.has_imaginary_modes}",
                 f"- min / max frequency (cm⁻¹): {ph.min_frequency_cm1} / {ph.max_frequency_cm1}",
                 f"- status / quality: {ph.status} / {ph.quality_tag}",
+            ]
+        )
+
+    eph = ev.electron_phonon
+    if eph is not None:
+        lines.extend(
+            [
+                "",
+                "### Electron-phonon / Tc",
+                f"- λ: {eph.lambda_total}",
+                f"- ω_log (K): {eph.omega_log}",
+                f"- μ*: {eph.mu_star}",
+                f"- Tc Allen–Dynes (K): {eph.Tc_allen_dynes}",
+                f"- Tc Eliashberg (K): {eph.Tc_eliashberg}",
+                f"- converged: {eph.converged}",
+                f"- status / quality: {eph.status} / {eph.quality_tag}",
             ]
         )
 

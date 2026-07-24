@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
+    ElectronPhononResult,
     PhononResult,
     SCFResult,
     SiFeasibilityScore,
@@ -109,6 +110,9 @@ class CandidateEvaluation(BaseModel):
 
     scf: SCFResult | None = None
     phonon: PhononResult | None = None
+    electron_phonon: ElectronPhononResult | None = None
+    """EPW / Eliashberg result (Phase 1); optional on mock path."""
+
     si_feasibility: SiFeasibilityScore | None = None
 
     # Optional later-phase attachments (kept for schema stability)
@@ -116,10 +120,10 @@ class CandidateEvaluation(BaseModel):
     """Placeholder for JosephsonMetrics (Phase 3+); unused in v0.1."""
 
     performance_score: float | None = None
-    """Normalized superconducting performance proxy (Tc or pairing eigenvalue).
+    """Superconducting performance proxy in kelvin (Tc).
 
-    Higher is better. Populated from Eliashberg Tc / DMFT eigenvalue later;
-    mock calculator may fill a dummy value.
+    Higher is better. Filled from ``electron_phonon.best_tc_K()`` when EPW
+    succeeds; mock calculator may fill a dummy value.
     """
 
     composite_score: float | None = None

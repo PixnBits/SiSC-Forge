@@ -68,6 +68,54 @@ class PhononResult(BaseModel):
     provenance: Provenance = Field(default_factory=Provenance)
 
 
+class ElectronPhononResult(BaseModel):
+    """Electron-phonon / Eliashberg summary (Phase 1 conventional pathway).
+
+    Populated by EPW (+ isotropic Eliashberg or Allen–Dynes). All frequencies
+    that enter Tc formulas are stored in kelvin unless noted.
+    """
+
+    lambda_total: float | None = None
+    """Mass-enhancement / electron-phonon coupling strength λ."""
+
+    omega_log: float | None = None
+    """Logarithmic average phonon frequency ω_log in kelvin."""
+
+    omega_2: float | None = None
+    """Optional second moment of the a²F spectrum (K)."""
+
+    mu_star: float | None = 0.1
+    """Coulomb pseudopotential μ* used for Tc."""
+
+    Tc_allen_dynes: float | None = None
+    """Allen–Dynes Tc estimate (K)."""
+
+    Tc_eliashberg: float | None = None
+    """Isotropic Eliashberg Tc (K) when available; else None."""
+
+    alpha2F_summary: dict[str, Any] = Field(default_factory=dict)
+    """Compact a²F metadata (n_bins, peak positions, source file, …)."""
+
+    converged: bool = False
+    """Whether EPW / Eliashberg reported a successful convergence."""
+
+    wannier_ok: bool | None = None
+    """Basic Wannierization quality flag when diagnostics are available."""
+
+    status: str = "unknown"
+    quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
+    raw: dict[str, Any] = Field(default_factory=dict)
+    provenance: Provenance = Field(default_factory=Provenance)
+
+    def best_tc_K(self) -> float | None:
+        """Prefer Eliashberg Tc, else Allen–Dynes."""
+        if self.Tc_eliashberg is not None:
+            return float(self.Tc_eliashberg)
+        if self.Tc_allen_dynes is not None:
+            return float(self.Tc_allen_dynes)
+        return None
+
+
 class SiFeasibilityComponents(BaseModel):
     """Individual terms that feed the composite Silicon Feasibility Score.
 

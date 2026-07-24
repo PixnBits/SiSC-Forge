@@ -1,4 +1,4 @@
-"""QECalculator — Calculator protocol implementation for Quantum ESPRESSO."""
+"""QECalculator — Calculator protocol for Quantum ESPRESSO (+ optional EPW)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from typing import Any
 
 from siscforge import __version__
 from siscforge.calculators.base import BaseCalculator
+from siscforge.calculators.qe.eliashberg import performance_score_from_epw
 from siscforge.calculators.qe.env import QENotAvailableError, require_qe
+from siscforge.calculators.qe.epw_recipes import run_relax_scf_phonon_epw
 from siscforge.calculators.qe.inputs import candidate_to_structure
 from siscforge.calculators.qe.recipes import run_relax_scf_phonon
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
@@ -16,8 +18,7 @@ from siscforge.models.provenance import Provenance
 from siscforge.models.results import SiFeasibilityScore
 from siscforge.silicon.feasibility import score_si_feasibility
 
-# Re-export for callers that import from calculator
-__all__ = ["QECalculator", "QENotAvailableError"]
+__all__ = ["QECalculator", "QENotAvailableError", "QEEpwCalculator"]
 
 
 def _merge_dft_config(
@@ -26,7 +27,6 @@ def _merge_dft_config(
 ) -> DFTConfig:
     """Build a DFTConfig from an optional base plus calculator kwargs."""
     data: dict[str, Any] = base.model_dump() if base is not None else {}
-    # Allow nested dft= or flat DFTConfig fields in kwargs
     if "dft" in kwargs and isinstance(kwargs["dft"], DFTConfig):
         data.update(kwargs["dft"].model_dump())
     elif "dft" in kwargs and isinstance(kwargs["dft"], dict):
@@ -38,44 +38,44 @@ def _merge_dft_config(
 
 
 class QECalculator(BaseCalculator):
-    """Run relax → SCF → phonon via Quantum ESPRESSO and return CandidateEvaluation.
+    """Run relax → SCF → phonon (+ optional EPW) via Quantum ESPRESSO.
 
-    Registration names: ``qe`` and ``quantum-espresso``.
-
-    Parameters
-    ----------
-    dft:
-        Default DFT settings (overridden per-call via kwargs / campaign ``dft``).
-    work_root:
-        Root directory for per-candidate scratch folders.
+    Registration names: ``qe``, ``quantum-espresso``.
+    Enable EPW with ``dft.do_epw: true`` / ``dft.epw.enabled: true``, or use
+    :class:`QEEpwCalculator` (``qe-epw``).
     """
 
     name = "qe"
+    force_epw: bool = False
 
     def __init__(
         self,
         dft: DFTConfig | None = None,
         work_root: str | Path | None = None,
+        *,
+        force_epw: bool = False,
     ) -> None:
         self.dft = dft or DFTConfig(engine="qe")
         self.work_root = Path(work_root) if work_root else Path("qe_work")
+        self.force_epw = force_epw
 
     def run(self, candidate: StructureCandidate, **kwargs: Any) -> CandidateEvaluation:
-        """Execute the QE workflow for *candidate*.
-
-        Raises
-        ------
-        QENotAvailableError
-            If ``pw.x`` (and ``ph.x`` when phonons are requested) is not found.
-        FileNotFoundError
-            If pseudopotentials cannot be resolved.
-        ValueError
-            If the candidate lacks a usable structure (CIF).
-        """
+        """Execute the QE (+ optional EPW) workflow for *candidate*."""
         dft = _merge_dft_config(self.dft, kwargs)
-        dft = dft.model_copy(update={"engine": "qe"})
+        want_epw = self.force_epw or dft.do_epw or dft.epw.enabled
+        if want_epw:
+            dft = dft.model_copy(
+                update={
+                    "engine": "qe-epw",
+                    "do_epw": True,
+                    "epw": dft.epw.model_copy(update={"enabled": True}),
+                }
+            )
+        else:
+            dft = dft.model_copy(update={"engine": "qe"})
+
         need_ph = dft.do_phonon
-        qe_env = require_qe(need_phonon=need_ph)
+        qe_env = require_qe(need_phonon=need_ph, need_epw=want_epw)
 
         try:
             structure = candidate_to_structure(candidate)
@@ -89,7 +89,6 @@ class QECalculator(BaseCalculator):
         cand_dir = work_root / f"{candidate.formula}_{candidate.candidate_id[:8]}"
         cand_dir.mkdir(parents=True, exist_ok=True)
 
-        # Validate pseudos early with a clear error
         from siscforge.calculators.qe.pseudos import (
             PseudoResolutionError,
             resolve_pseudopotentials,
@@ -101,13 +100,34 @@ class QECalculator(BaseCalculator):
             raise FileNotFoundError(str(exc)) from exc
 
         prefix = f"sf_{candidate.candidate_id[:8]}"
-        wf = run_relax_scf_phonon(
-            structure,
-            dft,
-            cand_dir,
-            prefix=prefix,
-            qe_env=qe_env,
-        )
+        if want_epw:
+            wf = run_relax_scf_phonon_epw(
+                structure,
+                dft,
+                cand_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+            )
+        else:
+            base = run_relax_scf_phonon(
+                structure,
+                dft,
+                cand_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+            )
+            from siscforge.calculators.qe.epw_recipes import EPWWorkflowResult
+
+            wf = EPWWorkflowResult(
+                work_dir=base.work_dir,
+                structure=base.structure,
+                scf=base.scf,
+                phonon=base.phonon,
+                steps=list(base.steps),
+                relaxed_structure=base.relaxed_structure,
+                success=base.success,
+                message=base.message,
+            )
 
         precomputed = kwargs.get("si_feasibility")
         if isinstance(precomputed, SiFeasibilityScore):
@@ -115,7 +135,6 @@ class QECalculator(BaseCalculator):
         else:
             si = score_si_feasibility(candidate)
 
-        # Attach relaxed geometry to the candidate when available
         out_candidate = candidate
         if wf.relaxed_structure is not None:
             try:
@@ -137,6 +156,7 @@ class QECalculator(BaseCalculator):
                             "relaxed": True,
                             "pseudos": resolved_pseudos,
                             "phonon_method": dft.phonon_method,
+                            "do_epw": want_epw,
                         },
                     }
                 )
@@ -146,7 +166,7 @@ class QECalculator(BaseCalculator):
                         "metadata": {
                             **candidate.metadata,
                             "pseudos": resolved_pseudos,
-                            "phonon_method": dft.phonon_method,
+                            "do_epw": want_epw,
                         },
                         "quality_tag": dft.quality_tag,
                     }
@@ -159,6 +179,7 @@ class QECalculator(BaseCalculator):
                         **candidate.metadata,
                         "pseudos": resolved_pseudos,
                         "phonon_method": dft.phonon_method,
+                        "do_epw": want_epw,
                     },
                 }
             )
@@ -171,21 +192,29 @@ class QECalculator(BaseCalculator):
             )
         notes_parts.append(f"quality_tag={dft.quality_tag}")
         notes_parts.append(f"phonon_method={dft.phonon_method}")
+        notes_parts.append(f"do_epw={want_epw}")
 
-        # Ensure quality tags on results match campaign setting
         scf = wf.scf
         phonon = wf.phonon
+        eph = getattr(wf, "electron_phonon", None)
         if scf is not None and scf.quality_tag != dft.quality_tag:
             scf = scf.model_copy(update={"quality_tag": dft.quality_tag})
         if phonon is not None and phonon.quality_tag != dft.quality_tag:
             phonon = phonon.model_copy(update={"quality_tag": dft.quality_tag})
+        if eph is not None and eph.quality_tag != dft.quality_tag:
+            eph = eph.model_copy(update={"quality_tag": dft.quality_tag})
+
+        performance = getattr(wf, "performance_score", None)
+        if performance is None and eph is not None:
+            performance = performance_score_from_epw(eph.best_tc_K())
 
         return CandidateEvaluation(
             candidate=out_candidate,
             scf=scf,
             phonon=phonon,
+            electron_phonon=eph,
             si_feasibility=si,
-            performance_score=None,
+            performance_score=performance,
             composite_score=None,
             status=status,
             calculator_name=self.name,
@@ -197,6 +226,7 @@ class QECalculator(BaseCalculator):
                     "siscforge": __version__,
                     "pw.x": qe_env.pw or "",
                     "ph.x": qe_env.ph or "",
+                    "epw.x": qe_env.epw or "",
                 },
                 parameters={
                     "dft": dft.model_dump(mode="json"),
@@ -204,17 +234,36 @@ class QECalculator(BaseCalculator):
                     "steps": [s.name for s in wf.steps],
                     "pseudos": resolved_pseudos,
                     "relaxed": wf.relaxed_structure is not None,
+                    "do_epw": want_epw,
                 },
                 parent_ids=[candidate.candidate_id],
-                notes="QE relax/SCF/phonon evaluation",
+                notes="QE relax/SCF/phonon" + ("/EPW" if want_epw else "") + " evaluation",
             ),
         )
 
 
+class QEEpwCalculator(QECalculator):
+    """QE calculator that always enables the EPW step."""
+
+    name = "qe-epw"
+    force_epw = True
+
+    def __init__(
+        self,
+        dft: DFTConfig | None = None,
+        work_root: str | Path | None = None,
+    ) -> None:
+        super().__init__(dft=dft, work_root=work_root, force_epw=True)
+        if self.dft.engine == "mock":
+            self.dft = self.dft.model_copy(update={"engine": "qe-epw", "do_epw": True})
+
+
 def register_qe_calculators() -> None:
-    """Register ``qe`` and ``quantum-espresso`` aliases in the global registry."""
+    """Register ``qe``, ``quantum-espresso``, and ``qe-epw`` aliases."""
     from siscforge.calculators import registry
 
     calc = QECalculator()
     registry.register(calc, name="qe", overwrite=True)
     registry.register(calc, name="quantum-espresso", overwrite=True)
+    registry.register(QEEpwCalculator(), name="qe-epw", overwrite=True)
+    registry.register(QEEpwCalculator(), name="epw", overwrite=True)

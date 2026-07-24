@@ -8,9 +8,15 @@ from typing import Any
 from siscforge import __version__
 from siscforge.calculators import registry
 from siscforge.calculators.base import BaseCalculator
+from siscforge.calculators.qe.eliashberg import allen_dynes_tc
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.provenance import Provenance
-from siscforge.models.results import PhononResult, SCFResult, SiFeasibilityScore
+from siscforge.models.results import (
+    ElectronPhononResult,
+    PhononResult,
+    SCFResult,
+    SiFeasibilityScore,
+)
 from siscforge.silicon.feasibility import score_si_feasibility
 
 
@@ -80,10 +86,38 @@ class MockCalculator(BaseCalculator):
         else:
             si = score_si_feasibility(candidate)
 
-        # Fake "Tc proxy" performance score in roughly 0–40 K scale, normalized later.
-        performance = round(5.0 + perf_rand * 35.0, 2)
+        # Fake conventional e-ph moments → Allen–Dynes Tc as performance_score
+        lam = 0.4 + perf_rand * 1.2
+        omega_log = 200.0 + perf_rand * 300.0
+        if candidate.material_family == "tm_nitride":
+            lam = 0.7 + perf_rand * 0.8
+            omega_log = 220.0 + perf_rand * 150.0
+        elif candidate.material_family == "mgb2_boride":
+            lam = 0.6 + perf_rand * 0.4
+            omega_log = 600.0 + perf_rand * 150.0
         if has_imag:
-            performance *= 0.3
+            lam *= 0.3
+        mu_star = 0.10
+        tc_ad = allen_dynes_tc(lam, omega_log, mu_star)
+        performance = round(tc_ad, 2)
+
+        eph = ElectronPhononResult(
+            lambda_total=round(lam, 4),
+            omega_log=round(omega_log, 2),
+            mu_star=mu_star,
+            Tc_allen_dynes=performance,
+            Tc_eliashberg=round(performance * 1.05, 2) if performance > 0 else 0.0,
+            converged=not has_imag,
+            wannier_ok=True,
+            status="mock",
+            quality_tag="mock",
+            alpha2F_summary={"method": "mock"},
+            provenance=Provenance(
+                source="mock_calculator",
+                software={"siscforge": __version__},
+                notes="dry-run EPW/Eliashberg placeholder",
+            ),
+        )
 
         # Composite: blend normalized performance (assume ~40 K ceiling) with Si score.
         perf_norm = min(100.0, (performance / 40.0) * 100.0)
@@ -93,6 +127,7 @@ class MockCalculator(BaseCalculator):
             candidate=candidate,
             scf=scf,
             phonon=phonon,
+            electron_phonon=eph,
             si_feasibility=si,
             performance_score=performance,
             composite_score=composite,
