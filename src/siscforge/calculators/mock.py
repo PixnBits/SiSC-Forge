@@ -101,6 +101,13 @@ class MockCalculator(BaseCalculator):
         tc_ad = allen_dynes_tc(lam, omega_log, mu_star)
         performance = round(tc_ad, 2)
 
+        a2f_summary: dict[str, object] = {"method": "mock", "tc_model": "isotropic_average"}
+        if candidate.material_family == "mgb2_boride":
+            a2f_summary["material_notes"] = (
+                "MgB2 two-gap physics reduced to isotropic average in mock/EPW screening"
+            )
+            a2f_summary["pairing"] = "conventional_two_gap"
+
         eph = ElectronPhononResult(
             lambda_total=round(lam, 4),
             omega_log=round(omega_log, 2),
@@ -111,7 +118,7 @@ class MockCalculator(BaseCalculator):
             wannier_ok=True,
             status="mock",
             quality_tag="mock",
-            alpha2F_summary={"method": "mock"},
+            alpha2F_summary=a2f_summary,
             provenance=Provenance(
                 source="mock_calculator",
                 software={"siscforge": __version__},

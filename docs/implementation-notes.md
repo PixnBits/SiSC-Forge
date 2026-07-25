@@ -1,5 +1,40 @@
 # Implementation Notes
 
+## Slice 7 (2026-07-25) — MgB₂ golden EPW path
+
+**Scope**: Complete the MgB₂ golden conventional pathway (same Calculator/CLI patterns as NbN). Still isotropic-only; no trained λ/Tc surrogate, no active learning, no anisotropic Eliashberg.
+
+### Deliverables
+| Item | Location |
+|------|----------|
+| Structure | `siscforge.structure.mgb2` — 3-atom hexagonal AlB₂-type (P6/mmm) |
+| Campaign | `examples/mgb2_epw.yaml` (skeleton YAML kept as compatibility alias) |
+| Docs | `docs/examples/mgb2_epw.md` |
+| References | `epw_references.MGB2_*` ranges + fixture moments |
+| Fixture | `tests/fixtures/qe/epw_mgb2_snippet.out` |
+| Tests | mock MgB₂ e-ph, fixture parse, optional `SISCFORGE_RUN_EPW=1` real gate |
+
+### Two-gap → isotropic
+MgB₂ is multi-band / two-gap. Screening EPW reports **isotropic** λ, ω_log, and Allen–Dynes / isotropic Eliashberg Tc. Metadata notes this on mock and real EPW results (`alpha2F_summary.material_notes`, `tc_model=isotropic_average`).
+
+### CLI
+```bash
+siscforge run --dry-run examples/mgb2_epw.yaml
+siscforge run --calculator qe-epw examples/mgb2_epw.yaml   # needs epw.x + Mg/B UPF
+```
+
+### Remaining Phase 1 gaps (explicit)
+- Production Wannier automation (projections, windows, exclude_bands) beyond screening template
+- Anisotropic / multi-band Eliashberg (MgB₂ σ–π)
+- Lightweight λ/Tc **surrogate** for pre-filtering before EPW
+- Active-learning loop (uncertainty / UCB retrain)
+- Broader boride enumeration (beyond bulk MgB₂ prototype)
+
+### Next session (best single focus)
+**Lightweight λ/Tc surrogate stub** for pre-filtering candidates before real EPW (mock + optional ALIGNN/MatGL-style head), keeping EPW as the ground-truth path.
+
+---
+
 ## Slice 6 (2026-07-24) — Phase 1 EPW + isotropic Tc
 
 **Scope**: Conventional superconductivity pathway (EPW + Allen–Dynes / isotropic Eliashberg). No anisotropic Eliashberg, DMFT, AL, or trained GNN.
@@ -42,16 +77,13 @@ siscforge run --calculator qe-epw examples/nbn_epw.yaml   # needs epw.x
 
 ### Golden systems
 - NbN: fixtures + mock-safe tests; optional `SISCFORGE_RUN_EPW=1`
-- MgB₂: `structure/mgb2.py` + `examples/mgb2_epw_skeleton.yaml`
+- MgB₂: see **Slice 7** (`examples/mgb2_epw.yaml`)
 
 ### Limitations
 - Isotropic only (no anisotropic Eliashberg / SCDFT)
 - EPW input is a screening template; production Wannier projections need hand-tuning
 - NSCF + full Wannier prep not fully automated
 - Real EPW optional for CI (same pattern as real QE)
-
-### Next session (best single focus)
-**MgB₂ golden EPW completion** — real/production grids, Wannier projections for MgB₂, and literature Tc recovery gate — *or* a lightweight λ/Tc surrogate stub for pre-filtering before EPW.
 
 ---
 

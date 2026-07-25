@@ -305,6 +305,16 @@ def run_epw(
             tc = allen_dynes_tc(eph.lambda_total, eph.omega_log, config.epw.mu_star)
             eph = eph.model_copy(update={"Tc_allen_dynes": tc})
 
+        # Attach material notes (e.g. MgB2 two-gap → isotropic average)
+        from siscforge.calculators.qe.epw_inputs import epw_material_notes
+
+        mat_note = epw_material_notes(structure)
+        if mat_note and eph is not None:
+            summary = dict(eph.alpha2F_summary or {})
+            summary.setdefault("material_notes", mat_note)
+            summary.setdefault("tc_model", "isotropic_average")
+            eph = eph.model_copy(update={"alpha2F_summary": summary})
+
     return step, eph
 
 

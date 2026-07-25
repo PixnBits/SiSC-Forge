@@ -127,13 +127,14 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
             for structure, meta in pairs:
                 bulk_items.append((structure, meta, "b_doped_si"))
         elif family == "mgb2_boride":
-            # Phase 1 skeleton: bulk MgB2 prototype (optionally listed formulas)
+            # Bulk MgB2 golden prototype (optionally listed formulas)
             formulas = enum.formulas or ["MgB2"]
             for formula in formulas:
-                if formula.replace("₂", "2").upper() not in {"MGB2", "MG B2"}:
-                    # Still allow only MgB2 for now
-                    if "Mg" not in formula or "B" not in formula:
-                        continue
+                norm = formula.replace("₂", "2").replace(" ", "").upper()
+                if norm not in {"MGB2"} and not (
+                    "MG" in norm and "B" in norm
+                ):
+                    continue
                 structure = build_mgb2()
                 meta = {**mgb2_metadata(), "formula": "MgB2", "kind": "binary"}
                 bulk_items.append((structure, meta, "mgb2_boride"))

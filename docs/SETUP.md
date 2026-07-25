@@ -82,8 +82,8 @@ siscforge run --dry-run examples/nbti_n_strain.yaml
 # NbN EPW campaign with mock λ / Tc (Phase 1 fields, no epw.x)
 siscforge run --dry-run examples/nbn_epw.yaml
 
-# MgB₂ skeleton (mock)
-siscforge run --dry-run examples/mgb2_epw_skeleton.yaml
+# MgB₂ golden EPW campaign (mock λ / Tc)
+siscforge run --dry-run examples/mgb2_epw.yaml
 
 # Structure enumeration only
 siscforge enumerate -c examples/nbti_n_strain.yaml

@@ -1,0 +1,81 @@
+# Bulk MgB₂ EPW + isotropic Tc (Phase 1 golden)
+#
+# Dry-run (mock e-ph moments, no QE/EPW):
+#   siscforge run --dry-run examples/mgb2_epw.yaml
+#
+# Real EPW (requires pw.x, ph.x, epw.x, Wannier90, UPF for Mg+B):
+#   siscforge run --calculator qe-epw examples/mgb2_epw.yaml
+#
+# See docs/examples/mgb2_epw.md
+
+name: mgb2_epw_screening
+description: >
+  Single-candidate bulk hexagonal MgB2: SCF + phonon + EPW screening grids
+  with Allen–Dynes / isotropic Eliashberg Tc (isotropic average of two-gap physics).
+version: "0.1"
+dry_run: false
+
+enumeration:
+  material_families:
+    - mgb2_boride
+  formulas:
+    - MgB2
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 1
+
+calculators:
+  - name: qe-epw
+
+formation_filter:
+  enabled: false
+
+dft:
+  engine: qe-epw
+  # Light elements: moderate cutoffs for workstation screening
+  ecutwfc: 45.0
+  ecutrho: 360.0
+  kpoints: [6, 6, 4]
+  qpoints: [2, 2, 2]
+  # Experimental lattice is stable; skip expensive vc-relax for the golden dry path
+  do_relax: false
+  do_phonon: true
+  do_epw: true
+  phonon_method: dfpt
+  # Empty bands for B-p / Wannier (screening)
+  nbnd: 20
+  tr2_ph: 1.0e-10
+  ph_alpha_mix: 0.2
+  ph_nmix: 8
+  ph_niter: 100
+  degauss: 0.02
+  quality_tag: screening
+  # Override on your machine (SSSP or similar for Mg, B)
+  pseudo_dir: /usr/share/espresso/pseudo
+  epw:
+    enabled: true
+    nkf: [8, 8, 6]
+    nqf: [8, 8, 6]
+    nkc: [4, 4, 2]
+    nqc: [2, 2, 2]
+    nbndsub: 8
+    mu_star: 0.10
+    eliashberg: true
+    allen_dynes_fallback: true
+    fsthick: 0.5
+    degaussw: 0.05
+    degaussq: 0.05
+    eps_acustic: 5.0
+
+ranking:
+  performance_weight: 0.70
+  si_feasibility_weight: 0.30
+  prefer_dynamically_stable: true
+
+output_dir: outputs/mgb2_epw_screening
+export_formats:
+  - json
+  - csv
+  - markdown

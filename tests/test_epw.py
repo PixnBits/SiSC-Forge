@@ -13,6 +13,12 @@ from siscforge.calculators.qe.env import epw_available
 from siscforge.calculators.qe.epw_parser import parse_epw_output
 from siscforge.calculators.qe.epw_recipes import electron_phonon_from_lambda_omega
 from siscforge.calculators.qe.epw_references import (
+    MGB2_FIXTURE_LAMBDA,
+    MGB2_FIXTURE_MU_STAR,
+    MGB2_FIXTURE_OMEGA_LOG_K,
+    MGB2_LAMBDA_RANGE,
+    MGB2_OMEGA_LOG_K_RANGE,
+    MGB2_TC_K_RANGE,
     NBN_FIXTURE_LAMBDA,
     NBN_FIXTURE_MU_STAR,
     NBN_FIXTURE_OMEGA_LOG_K,
@@ -128,9 +134,59 @@ def test_mgb2_structure() -> None:
     s = build_mgb2()
     assert len(s) == 3
     assert s.composition.reduced_formula in {"MgB2", "B2Mg"}
+    assert s.lattice.a == pytest.approx(3.086, rel=1e-4)
+    assert s.lattice.c == pytest.approx(3.524, rel=1e-4)
+    # Sanity: experimental density ~2.6 g/cm³
+    assert 2.3 < s.density < 2.9
     cand = structure_to_candidate(s, material_family="mgb2_boride", formula="MgB2")
     assert cand.material_family == "mgb2_boride"
     assert cand.structure_cif
+
+
+def test_parse_epw_mgb2_fixture() -> None:
+    path = FIXTURES / "epw_mgb2_snippet.out"
+    eph = parse_epw_output(path, mu_star=0.1, quality_tag="screening")
+    assert eph.lambda_total == pytest.approx(0.85, rel=1e-3)
+    assert eph.omega_log is not None
+    # 60.32 meV → K
+    assert eph.omega_log == pytest.approx(60.32 * 11.6045, rel=1e-2)
+    assert eph.Tc_allen_dynes is not None
+    assert eph.Tc_allen_dynes == pytest.approx(36.50, rel=1e-3)
+    assert eph.converged is True
+    assert eph.status == "ok"
+    assert MGB2_TC_K_RANGE[0] <= eph.best_tc_K() <= MGB2_TC_K_RANGE[1]
+
+
+def test_mgb2_fixture_moments_in_reference_range() -> None:
+    eph = electron_phonon_from_lambda_omega(
+        MGB2_FIXTURE_LAMBDA,
+        MGB2_FIXTURE_OMEGA_LOG_K,
+        mu_star=MGB2_FIXTURE_MU_STAR,
+    )
+    assert MGB2_LAMBDA_RANGE[0] <= eph.lambda_total <= MGB2_LAMBDA_RANGE[1]
+    assert MGB2_OMEGA_LOG_K_RANGE[0] <= eph.omega_log <= MGB2_OMEGA_LOG_K_RANGE[1]
+    tc = eph.best_tc_K()
+    assert tc is not None
+    assert MGB2_TC_K_RANGE[0] <= tc <= MGB2_TC_K_RANGE[1]
+
+
+def test_mock_mgb2_fills_electron_phonon() -> None:
+    s = build_mgb2()
+    cand = structure_to_candidate(s, material_family="mgb2_boride", formula="MgB2")
+    result = get("mock").run(cand)
+    assert isinstance(result, CandidateEvaluation)
+    assert result.electron_phonon is not None
+    assert result.electron_phonon.status == "mock"
+    assert result.electron_phonon.lambda_total is not None
+    assert result.electron_phonon.omega_log is not None
+    # MgB2 mock uses high ω_log family defaults
+    assert result.electron_phonon.omega_log >= 500.0
+    assert result.performance_score is not None
+    assert result.performance_score == pytest.approx(
+        result.electron_phonon.Tc_allen_dynes, rel=1e-6
+    )
+    notes = (result.electron_phonon.alpha2F_summary or {}).get("material_notes", "")
+    assert "two-gap" in str(notes).lower() or "isotropic" in str(notes).lower()
 
 
 def test_epw_config_round_trip() -> None:
@@ -164,6 +220,20 @@ def test_build_epw_input_qe73_namelist() -> None:
     assert "amass(2)    = 92.906" in text
     # Namelist terminator
     assert "\n/" in text or text.rstrip().endswith("/")
+
+
+def test_build_epw_input_mgb2_amass() -> None:
+    from siscforge.calculators.qe.epw_inputs import build_epw_input, epw_material_notes
+
+    s = build_mgb2()
+    cfg = DFTConfig(do_epw=True, epw=EPWConfig(enabled=True, nbndsub=8))
+    text = build_epw_input(cfg, prefix="mgb2", outdir="./", dvscf_dir="./save", structure=s)
+    # B (Z=5) before Mg (Z=12)
+    assert "amass(1)    = 10.811" in text
+    assert "amass(2)    = 24.305" in text
+    assert "nbndsub     = 8" in text
+    note = epw_material_notes(s)
+    assert "two-gap" in note.lower() or "isotropic" in note.lower()
 
 
 def test_build_epw_input_fermi_windows() -> None:
@@ -258,3 +328,52 @@ def test_nbn_real_epw_optional(tmp_path: Path) -> None:
     assert result.performance_score is not None
     lo, hi = NBN_TC_K_RANGE
     assert lo * 0.5 <= result.performance_score <= hi * 1.5
+
+
+@pytest.mark.skipif(
+    os.environ.get("SISCFORGE_RUN_EPW") != "1",
+    reason="Set SISCFORGE_RUN_EPW=1 for real EPW MgB2 regression",
+)
+@pytest.mark.skipif(not epw_available(), reason="epw.x not available")
+def test_mgb2_real_epw_optional(tmp_path: Path) -> None:
+    """Optional real EPW on bulk MgB2 (screening grids; isotropic average)."""
+    pseudo = os.environ.get("SISCFORGE_PSEUDO_DIR")
+    if not pseudo:
+        pytest.skip("SISCFORGE_PSEUDO_DIR not set")
+
+    cand = structure_to_candidate(
+        build_mgb2(),
+        material_family="mgb2_boride",
+        formula="MgB2",
+    )
+    calc = get("qe-epw")
+    dft = DFTConfig(
+        engine="qe-epw",
+        ecutwfc=40.0,
+        ecutrho=320.0,
+        kpoints=[2, 2, 2],
+        qpoints=[1, 1, 1],
+        pseudo_dir=pseudo,
+        do_relax=False,
+        do_phonon=True,
+        do_epw=True,
+        phonon_method="gamma",
+        epw=EPWConfig(
+            enabled=True,
+            nkf=[4, 4, 2],
+            nqf=[4, 4, 2],
+            nkc=[2, 2, 1],
+            nqc=[1, 1, 1],
+            mu_star=0.1,
+        ),
+        quality_tag="screening",
+        work_dir=str(tmp_path / "epw_mgb2"),
+    )
+    result = calc.run(cand, dft=dft, work_dir=str(tmp_path / "epw_mgb2"))
+    assert result.electron_phonon is not None
+    assert result.electron_phonon.lambda_total is not None
+    assert result.performance_score is not None
+    # Loose gate: screening grids will not hit literature Tc tightly
+    lo, hi = MGB2_TC_K_RANGE
+    assert result.performance_score > 0.0
+    assert result.performance_score < hi * 2.5
