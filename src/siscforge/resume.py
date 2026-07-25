@@ -59,34 +59,60 @@ def resume_fingerprint(candidate: StructureCandidate) -> str:
     return f"{family}|{formula}|{sub}|{strain_s}"
 
 
-def is_successful_evaluation(evaluation: CandidateEvaluation) -> bool:
-    """Return True if *evaluation* should be skipped on resume (not re-run)."""
+def is_successful_evaluation(
+    evaluation: CandidateEvaluation,
+    *,
+    require_real: bool = False,
+) -> bool:
+    """Return True if *evaluation* should be skipped on resume (not re-run).
+
+    Parameters
+    ----------
+    require_real:
+        When True (``qe`` / ``qe-epw`` runs), ``status=mock`` is **not** treated
+        as finished — so a dry-run store does not block real EPW on the same
+        fingerprint. Real ``status=ok`` successes still skip.
+    """
     if evaluation.status not in SUCCESS_STATUSES:
+        return False
+    if require_real and evaluation.status == "mock":
+        return False
+    if require_real and (evaluation.calculator_name or "").lower() in {
+        "mock",
+        "surrogate",
+    }:
         return False
 
     eph = evaluation.electron_phonon
     if eph is not None and eph.status in RESULT_OK_STATUSES:
-        if eph.lambda_total is not None:
-            return True
-        try:
-            if eph.best_tc_K() is not None:
+        if require_real and eph.status == "mock":
+            pass  # fall through to phonon/scf or fail
+        else:
+            if eph.lambda_total is not None:
                 return True
-        except Exception:  # noqa: BLE001
-            pass
+            try:
+                if eph.best_tc_K() is not None:
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
 
     ph = evaluation.phonon
     if ph is not None and ph.status in RESULT_OK_STATUSES:
-        return True
+        if not (require_real and ph.status == "mock"):
+            return True
 
     scf = evaluation.scf
     if scf is not None and scf.status in RESULT_OK_STATUSES:
-        return True
+        if not (require_real and scf.status == "mock"):
+            return True
 
     return False
 
 
 def index_evaluations(
     evaluations: Iterable[CandidateEvaluation],
+    *,
+    require_real: bool = False,
 ) -> tuple[dict[str, CandidateEvaluation], dict[str, CandidateEvaluation]]:
     """Build lookup maps: candidate_id → eval, fingerprint → eval.
 
@@ -96,7 +122,7 @@ def index_evaluations(
     by_id: dict[str, CandidateEvaluation] = {}
     by_fp: dict[str, CandidateEvaluation] = {}
     for ev in evaluations:
-        if not is_successful_evaluation(ev):
+        if not is_successful_evaluation(ev, require_real=require_real):
             continue
         by_id[ev.candidate.candidate_id] = ev
         by_fp[resume_fingerprint(ev.candidate)] = ev

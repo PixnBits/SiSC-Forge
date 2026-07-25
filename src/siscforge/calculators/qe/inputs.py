@@ -72,12 +72,15 @@ def build_pw_input(
     }
     # Empty bands: DFPT Sternheimer / EPW Wannier need states above E_F.
     # QE default for 18 e⁻ metals is often only ~13 bands → "too few bands".
+    # Ternary supercells (e.g. 8-atom NbTiN) need more than binary NbN defaults.
     if config.nbnd is not None:
         system["nbnd"] = int(config.nbnd)
     elif config.occupations == "smearing" and (
         config.do_phonon or config.do_epw or config.epw.enabled
     ):
-        system["nbnd"] = 24
+        n_at = len(structure)
+        # ~8 bands/atom for metals with empties; floor 24 for 2-atom cells
+        system["nbnd"] = max(24, min(120, 8 * n_at))
     if extra_system:
         system.update(extra_system)
 

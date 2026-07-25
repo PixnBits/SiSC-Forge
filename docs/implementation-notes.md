@@ -1,5 +1,40 @@
 # Implementation Notes
 
+## Slice 14 (2026-07-25) — Desktop shortlist → real EPW
+
+**Scope**: Practical path from AL dry-run top-k to real `qe-epw` without
+re-enumerating the full composition×strain grid.
+
+| Item | Location |
+|------|----------|
+| Selection + YAML builder | `siscforge.shortlist` |
+| Exact formula×strain rows | `EnumerationConfig.candidate_specs` / `CandidateSpec` |
+| CLI | `siscforge shortlist <store_dir> -o shortlist.yaml` |
+| Walkthrough | `docs/examples/desktop_shortlist_epw.md` |
+| Tests | `tests/test_shortlist.py` |
+
+### Workflow
+```bash
+siscforge run --dry-run examples/nbti_n_al_broad.yaml
+siscforge shortlist outputs/nbti_n_al_broad -o examples/nbti_n_al_broad_shortlist.yaml
+siscforge run --dry-run examples/nbti_n_al_broad_shortlist.yaml   # smoke
+siscforge run --calculator qe-epw examples/nbti_n_al_broad_shortlist.yaml
+# re-run same command after interrupt → skip ok, continue failures
+```
+
+### Design notes
+- Shortlist YAML embeds CIFs so structures match the AL dry-run.
+- Separate `output_dir` from the dry-run store.
+- Resume for `qe`/`qe-epw` uses `require_real=True` so **mock** dry-run hits
+  do not block real EPW.
+- Failed QE/EPW evaluations store workdir + `diagnose_epw_failure` in notes.
+
+### Remaining Phase 2 (not this slice)
+Multi-layer stacks, critical thickness / membrane, interface slabs, denser
+production Wannier, full AL retrain.
+
+---
+
 ## Slice 13 (2026-07-25) — Resume / checkpoint for multi-candidate runs
 
 **Scope**: Desktop-friendly re-launch after interrupt for EPW shortlists (and mock).

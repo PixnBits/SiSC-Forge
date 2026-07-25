@@ -119,12 +119,42 @@ class ActiveLearningConfig(BaseModel):
     version: str = "0.1-priority-queue"
 
 
+class CandidateSpec(BaseModel):
+    """One exact structure point for desktop shortlists (formula × strain).
+
+    When ``structure_cif`` is set, the CIF is used as-is (preserves the AL
+    structure). Otherwise the structure is rebuilt from ``formula`` + strain.
+    """
+
+    formula: str
+    in_plane_strain: float = 0.0
+    substrate: str = "Si(001)"
+    material_family: Literal[
+        "tm_nitride",
+        "b_doped_si",
+        "mgb2_boride",
+        "nickelate",
+        "cuprate",
+        "other",
+    ] = "tm_nitride"
+    candidate_id: str | None = None
+    """Optional preserved id from the AL dry-run store."""
+
+    structure_cif: str | None = None
+    """Optional CIF text; when set, strain is **not** re-applied."""
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class EnumerationConfig(BaseModel):
     """Parameters controlling structure enumeration.
 
     Supported material families (Phase 0):
     - ``tm_nitride``: binary rocksalt nitrides and simple ternary AₓB₁₋ₓN
     - ``b_doped_si``: heavily boron-doped silicon supercells
+
+    For desktop shortlists prefer ``candidate_specs`` (exact formula×strain rows)
+    instead of a full composition × strain grid.
     """
 
     material_families: list[str] = Field(default_factory=lambda: ["tm_nitride"])
@@ -133,7 +163,7 @@ class EnumerationConfig(BaseModel):
     """Optional explicit formulas (e.g. ``NbN``, ``Nb0.5Ti0.5N``).
 
     When empty, binaries are taken from ``metals`` and ternaries from
-    ``ternary_metals`` × ``x_values``.
+    ``ternary_metals`` × ``x_values``. Ignored when ``candidate_specs`` is set.
     """
 
     metals: list[str] = Field(default_factory=list)
@@ -144,6 +174,10 @@ class EnumerationConfig(BaseModel):
 
     x_values: list[float] = Field(default_factory=list)
     """Stoichiometry grid for ternary AₓB₁₋ₓN (x = fraction of first metal)."""
+
+    candidate_specs: list[CandidateSpec] = Field(default_factory=list)
+    """Exact shortlist rows (formula × strain [× optional CIF]). When non-empty,
+    only these candidates are generated — no full grid expansion."""
 
     substrates: list[str] = Field(default_factory=lambda: ["Si(001)"])
     """Substrate labels used for strain application and Si-scoring."""

@@ -1,0 +1,487 @@
+# Auto-generated shortlist campaign — edit dft.pseudo_dir / nproc as needed
+# Run: siscforge run --calculator qe-epw nbti_n_al_broad_shortlist.yaml
+# Resume: re-run the same command (skips finished ok; continues on fail)
+# Dry-run: siscforge run --dry-run nbti_n_al_broad_shortlist.yaml
+
+name: nbti_n_al_broad_shortlist
+description: Desktop EPW shortlist (6 candidates); selection=al_selected; from /home/pixnbits/projects/SiSC-Forge/main/outputs/nbti_n_al_broad
+version: '0.2'
+dry_run: false
+enumeration:
+  material_families:
+  - tm_nitride
+  formulas: []
+  metals: []
+  ternary_metals: []
+  x_values: []
+  candidate_specs:
+  - formula: Nb0.25Ti0.75N
+    in_plane_strain: -0.03
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: cdd61404-21fa-4e3e-8db9-21e746abc60b
+    structure_cif: "# generated using pymatgen\ndata_Ti3NbN4\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   5.87056313\n\
+      _cell_length_b   5.87056313\n_cell_length_c   3.08658474\n_cell_angle_alpha   60.00000000\n_cell_angle_beta   60.00000000\n\
+      _cell_angle_gamma   60.00000000\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   Ti3NbN4\n_chemical_formula_sum\
+      \   'Ti3 Nb1 N4'\n_cell_volume   75.21816468\n_cell_formula_units_Z   1\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.00000000  0.50000000  1.00000000 \
+      \ 1\n  Ti  Ti1  1  0.50000000  0.00000000  1.00000000  1\n  Ti  Ti2  1  0.50000000  0.50000000  1.00000000  1\n  Nb\
+      \  Nb3  1  0.00000000  0.00000000  0.00000000  1\n  N  N4  1  0.25000000  0.25000000  0.50000000  1\n  N  N5  1  0.25000000\
+      \  0.75000000  0.50000000  1\n  N  N6  1  0.75000000  0.25000000  0.50000000  1\n  N  N7  1  0.75000000  0.75000000\
+      \  0.50000000  1\n"
+    metadata:
+      formula: Nb0.25Ti0.75N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.25
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.03
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.095
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9134
+        predicted_omega_log: 278.99
+        predicted_Tc: 16.77
+        uncertainty: 0.52
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.25Ti0.75N
+          strain: 0.03
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9928
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: cdd61404-21fa-4e3e-8db9-21e746abc60b
+      source_acquisition_score: 0.443865
+      source_si_total: 58.03
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+  - formula: Nb0.25Ti0.75N
+    in_plane_strain: -0.02
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: 29c4b84a-123a-4794-95d0-9b5468a1d2c3
+    structure_cif: "# generated using pymatgen\ndata_Ti3NbN4\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   5.93108440\n\
+      _cell_length_b   5.93108440\n_cell_length_c   3.06641098\n_cell_angle_alpha   60.00000000\n_cell_angle_beta   60.00000000\n\
+      _cell_angle_gamma   60.00000000\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   Ti3NbN4\n_chemical_formula_sum\
+      \   'Ti3 Nb1 N4'\n_cell_volume   76.27523817\n_cell_formula_units_Z   1\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.00000000  0.50000000  1.00000000 \
+      \ 1\n  Ti  Ti1  1  0.50000000  0.00000000  1.00000000  1\n  Ti  Ti2  1  0.50000000  0.50000000  1.00000000  1\n  Nb\
+      \  Nb3  1  0.00000000  0.00000000  0.00000000  1\n  N  N4  1  0.25000000  0.25000000  0.50000000  1\n  N  N5  1  0.25000000\
+      \  0.75000000  0.50000000  1\n  N  N6  1  0.75000000  0.25000000  0.50000000  1\n  N  N7  1  0.75000000  0.75000000\
+      \  0.50000000  1\n"
+    metadata:
+      formula: Nb0.25Ti0.75N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.25
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.02
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.07
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9171
+        predicted_omega_log: 279.55
+        predicted_Tc: 16.92
+        uncertainty: 0.49
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.25Ti0.75N
+          strain: 0.02
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9968
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: 29c4b84a-123a-4794-95d0-9b5468a1d2c3
+      source_acquisition_score: 0.4411
+      source_si_total: 56.9
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+  - formula: Nb0.5Ti0.5N
+    in_plane_strain: -0.03
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: 9d9d6f11-06dd-4c1d-99ee-1794469f8e52
+    structure_cif: "# generated using pymatgen\ndata_TiNbN2\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   5.92200515\n\
+      _cell_length_b   5.92200515\n_cell_length_c   3.11363157\n_cell_angle_alpha   60.00000000\n_cell_angle_beta   60.00000000\n\
+      _cell_angle_gamma   60.00000000\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   TiNbN2\n_chemical_formula_sum\
+      \   'Ti2 Nb2 N4'\n_cell_volume   77.21288614\n_cell_formula_units_Z   2\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.00000000  0.50000000  1.00000000 \
+      \ 1\n  Ti  Ti1  1  0.50000000  0.50000000  1.00000000  1\n  Nb  Nb2  1  0.00000000  0.00000000  0.00000000  1\n  Nb\
+      \  Nb3  1  0.50000000  0.00000000  1.00000000  1\n  N  N4  1  0.25000000  0.25000000  0.50000000  1\n  N  N5  1  0.25000000\
+      \  0.75000000  0.50000000  1\n  N  N6  1  0.75000000  0.25000000  0.50000000  1\n  N  N7  1  0.75000000  0.75000000\
+      \  0.50000000  1\n"
+    metadata:
+      formula: Nb0.5Ti0.5N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.5
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.03
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.095
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9134
+        predicted_omega_log: 278.99
+        predicted_Tc: 16.77
+        uncertainty: 0.52
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.5Ti0.5N
+          strain: 0.03
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9928
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: 9d9d6f11-06dd-4c1d-99ee-1794469f8e52
+      source_acquisition_score: 0.440925
+      source_si_total: 57.05
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+  - formula: Nb0.5Ti0.5N
+    in_plane_strain: -0.02
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: 03d3ab78-bf56-4142-a75f-bd849c916251
+    structure_cif: "# generated using pymatgen\ndata_TiNbN2\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   5.98305675\n\
+      _cell_length_b   5.98305675\n_cell_length_c   3.09328104\n_cell_angle_alpha   60.00000000\n_cell_angle_beta   60.00000000\n\
+      _cell_angle_gamma   60.00000000\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   TiNbN2\n_chemical_formula_sum\
+      \   'Ti2 Nb2 N4'\n_cell_volume   78.29799232\n_cell_formula_units_Z   2\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.00000000  0.50000000  1.00000000 \
+      \ 1\n  Ti  Ti1  1  0.50000000  0.50000000  1.00000000  1\n  Nb  Nb2  1  0.00000000  0.00000000  0.00000000  1\n  Nb\
+      \  Nb3  1  0.50000000  0.00000000  1.00000000  1\n  N  N4  1  0.25000000  0.25000000  0.50000000  1\n  N  N5  1  0.25000000\
+      \  0.75000000  0.50000000  1\n  N  N6  1  0.75000000  0.25000000  0.50000000  1\n  N  N7  1  0.75000000  0.75000000\
+      \  0.50000000  1\n"
+    metadata:
+      formula: Nb0.5Ti0.5N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.5
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.02
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.07
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9171
+        predicted_omega_log: 279.55
+        predicted_Tc: 16.92
+        uncertainty: 0.49
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.5Ti0.5N
+          strain: 0.02
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9968
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: 03d3ab78-bf56-4142-a75f-bd849c916251
+      source_acquisition_score: 0.43879
+      source_si_total: 56.13
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+  - formula: Nb0.75Ti0.25N
+    in_plane_strain: -0.03
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: 3e7f33c3-e59c-45fb-a712-52a9e680c09e
+    structure_cif: "# generated using pymatgen\ndata_TiNb3N4\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   5.97344717\n\
+      _cell_length_b   5.97344717\n_cell_length_c   3.14067841\n_cell_angle_alpha   60.00000000\n_cell_angle_beta   60.00000000\n\
+      _cell_angle_gamma   60.00000000\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   TiNb3N4\n_chemical_formula_sum\
+      \   'Ti1 Nb3 N4'\n_cell_volume   79.24256504\n_cell_formula_units_Z   1\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.50000000  0.50000000  0.00000000 \
+      \ 1\n  Nb  Nb1  1  0.00000000  0.00000000  0.00000000  1\n  Nb  Nb2  1  1.00000000  0.50000000  0.00000000  1\n  Nb\
+      \  Nb3  1  0.50000000  1.00000000  0.00000000  1\n  N  N4  1  0.25000000  0.25000000  0.50000000  1\n  N  N5  1  0.25000000\
+      \  0.75000000  0.50000000  1\n  N  N6  1  0.75000000  0.25000000  0.50000000  1\n  N  N7  1  0.75000000  0.75000000\
+      \  0.50000000  1\n"
+    metadata:
+      formula: Nb0.75Ti0.25N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.75
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.03
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.095
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9134
+        predicted_omega_log: 278.99
+        predicted_Tc: 16.77
+        uncertainty: 0.52
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.75Ti0.25N
+          strain: 0.03
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9928
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: 3e7f33c3-e59c-45fb-a712-52a9e680c09e
+      source_acquisition_score: 0.438555
+      source_si_total: 56.26
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+  - formula: Nb0.75Ti0.25N
+    in_plane_strain: -0.02
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: 6f0c0f36-5c2f-494c-80a3-f9a503438306
+    structure_cif: "# generated using pymatgen\ndata_TiNb3N4\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   6.03502910\n\
+      _cell_length_b   6.03502910\n_cell_length_c   3.12015110\n_cell_angle_alpha   60.00000000\n_cell_angle_beta   60.00000000\n\
+      _cell_angle_gamma   60.00000000\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   TiNb3N4\n_chemical_formula_sum\
+      \   'Ti1 Nb3 N4'\n_cell_volume   80.35619517\n_cell_formula_units_Z   1\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.50000000  0.50000000  0.00000000 \
+      \ 1\n  Nb  Nb1  1  0.00000000  0.00000000  0.00000000  1\n  Nb  Nb2  1  1.00000000  0.50000000  0.00000000  1\n  Nb\
+      \  Nb3  1  0.50000000  1.00000000  0.00000000  1\n  N  N4  1  0.25000000  0.25000000  0.50000000  1\n  N  N5  1  0.25000000\
+      \  0.75000000  0.50000000  1\n  N  N6  1  0.75000000  0.25000000  0.50000000  1\n  N  N7  1  0.75000000  0.75000000\
+      \  0.50000000  1\n"
+    metadata:
+      formula: Nb0.75Ti0.25N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.75
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.02
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.07
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9171
+        predicted_omega_log: 279.55
+        predicted_Tc: 16.92
+        uncertainty: 0.49
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.75Ti0.25N
+          strain: 0.02
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9968
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: 6f0c0f36-5c2f-494c-80a3-f9a503438306
+      source_acquisition_score: 0.43693
+      source_si_total: 55.51
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+  substrates:
+  - Si(001)
+  strain_values:
+  - 0.0
+  poisson_ratio: 0.25
+  supercell:
+  - 2
+  - 2
+  - 1
+  b_concentrations: []
+  bsi_supercell:
+  - 2
+  - 2
+  - 2
+  seed: 42
+  max_candidates: 6
+  epitaxy_orientation: auto
+  use_buffers: true
+calculators:
+- name: qe-epw
+  parameters: {}
+dft:
+  engine: qe-epw
+  ecutwfc: 60.0
+  ecutrho: 480.0
+  kpoints:
+  - 4
+  - 4
+  - 4
+  conv_thr: 1.0e-08
+  forc_conv_thr: 0.001
+  press_conv_thr: 0.5
+  occupations: smearing
+  smearing: mv
+  degauss: 0.02
+  nbnd: 64
+  pseudo_dir: pseudos/screening
+  pseudopotentials: {}
+  work_dir: null
+  nproc: 8
+  phonon_method: dfpt
+  phonopy_supercell:
+  - 2
+  - 2
+  - 2
+  phonopy_distance: 0.01
+  qpoints:
+  - 2
+  - 2
+  - 2
+  tr2_ph: 1.0e-10
+  ph_alpha_mix: 0.1
+  ph_nmix: 12
+  ph_niter: 150
+  do_relax: true
+  do_phonon: true
+  do_epw: true
+  epw:
+    enabled: true
+    nkf:
+    - 6
+    - 6
+    - 6
+    nqf:
+    - 6
+    - 6
+    - 6
+    nkc:
+    - 4
+    - 4
+    - 4
+    nqc:
+    - 2
+    - 2
+    - 2
+    nbndsub: 10
+    bands_skipped: 0
+    mu_star: 0.1
+    fsthick: 0.6
+    degaussw: 0.1
+    degaussq: 0.05
+    eps_acustic: 15.0
+    eliashberg: true
+    allen_dynes_fallback: true
+    wdata_prefix: siscforge
+    npool: 1
+  quality_tag: screening
+formation_filter:
+  enabled: false
+  max_e_hull_eV_per_atom: 0.25
+  max_strain_magnitude: 0.05
+  prefer_families:
+  - tm_nitride
+  - b_doped_si
+  - mgb2_boride
+  keep_top_n: null
+  version: 0.1-heuristic
+surrogate:
+  tc_lambda:
+    enabled: false
+    mu_star: 0.1
+    min_predicted_tc_K: null
+    max_uncertainty: null
+    keep_top_n: null
+    use_for_ranking_when_no_epw: true
+    version: 0.1-family-heuristic
+active_learning:
+  enabled: false
+  strategy: uncertainty_si_tc
+  max_epw_jobs: 5
+  weights:
+    uncertainty: 0.4
+    predicted_tc: 0.3
+    si_feasibility: 0.3
+    hull_penalty: 0.1
+  tc_ceiling_K: 40.0
+  evaluate_deferred_with_surrogate: true
+  version: 0.1-priority-queue
+ranking:
+  performance_weight: 0.55
+  si_feasibility_weight: 0.45
+  prefer_dynamically_stable: true
+  prefer_low_hull: true
+josephson:
+  enabled: false
+  shortlist_size: 20
+  model_tier: analytic_AB
+  reference_area_um2: 1.0
+  assume_SIS: true
+  temperature_K: null
+  secondary_ranking: false
+run:
+  resume: true
+  continue_on_error: true
+  force_rerun: false
+output_dir: outputs/nbti_n_al_broad_shortlist
+export_formats:
+- json
+- csv
+- markdown
+extras:
+  shortlist:
+    source_store: /home/pixnbits/projects/SiSC-Forge/main/outputs/nbti_n_al_broad
+    mode: al_selected
+    n_selected: 6
+    formulas:
+    - Nb0.25Ti0.75N
+    - Nb0.25Ti0.75N
+    - Nb0.5Ti0.5N
+    - Nb0.5Ti0.5N
+    - Nb0.75Ti0.25N
+    - Nb0.75Ti0.25N

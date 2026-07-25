@@ -216,6 +216,61 @@ def write_synthesis_cards(
     return path
 
 
+def write_candidate_onepagers(
+    evaluations: Iterable[CandidateEvaluation],
+    directory: str | Path,
+    *,
+    campaign_name: str = "",
+    max_candidates: int = 10,
+) -> list[Path]:
+    """Write one Markdown one-pager per top ranked candidate (desktop handoff).
+
+    Files: ``candidate_01_<formula>.md`` under *directory*.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    ranked = sorted(
+        list(evaluations),
+        key=lambda e: (e.rank if e.rank is not None else 10**9),
+    )
+    for i, ev in enumerate(ranked[:max_candidates], start=1):
+        formula = "".join(
+            ch if ch.isalnum() else "_" for ch in ev.candidate.formula
+        )[:24]
+        path = directory / f"candidate_{i:02d}_{formula}.md"
+        lines = [
+            f"# Candidate one-pager — {ev.candidate.formula}",
+            "",
+            f"Campaign: {campaign_name or '—'}",
+            f"Rank: {ev.rank if ev.rank is not None else '—'}",
+            "",
+        ]
+        lines.extend(_card_markdown(ev))
+        # Compact action line for experimentalists
+        eph = ev.electron_phonon
+        si = ev.si_feasibility
+        tc = eph.best_tc_K() if eph is not None else None
+        lines.extend(
+            [
+                "",
+                "### Desktop handoff summary",
+                f"- **Tc proxy (K)**: {tc if tc is not None else '—'}",
+                f"- **λ**: {eph.lambda_total if eph else '—'}",
+                f"- **Si-feasibility**: {si.total if si else '—'} "
+                f"(v{si.version if si else '—'})",
+                f"- **status**: {ev.status}",
+                f"- **strain**: {ev.candidate.in_plane_strain}",
+                f"- **substrate**: {ev.candidate.substrate or '—'}",
+            ]
+        )
+        if si and si.notes:
+            lines.append(f"- **Si notes**: {si.notes}")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        written.append(path)
+    return written
+
+
 def _card_markdown(ev: CandidateEvaluation) -> list[str]:
     c = ev.candidate
     si = ev.si_feasibility
@@ -353,6 +408,14 @@ def export_campaign_bundle(
             out_dir / "synthesis_cards.md",
             campaign_name=campaign_name,
         )
+        onepagers = write_candidate_onepagers(
+            evaluations,
+            out_dir / "candidate_onepagers",
+            campaign_name=campaign_name,
+            max_candidates=10,
+        )
+        if onepagers:
+            written["candidate_onepagers"] = onepagers[0].parent
     if candidates is not None:
         written["candidates"] = write_candidates_json(
             candidates, out_dir / "candidates.json"

@@ -202,9 +202,32 @@ class QECalculator(BaseCalculator):
             notes_parts.append(
                 "QE workflow did not fully succeed; see step logs under " + str(cand_dir)
             )
+            # Attach EPW/Wannier diagnostic block for shortlist continue-on-error
+            try:
+                from siscforge.calculators.qe.epw_recipes import diagnose_epw_failure
+
+                diag_src = wf.message or ""
+                for step in reversed(list(wf.steps)):
+                    if step.stdout_path and Path(step.stdout_path).is_file():
+                        try:
+                            diag_src = (
+                                Path(step.stdout_path)
+                                .read_text(encoding="utf-8", errors="replace")[-2000:]
+                            )
+                            break
+                        except OSError:
+                            continue
+                notes_parts.append(
+                    diagnose_epw_failure(
+                        diag_src, work_dir=cand_dir, step_name="qe_workflow"
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                pass
         notes_parts.append(f"quality_tag={dft.quality_tag}")
         notes_parts.append(f"phonon_method={dft.phonon_method}")
         notes_parts.append(f"do_epw={want_epw}")
+        notes_parts.append(f"work_dir={cand_dir}")
 
         scf = wf.scf
         phonon = wf.phonon
@@ -220,6 +243,11 @@ class QECalculator(BaseCalculator):
         if performance is None and eph is not None:
             performance = performance_score_from_epw(eph.best_tc_K())
 
+        err_list: list[str] = []
+        if not wf.success:
+            err_list.append(wf.message)
+            err_list.append(f"work_dir={cand_dir}")
+
         return CandidateEvaluation(
             candidate=out_candidate,
             scf=scf,
@@ -230,7 +258,7 @@ class QECalculator(BaseCalculator):
             composite_score=None,
             status=status,
             calculator_name=self.name,
-            errors=[] if wf.success else [wf.message],
+            errors=err_list,
             notes="; ".join(notes_parts),
             provenance=Provenance(
                 source="qe_calculator",

@@ -127,3 +127,7 @@ qe_tmp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local UPF files (keep README)
+pseudos/**/*.UPF
+pseudos/**/*.upf

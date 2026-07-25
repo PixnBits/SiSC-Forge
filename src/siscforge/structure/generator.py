@@ -96,12 +96,96 @@ def _as_tuple3(values: list[int] | tuple[int, int, int]) -> tuple[int, int, int]
     return int(values[0]), int(values[1]), int(values[2])
 
 
+def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
+    """Build candidates from exact shortlist ``candidate_specs`` (no grid)."""
+    from pymatgen.core import Structure as PMGStructure
+
+    from siscforge.structure.nitrides import _structure_from_formula
+
+    epi = getattr(enum, "epitaxy_orientation", "auto")
+    use_buf = bool(getattr(enum, "use_buffers", True))
+    candidates: list[StructureCandidate] = []
+
+    for spec in enum.candidate_specs:
+        family = spec.material_family
+        meta: dict[str, Any] = dict(spec.metadata or {})
+        meta.setdefault("requested_strain", float(spec.in_plane_strain))
+        meta["epitaxy_orientation"] = epi
+        meta["use_buffers"] = use_buf
+        meta["shortlist"] = True
+
+        if spec.structure_cif:
+            structure = PMGStructure.from_str(spec.structure_cif, fmt="cif")
+            tensor = None
+            applied_eps = float(spec.in_plane_strain)
+            tags = [family, "shortlist", "from_cif"]
+            if abs(applied_eps) < 1e-15:
+                tags.append("bulk_strain_0")
+            cand = structure_to_candidate(
+                structure,
+                material_family=family,
+                substrate=spec.substrate,
+                in_plane_strain=applied_eps,
+                strain_tensor=tensor,
+                source="shortlist_cif",
+                tags=tags,
+                metadata={**meta, "formula": spec.formula},
+                formula=spec.formula,
+            )
+        else:
+            if family == "mgb2_boride":
+                structure = build_mgb2()
+                meta = {**mgb2_metadata(), **meta, "formula": "MgB2", "kind": "binary"}
+            else:
+                structure, nmeta = _structure_from_formula(
+                    spec.formula,
+                    supercell=_as_tuple3(enum.supercell),
+                    seed=enum.seed,
+                )
+                meta = {**nmeta, **meta}
+            strained, tensor, applied_eps = apply_epitaxial_strain(
+                structure,
+                substrate=spec.substrate,
+                in_plane_strain=float(spec.in_plane_strain),
+                poisson_ratio=enum.poisson_ratio,
+                relax_out_of_plane=True,
+                match_substrate=False,
+            )
+            tags = [family, meta.get("kind", "bulk"), "shortlist", "epitaxial"]
+            if abs(float(spec.in_plane_strain)) < 1e-15:
+                tags.append("bulk_strain_0")
+            cand = structure_to_candidate(
+                strained,
+                material_family=family,
+                substrate=spec.substrate,
+                in_plane_strain=applied_eps,
+                strain_tensor=tensor,
+                source="shortlist_rebuild",
+                tags=tags,
+                metadata=meta,
+                formula=spec.formula,
+            )
+
+        if spec.candidate_id:
+            cand = cand.model_copy(update={"candidate_id": spec.candidate_id})
+        candidates.append(cand)
+        if len(candidates) >= enum.max_candidates:
+            break
+    return candidates
+
+
 def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
     """Generate :class:`StructureCandidate` objects from an enumeration config.
 
     For each bulk structure × substrate × strain value, applies biaxial strain
     and packages a fully populated candidate (CIF, lattice, strain tensor).
+
+    When ``candidate_specs`` is non-empty, only those exact shortlist rows are
+    produced (desktop EPW path).
     """
+    if enum.candidate_specs:
+        return _candidates_from_specs(enum)
+
     bulk_items: list[tuple[Structure, dict[str, Any], str]] = []
 
     families = enum.material_families or ["tm_nitride"]

@@ -105,20 +105,27 @@ class EvaluationStore:
         candidate: StructureCandidate,
         *,
         force_rerun: bool = False,
+        require_real: bool = False,
     ) -> CandidateEvaluation | None:
         """Return a prior successful evaluation for *candidate*, if any."""
         if force_rerun:
             return None
-        by_id, by_fp = index_evaluations(self.load_evaluations(ranked=False))
+        by_id, by_fp = index_evaluations(
+            self.load_evaluations(ranked=False), require_real=require_real
+        )
         return find_resumable_evaluation(
             candidate, by_id=by_id, by_fp=by_fp, force_rerun=force_rerun
         )
 
     def resume_index(
         self,
+        *,
+        require_real: bool = False,
     ) -> tuple[dict[str, CandidateEvaluation], dict[str, CandidateEvaluation]]:
         """Id / fingerprint indexes of successful evaluations currently on disk."""
-        return index_evaluations(self.load_evaluations(ranked=False))
+        return index_evaluations(
+            self.load_evaluations(ranked=False), require_real=require_real
+        )
 
     # --- filter / campaign / meta ---
     def save_filter_summary(self, summary: dict[str, Any]) -> Path:
