@@ -115,6 +115,13 @@ class CandidateEvaluation(BaseModel):
 
     si_feasibility: SiFeasibilityScore | None = None
 
+    tc_lambda_surrogate: dict[str, Any] | None = None
+    """λ/Tc surrogate stub prediction (dict form of TcLambdaPrediction).
+
+    Distinct from real ``electron_phonon``. Real EPW takes precedence for
+    ``performance_score`` when both are present.
+    """
+
     # Optional later-phase attachments (kept for schema stability)
     josephson: Any | None = None
     """Placeholder for JosephsonMetrics (Phase 3+); unused in v0.1."""
@@ -123,8 +130,12 @@ class CandidateEvaluation(BaseModel):
     """Superconducting performance proxy in kelvin (Tc).
 
     Higher is better. Filled from ``electron_phonon.best_tc_K()`` when EPW
-    succeeds; mock calculator may fill a dummy value.
+    succeeds; mock calculator may fill a dummy value. May be filled from the
+    λ/Tc **surrogate stub** only when no e-ph result exists (labeled in notes).
     """
+
+    performance_score_source: str | None = None
+    """Where ``performance_score`` came from: ``epw``, ``mock``, ``surrogate``, …"""
 
     composite_score: float | None = None
     """Multi-objective score combining performance and Si-feasibility."""

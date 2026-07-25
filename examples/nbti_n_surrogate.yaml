@@ -1,0 +1,67 @@
+# Nb–Ti–N campaign with λ/Tc surrogate pre-filter (Phase 1 stub)
+#
+# Dry-run (mock calculator + family-heuristic surrogate, no EPW):
+#   siscforge run --dry-run examples/nbti_n_surrogate.yaml
+#
+# The surrogate is a Phase-1 stub (not a trained GNN). Real EPW remains the
+# source of truth when --calculator qe-epw is used.
+
+name: nbti_n_surrogate_filter
+description: >
+  Nb-Ti-N strain series with formation filter + λ/Tc surrogate stub pre-filter.
+  Demonstrates predicted Tc / uncertainty in exports without running EPW.
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+  metals:
+    - Nb
+    - Ti
+  ternary_metals:
+    - Nb
+    - Ti
+  x_values:
+    - 0.25
+    - 0.5
+    - 0.75
+  supercell: [2, 2, 1]
+  substrates:
+    - Si(001)
+  strain_values:
+    - -0.02
+    - 0.0
+    - 0.02
+  poisson_ratio: 0.25
+  seed: 42
+  max_candidates: 20
+
+calculators:
+  - name: mock
+
+formation_filter:
+  enabled: true
+  max_e_hull_eV_per_atom: 0.25
+  max_strain_magnitude: 0.05
+
+surrogate:
+  tc_lambda:
+    enabled: true
+    min_predicted_tc_K: 5.0
+    max_uncertainty: 0.65
+    keep_top_n: 10
+    use_for_ranking_when_no_epw: true
+    mu_star: 0.10
+
+ranking:
+  performance_weight: 0.55
+  si_feasibility_weight: 0.45
+  prefer_dynamically_stable: true
+  prefer_low_hull: true
+
+output_dir: outputs/nbti_n_surrogate_filter
+export_formats:
+  - json
+  - csv
+  - markdown

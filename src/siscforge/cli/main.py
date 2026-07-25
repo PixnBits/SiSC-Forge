@@ -32,6 +32,7 @@ from siscforge.silicon.feasibility import score_si_feasibility
 from siscforge.store import EvaluationStore
 from siscforge.structure.generator import generate_candidates, generate_fake_candidates
 from siscforge.surrogates.formation import FormationEnergyFilter
+from siscforge.surrogates.tc_lambda import TcLambdaSurrogate
 
 app = typer.Typer(
     name="siscforge",
@@ -334,6 +335,32 @@ def run_cmd(
         console.print("[red]No candidates left after filtering.[/red]")
         raise typer.Exit(code=1)
 
+    # 2b. λ/Tc surrogate pre-filter (optional Phase 1 stub)
+    tc_cfg = config.surrogate.tc_lambda
+    tc_surrogate = TcLambdaSurrogate(tc_cfg)
+    tc_fres = tc_surrogate.filter(candidates)
+    candidates = tc_fres.kept
+    store.save_json(
+        "tc_lambda_surrogate.json",
+        {
+            **tc_fres.summary(),
+            "enabled": tc_cfg.enabled,
+            "config": tc_cfg.model_dump(mode="json"),
+        },
+    )
+    if tc_cfg.enabled:
+        console.print(
+            f"[bold]λ/Tc surrogate[/bold] kept {tc_fres.n_kept} "
+            f"(rejected {tc_fres.n_rejected}, model={tc_cfg.version})"
+        )
+        store.save_candidates(candidates)
+    # When disabled, filter() still annotates predictions on all kept candidates
+    # without dropping any (export can show stub values if present).
+
+    if not candidates:
+        console.print("[red]No candidates left after λ/Tc surrogate filter.[/red]")
+        raise typer.Exit(code=1)
+
     # 3. Select calculator
     calc_name = _resolve_calculator_name(
         config, dry_run=dry_run, calculator=calculator
@@ -402,9 +429,64 @@ def run_cmd(
             "mock"
         ):
             result = result.model_copy(update={"si_feasibility": si})
-        # Keep annotated candidate (hull proxy) on the evaluation
-        if result.candidate.energy_above_hull_proxy is None:
+        # Keep annotated candidate (hull proxy + surrogate metadata) on the evaluation
+        if result.candidate.energy_above_hull_proxy is None or (
+            "tc_lambda_surrogate" in cand.metadata
+            and "tc_lambda_surrogate" not in result.candidate.metadata
+        ):
             result = result.model_copy(update={"candidate": cand})
+
+        # Attach surrogate prediction; never override real EPW Tc
+        pred = tc_fres.predictions.get(cand.candidate_id)
+        if pred is not None:
+            result = result.model_copy(
+                update={"tc_lambda_surrogate": pred.model_dump(mode="json")}
+            )
+            real_tc = (
+                result.electron_phonon.best_tc_K()
+                if result.electron_phonon is not None
+                else None
+            )
+            has_real_eph = real_tc is not None and result.electron_phonon is not None
+            if has_real_eph:
+                # Prefer real/mock e-ph performance_score
+                if result.performance_score is None:
+                    result = result.model_copy(
+                        update={
+                            "performance_score": real_tc,
+                            "performance_score_source": (
+                                "mock"
+                                if result.electron_phonon.status == "mock"
+                                else "epw"
+                            ),
+                        }
+                    )
+                elif result.performance_score_source is None:
+                    src = (
+                        "mock"
+                        if result.electron_phonon.status == "mock"
+                        else "epw"
+                    )
+                    result = result.model_copy(
+                        update={"performance_score_source": src}
+                    )
+            elif tc_cfg.use_for_ranking_when_no_epw:
+                if result.performance_score is None:
+                    notes = (result.notes or "").strip()
+                    note_add = (
+                        "performance_score from λ/Tc surrogate stub "
+                        f"(unc={pred.uncertainty:.2f}; not EPW)"
+                    )
+                    result = result.model_copy(
+                        update={
+                            "performance_score": pred.score_for_ranking(),
+                            "performance_score_source": "surrogate",
+                            "notes": (
+                                f"{notes}; {note_add}" if notes else note_add
+                            ),
+                        }
+                    )
+
         evaluations.append(result)
         store.append_evaluation(result)
 

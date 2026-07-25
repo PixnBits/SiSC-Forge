@@ -10,6 +10,8 @@ from siscforge.models.config import (
     FormationFilterConfig,
     JosephsonConfig,
     RankingConfig,
+    SurrogateConfig,
+    TcLambdaSurrogateConfig,
 )
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
@@ -37,4 +39,6 @@ __all__ = [
     "SiFeasibilityComponents",
     "SiFeasibilityScore",
     "StructureCandidate",
+    "SurrogateConfig",
+    "TcLambdaSurrogateConfig",
 ]

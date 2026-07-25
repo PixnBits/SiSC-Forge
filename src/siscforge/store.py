@@ -102,6 +102,12 @@ class EvaluationStore:
         _write_json(path, meta)
         return path
 
+    def save_json(self, name: str, data: Any) -> Path:
+        """Write an arbitrary JSON document under the campaign store root."""
+        path = self.path(name)
+        _write_json(path, data)
+        return path
+
     def load_meta(self) -> dict[str, Any]:
         path = self.path(self.META)
         if not path.is_file():

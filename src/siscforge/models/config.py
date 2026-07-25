@@ -47,6 +47,43 @@ class FormationFilterConfig(BaseModel):
     version: str = "0.1-heuristic"
 
 
+class TcLambdaSurrogateConfig(BaseModel):
+    """λ / Tc surrogate stub for pre-filtering before EPW (Phase 1).
+
+    Disabled by default so existing campaigns are unchanged. When enabled,
+    candidates can be dropped by min predicted Tc, max uncertainty, or top-k.
+    Real ``ElectronPhononResult`` always takes precedence for ranking when present.
+    """
+
+    enabled: bool = False
+    """Master switch for surrogate pre-filter + optional ranking fill-in."""
+
+    mu_star: float = Field(default=0.10, ge=0.0, le=0.3)
+    """μ* used when converting predicted (λ, ω_log) → Allen–Dynes Tc."""
+
+    min_predicted_tc_K: float | None = Field(default=None, ge=0.0)
+    """Reject candidates with predicted Tc below this (None = no Tc cut)."""
+
+    max_uncertainty: float | None = Field(default=None, ge=0.0, le=1.0)
+    """Reject candidates with relative uncertainty above this (None = no cut)."""
+
+    keep_top_n: int | None = Field(default=None, ge=1)
+    """After scoring, keep only the N highest surrogate scores (None = keep all)."""
+
+    use_for_ranking_when_no_epw: bool = True
+    """If True and no real e-ph Tc is available, fill performance_score from the
+    surrogate (clearly labeled in notes / export columns)."""
+
+    version: str = "0.1-family-heuristic"
+
+
+class SurrogateConfig(BaseModel):
+    """ML / heuristic surrogate knobs for campaigns."""
+
+    tc_lambda: TcLambdaSurrogateConfig = Field(default_factory=TcLambdaSurrogateConfig)
+    """λ / ω_log / Tc pre-filter stub (not a trained production GNN)."""
+
+
 class EnumerationConfig(BaseModel):
     """Parameters controlling structure enumeration.
 
@@ -285,6 +322,9 @@ class CampaignConfig(BaseModel):
     )
     dft: DFTConfig = Field(default_factory=DFTConfig)
     formation_filter: FormationFilterConfig = Field(default_factory=FormationFilterConfig)
+    surrogate: SurrogateConfig = Field(default_factory=SurrogateConfig)
+    """Optional λ/Tc (and future) surrogates for pre-filtering."""
+
     ranking: RankingConfig = Field(default_factory=RankingConfig)
     josephson: JosephsonConfig = Field(default_factory=JosephsonConfig)
 

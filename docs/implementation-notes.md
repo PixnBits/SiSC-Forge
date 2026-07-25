@@ -1,5 +1,53 @@
 # Implementation Notes
 
+## Slice 8 (2026-07-25) — λ/Tc surrogate stub (pre-filter)
+
+**Scope**: Lightweight family-heuristic λ / ω_log / Tc predictions for **pre-filtering** before expensive EPW. Not a trained production GNN. No active learning.
+
+### Module
+| Item | Location |
+|------|----------|
+| Surrogate | `siscforge.surrogates.tc_lambda` |
+| Config | `CampaignConfig.surrogate.tc_lambda` (`TcLambdaSurrogateConfig`) |
+| Evaluation field | `CandidateEvaluation.tc_lambda_surrogate` + `performance_score_source` |
+| Example | `examples/nbti_n_surrogate.yaml` |
+| Tests | `tests/test_tc_lambda_surrogate.py` |
+
+### API
+```python
+from siscforge.surrogates import predict_tc_lambda, TcLambdaSurrogate
+pred = predict_tc_lambda(candidate)  # → λ, ω_log, Tc, uncertainty, model_version
+```
+
+### Campaign YAML
+```yaml
+surrogate:
+  tc_lambda:
+    enabled: true              # default false
+    min_predicted_tc_K: 5.0    # optional cut
+    max_uncertainty: 0.65      # optional cut (0–1)
+    keep_top_n: 10             # optional shortlist
+    use_for_ranking_when_no_epw: true
+```
+
+### Precedence
+1. Real EPW / mock `ElectronPhononResult` → `performance_score` (source `epw` / `mock`)
+2. Else, if `use_for_ranking_when_no_epw`, surrogate score (source `surrogate`, labeled in notes + CSV)
+
+### Export columns (distinct from EPW)
+`surrogate_lambda`, `surrogate_omega_log_K`, `surrogate_Tc`, `surrogate_uncertainty`, `surrogate_model_version`, `performance_score_source`
+
+### Limitations (stub)
+- Family + formula anchors only (NbN, MgB₂, TiN, …); not structure-graph trained
+- Uncertainty is heuristic, not calibrated ensemble variance
+- Does not replace EPW for scientific claims
+- Future: ALIGNN/MatGL multi-task head on the same `TcLambdaPrediction` schema
+
+### Next session (best single focus)
+**Minimal active-learning coordinator** that combines surrogate uncertainty + Si-feasibility to prioritize EPW jobs and re-rank the queue after new results arrive.
+
+---
+
 ## Slice 7 (2026-07-25) — MgB₂ golden EPW path
 
 **Scope**: Complete the MgB₂ golden conventional pathway (same Calculator/CLI patterns as NbN). Still isotropic-only; no trained λ/Tc surrogate, no active learning, no anisotropic Eliashberg.
@@ -26,12 +74,12 @@ siscforge run --calculator qe-epw examples/mgb2_epw.yaml   # needs epw.x + Mg/B 
 ### Remaining Phase 1 gaps (explicit)
 - Production Wannier automation (projections, windows, exclude_bands) beyond screening template
 - Anisotropic / multi-band Eliashberg (MgB₂ σ–π)
-- Lightweight λ/Tc **surrogate** for pre-filtering before EPW
-- Active-learning loop (uncertainty / UCB retrain)
+- Active-learning loop (uncertainty / UCB retrain) — see Slice 8
 - Broader boride enumeration (beyond bulk MgB₂ prototype)
+- Production-trained λ/Tc GNN replacing the Slice 8 stub
 
 ### Next session (best single focus)
-**Lightweight λ/Tc surrogate stub** for pre-filtering candidates before real EPW (mock + optional ALIGNN/MatGL-style head), keeping EPW as the ground-truth path.
+**Minimal active-learning coordinator** (surrogate uncertainty + Si-feasibility → EPW priority queue).
 
 ---
 

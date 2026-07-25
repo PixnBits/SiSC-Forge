@@ -67,6 +67,7 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "substrate": cand.substrate or "",
         "in_plane_strain": cand.in_plane_strain,
         "performance_score": ev.performance_score,
+        "performance_score_source": getattr(ev, "performance_score_source", None),
         "lambda_total": (
             ev.electron_phonon.lambda_total if ev.electron_phonon else None
         ),
@@ -76,6 +77,31 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         ),
         "Tc_eliashberg": (
             ev.electron_phonon.Tc_eliashberg if ev.electron_phonon else None
+        ),
+        "surrogate_lambda": (
+            (ev.tc_lambda_surrogate or {}).get("predicted_lambda")
+            if getattr(ev, "tc_lambda_surrogate", None)
+            else None
+        ),
+        "surrogate_omega_log_K": (
+            (ev.tc_lambda_surrogate or {}).get("predicted_omega_log")
+            if getattr(ev, "tc_lambda_surrogate", None)
+            else None
+        ),
+        "surrogate_Tc": (
+            (ev.tc_lambda_surrogate or {}).get("predicted_Tc")
+            if getattr(ev, "tc_lambda_surrogate", None)
+            else None
+        ),
+        "surrogate_uncertainty": (
+            (ev.tc_lambda_surrogate or {}).get("uncertainty")
+            if getattr(ev, "tc_lambda_surrogate", None)
+            else None
+        ),
+        "surrogate_model_version": (
+            (ev.tc_lambda_surrogate or {}).get("model_version")
+            if getattr(ev, "tc_lambda_surrogate", None)
+            else None
         ),
         "si_feasibility_total": si.total if si else None,
         "si_lattice_mismatch": comps.lattice_mismatch if comps else None,
@@ -119,10 +145,16 @@ CSV_FIELDNAMES = [
     "substrate",
     "in_plane_strain",
     "performance_score",
+    "performance_score_source",
     "lambda_total",
     "omega_log_K",
     "Tc_allen_dynes",
     "Tc_eliashberg",
+    "surrogate_lambda",
+    "surrogate_omega_log_K",
+    "surrogate_Tc",
+    "surrogate_uncertainty",
+    "surrogate_model_version",
     "si_feasibility_total",
     "si_lattice_mismatch",
     "si_thermal_budget",
@@ -198,9 +230,26 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         f"- **status**: {ev.status} (`{ev.calculator_name or 'n/a'}`)",
         f"- **composite score**: {ev.composite_score}",
         f"- **performance score**: {ev.performance_score}",
+        f"- **performance source**: {getattr(ev, 'performance_score_source', None) or '—'}",
     ]
     if c.energy_above_hull_proxy is not None:
         lines.append(f"- **E_hull proxy (eV/atom)**: {c.energy_above_hull_proxy}")
+
+    surr = getattr(ev, "tc_lambda_surrogate", None)
+    if surr:
+        lines.extend(
+            [
+                "",
+                "### λ/Tc surrogate (stub — not EPW)",
+                f"- **model**: {surr.get('model_version', '—')} "
+                f"(`{surr.get('quality_tag', 'stub')}` / {surr.get('method', '—')})",
+                f"- predicted λ: {surr.get('predicted_lambda')}",
+                f"- predicted ω_log (K): {surr.get('predicted_omega_log')}",
+                f"- predicted Tc (K): {surr.get('predicted_Tc')}",
+                f"- uncertainty (0–1): {surr.get('uncertainty')}",
+                f"- notes: {surr.get('notes', '—')}",
+            ]
+        )
 
     if si is not None:
         lines.extend(

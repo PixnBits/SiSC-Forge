@@ -137,6 +137,7 @@ class MockCalculator(BaseCalculator):
             electron_phonon=eph,
             si_feasibility=si,
             performance_score=performance,
+            performance_score_source="mock",
             composite_score=composite,
             status="mock",
             calculator_name=self.name,

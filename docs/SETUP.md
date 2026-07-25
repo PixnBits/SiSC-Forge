@@ -85,6 +85,9 @@ siscforge run --dry-run examples/nbn_epw.yaml
 # MgB₂ golden EPW campaign (mock λ / Tc)
 siscforge run --dry-run examples/mgb2_epw.yaml
 
+# Nb–Ti–N with λ/Tc surrogate stub pre-filter (still mock calculator)
+siscforge run --dry-run examples/nbti_n_surrogate.yaml
+
 # Structure enumeration only
 siscforge enumerate -c examples/nbti_n_strain.yaml
 ```
