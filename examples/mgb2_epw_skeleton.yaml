@@ -1,4 +1,5 @@
-# Deprecated name kept for compatibility — use examples/mgb2_epw.yaml
+# COMPATIBILITY ALIAS — prefer examples/mgb2_epw.yaml for new work.
+# Kept so older docs/scripts that reference the skeleton name still dry-run.
 #
 # Dry-run:
 #   siscforge run --dry-run examples/mgb2_epw.yaml
@@ -7,8 +8,8 @@
 
 name: mgb2_epw_skeleton
 description: >
-  Compatibility wrapper pointing at the Phase 1 MgB2 golden campaign.
-  Prefer examples/mgb2_epw.yaml for new work.
+  Compatibility alias for the Phase 1 MgB2 golden campaign.
+  Prefer examples/mgb2_epw.yaml.
 version: "0.1"
 dry_run: true
 

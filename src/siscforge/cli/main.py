@@ -1,9 +1,9 @@
 """SiSC-Forge CLI entry point (``siscforge``).
 
-Phase 0 subcommands:
-  - ``enumerate`` — generate structure candidates (+ optional formation filter)
+Subcommands:
+  - ``enumerate`` — generate structure candidates (+ optional filters)
   - ``rank``      — rank evaluations from JSON or a campaign store
-  - ``run``       — load campaign, filter, evaluate, rank, persist, export
+  - ``run``       — load campaign, filter, evaluate (mock/QE/EPW), rank, export
 """
 
 from __future__ import annotations
@@ -274,7 +274,7 @@ def run_cmd(
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Use the mock calculator (no DFT). Recommended for Phase 0.",
+        help="Use the mock calculator (no DFT/EPW). Default for CI and demos.",
     ),
     calculator: str | None = typer.Option(
         None,

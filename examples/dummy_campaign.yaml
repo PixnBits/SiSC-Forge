@@ -1,4 +1,4 @@
-# Minimal SiSC-Forge campaign for Phase 0 dry-run demos.
+# Minimal SiSC-Forge campaign for CLI smoke / dry-run demos.
 # Usage:
 #   siscforge run --dry-run examples/dummy_campaign.yaml
 

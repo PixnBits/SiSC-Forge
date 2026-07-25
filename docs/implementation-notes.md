@@ -1,10 +1,12 @@
 # Implementation Notes
 
-## Phase 1 automated validation (2026-07-25)
+## Phase 1 complete (frozen baseline)
 
-See **[docs/validation-phase1.md](validation-phase1.md)**: pytest 109 passed; dry-runs for
-`nbti_n_strain`, `nbti_n_al`, `nbn_epw`, `mgb2_epw` green. Real EPW scientific gate remains
-optional (NbN workstation run ~18–22 K Tc already recorded).
+**Version**: `0.1.0` · **Tag**: `v0.1.0-phase1` · **Exit checklist**: [phase1-exit.md](phase1-exit.md)  
+**Validation**: [validation-phase1.md](validation-phase1.md)
+
+Delivered: EPW + isotropic Eliashberg, NbN/MgB₂ goldens, λ/Tc surrogate stub, AL prioritization.
+Deferred: production Wannier, anisotropic Eliashberg, trained GNN, AL retrain, Phase 2 Si maturity.
 
 ---
 

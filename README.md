@@ -1,87 +1,77 @@
 # SiSC-Forge
 
-**Modular, high-throughput, machine-learning-accelerated platform for the discovery of silicon-compatible superconducting materials.**
+**Modular, high-throughput platform for discovery of silicon-compatible superconducting materials.**
 
-SiSC-Forge systematically searches for and evaluates silicon-compatible materials (transition-metal nitrides, heavily boron-doped silicon & silicides, MgB₂ and related borides, rare-earth nickelates, and cuprates with buffer layers) that could enable Josephson-junction-based superconducting logic at elevated temperatures, ideally approaching ambient conditions, while remaining compatible with CMOS fabrication processes (epitaxial growth, buffer layers, membrane transfer).
+SiSC-Forge searches and ranks transition-metal nitrides, B-doped Si, MgB₂/borides, and (later) nickelates/cuprates for elevated-temperature Josephson-friendly superconductivity with CMOS-compatible integration.
 
-## Spec-Driven Development
+## Spec-driven development
 
-This repository is organized for **spec-driven development**. The authoritative source of truth lives in the documentation:
+| Document | Path |
+|----------|------|
+| PRD | [`docs/PRD/SiSC-Forge-PRD.md`](docs/PRD/SiSC-Forge-PRD.md) |
+| Technical Specifications | [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) |
+| Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
+| Setup | [`docs/SETUP.md`](docs/SETUP.md) |
 
-- **Product Requirements Document (PRD)**: [`docs/PRD/SiSC-Forge-PRD.md`](docs/PRD/SiSC-Forge-PRD.md) — Version 0.2
-- **Technical Specifications**: [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) — Version 0.3
-- **Development Roadmap**: [`docs/ROADMAP.md`](docs/ROADMAP.md) — Practical phased implementation plan (Phases 0–4)
+## Current status — **Phase 1 complete** (`v0.1.0`)
 
-All implementation, prioritization, and design decisions should be driven by these documents.
-
-## Current Status
-
-v0.3 Blueprint — Complete PRD, Technical Specifications (including detailed Josephson Junction Device Modeling module), and a practical Development Roadmap are in place.
-
-The roadmap breaks work into five clear phases:
-
-| Phase | Focus | Compute |
+| Phase | Focus | Status |
 |-------|-------|--------|
-| 0 | Foundation & local validation | Workstation only |
-| 1 | Core conventional (EPW + Eliashberg) pipeline | Workstation + small cluster |
-| 2 | Silicon Integration maturity + ranking | Workstation |
-| 3 | Unconventional (DMFT) pathway + AL maturity | Small → medium HPC |
-| 4 | Device-level Josephson modeling | Mostly analytic / shortlist |
+| **0** | Foundation, mock dry-run, QE phonon | **Done** — [phase0-exit](docs/phase0-exit.md) |
+| **1** | EPW + isotropic Eliashberg, goldens, λ/Tc stub, AL prioritization | **Done** — [phase1-exit](docs/phase1-exit.md) |
+| 2 | Si-integration maturity (45° epitaxy, buffers, …) | In progress |
+| 3 | DMFT / unconventional | Future |
+| 4 | Josephson device metrics | Future |
 
-Phases 0–2 are fully workstation-validatable before any large allocation is required.
+### Phase 1 delivered
 
-## Key Capabilities
+- QE phonon + EPW screening path (`pw` → multi-q `ph` → `pp.py` → NSCF → `epw`)
+- Isotropic Allen–Dynes / Eliashberg Tc → `performance_score` ranking
+- NbN & MgB₂ golden examples (mock always; real EPW optional)
+- Family-heuristic λ/Tc **surrogate stub** for pre-filtering
+- Minimal **active-learning** top-k prioritization (not a retrain loop)
+- File store, CSV/Markdown export, synthesis cards
 
-- Structure generation & high-throughput screening of Si-compatible phases, alloys, dopings, strains, and interfaces
-- Automated DFT / DFPT / electron-phonon (EPW-style) calculations + Eliashberg Tc prediction
-- DFT+U / DMFT + pairing susceptibility for unconventional materials (nickelates, cuprates)
-- Silicon-specific modules: epitaxial strain, buffer-layer stacks, freestanding membrane transfer, proximity-effect modeling
-- Active-learning loop with graph neural network surrogates (ALIGNN / MatGL style)
-- Workflow orchestration (jobflow / atomate2 style)
-- Multi-objective ranking by predicted Tc **and** silicon-integration feasibility score
-- Export of synthesis-relevant metadata
-- (Phase 4) Approximate Josephson device metrics (Jc, IcRn, gap, switching energy, fabrication compatibility)
+Validation: [docs/validation-phase1.md](docs/validation-phase1.md).
 
-## Material Families
+## Quick start (Python only — no QE)
 
-1. Transition-metal nitrides (NbN, NbTiN, HfN, ZrN, TiN and alloys)
-2. Heavily boron-doped silicon and silicides
-3. MgB₂ thin films and related borides
-4. Rare-earth nickelates (infinite-layer NdNiO₂ / PrNiO₂ and bilayer family)
-5. Cuprates (YBCO and related) with buffer layers on silicon
-
-## Getting Started
-
-1. **Install & run** — follow **[docs/SETUP.md](docs/SETUP.md)** (Python, optional QE, optional EPW).
-2. Read the [PRD](docs/PRD/SiSC-Forge-PRD.md) for vision, goals, and success metrics.
-3. Read the [Technical Specifications](docs/specs/SiSC-Forge-Technical-Specifications.md) for module contracts and data models.
-4. Follow the [Development Roadmap](docs/ROADMAP.md) for phased implementation and validation gates.
-
-### Quick start (this machine — Python only)
-
-Requires **Python ≥ 3.11**. No Quantum ESPRESSO needed for dry-run.
+Requires **Python ≥ 3.11**.
 
 ```bash
-# from the repo root (e.g. projects/SiSC-Forge/main)
-uv venv .venv && source .venv/bin/activate   # or: python3 -m venv .venv
-uv pip install -e ".[dev]"                   # or: pip install -e ".[dev]"
+uv venv .venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
 pytest -q
 siscforge run --dry-run examples/nbti_n_strain.yaml
+siscforge run --dry-run examples/nbti_n_al.yaml
 siscforge run --dry-run examples/nbn_epw.yaml
+siscforge run --dry-run examples/mgb2_epw.yaml
 ```
 
-Full tiers (QE phonon, EPW + NbN scientific gate, env vars, pseudos): **[docs/SETUP.md](docs/SETUP.md)**.
+Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).
 
-### Other short links
+## Example campaigns
 
-| Topic | Doc |
-|-------|-----|
-| Setup (all tiers) | [docs/SETUP.md](docs/SETUP.md) |
-| Build working `ph.x` / EPW from source | [docs/build-qe-from-source.md](docs/build-qe-from-source.md) |
-| NbN phonon (real QE) | [docs/examples/nbN_phonon_qe.md](docs/examples/nbN_phonon_qe.md) |
-| NbN EPW + Tc | [docs/examples/nbN_epw.md](docs/examples/nbN_epw.md) |
-| Implementation notes | [docs/implementation-notes.md](docs/implementation-notes.md) |
-| Phase 0 exit checklist | [docs/phase0-exit.md](docs/phase0-exit.md) |
+| YAML | Purpose |
+|------|---------|
+| `examples/nbti_n_strain.yaml` | Nitride strain series (mock) |
+| `examples/nbti_n_surrogate.yaml` | λ/Tc surrogate pre-filter |
+| `examples/nbti_n_al.yaml` | AL top-k prioritization |
+| `examples/nbn_epw.yaml` | NbN EPW golden |
+| `examples/nbn_phonon_qe.yaml` | NbN phonon (real QE) |
+| `examples/mgb2_epw.yaml` | MgB₂ EPW golden |
+| `examples/mgb2_epw_skeleton.yaml` | **Compat alias** → prefer `mgb2_epw.yaml` |
+| `examples/dummy_campaign.yaml` | Minimal CLI smoke |
+
+Walkthroughs: [docs/examples/](docs/examples/).
+
+## Material families (priority)
+
+1. TM nitrides (NbN, NbTiN, TiN, ZrN, HfN, …)
+2. Heavily B-doped Si / silicides
+3. MgB₂ and borides
+4. Rare-earth nickelates (later)
+5. Cuprates with buffers (later)
 
 ## License
 
@@ -89,4 +79,4 @@ Full tiers (QE phonon, EPW + NbN scientific gate, env vars, pseudos): **[docs/SE
 
 ## Contributing
 
-Contributions are welcome once the core modules are in place. Please read the PRD, Technical Specifications, and Roadmap before proposing changes.
+Read the PRD, Technical Specs, and Roadmap before proposing changes. Prefer small PRs that keep `pytest` and dry-run green.
