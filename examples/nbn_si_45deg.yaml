@@ -1,0 +1,43 @@
+# NbN on Si(001) with Phase-2 Si-feasibility (45° / buffer-aware)
+#
+# Dry-run:
+#   siscforge run --dry-run examples/nbn_si_45deg.yaml
+#
+# Compare Si-score notes to cube-on-cube-only scoring (v0.1 used ~53 total
+# dominated by ~24% cube-on-cube mismatch).
+
+name: nbn_si_45deg
+description: >
+  Single NbN candidate with auto epitaxy (45° and buffer options) so
+  Si-feasibility v0.2 can score beyond cube-on-cube pessimism.
+version: "0.2"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+  formulas:
+    - NbN
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 1
+  epitaxy_orientation: auto
+  use_buffers: true
+
+calculators:
+  - name: mock
+
+formation_filter:
+  enabled: false
+
+ranking:
+  performance_weight: 0.5
+  si_feasibility_weight: 0.5
+
+output_dir: outputs/nbn_si_45deg
+export_formats:
+  - json
+  - csv
+  - markdown

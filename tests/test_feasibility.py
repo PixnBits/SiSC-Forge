@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import math
+
+import pytest
+
 from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import EnumerationConfig
-from siscforge.silicon.feasibility import COMPONENT_WEIGHTS, score_si_feasibility
+from siscforge.silicon.feasibility import (
+    COMPONENT_WEIGHTS,
+    SCORER_VERSION,
+    evaluate_mismatch_options,
+    score_si_feasibility,
+)
 from siscforge.structure.generator import generate_candidates, structure_to_candidate
 from siscforge.structure.nitrides import build_binary_nitride
+from siscforge.structure.strain import lattice_mismatch_percent
 
 
 def test_components_always_populated() -> None:
@@ -18,6 +28,7 @@ def test_components_always_populated() -> None:
         lattice_angles=(90.0, 90.0, 90.0),
         substrate="Si(001)",
         in_plane_strain=0.0,
+        metadata={"conventional_lattice_a": 4.392, "epitaxy_orientation": "auto"},
     )
     score = score_si_feasibility(cand)
     assert 0.0 <= score.total <= 100.0
@@ -32,7 +43,63 @@ def test_components_always_populated() -> None:
         assert 0.0 <= val <= 100.0
     assert score.lattice_mismatch_pct is not None
     assert score.recommended_buffers
-    assert score.version == "0.1"
+    assert score.version == SCORER_VERSION
+
+
+def test_45deg_mismatch_better_than_cube_on_cube_for_nbn() -> None:
+    a = 4.392
+    cube = lattice_mismatch_percent(a, "Si(001)", match="cube_on_cube")
+    deg45 = lattice_mismatch_percent(a, "Si(001)", match="45deg")
+    assert abs(deg45) < abs(cube)
+    # 45° uses a*√2 vs a_Si
+    expected = 100.0 * (5.4307 - a * math.sqrt(2)) / (a * math.sqrt(2))
+    assert deg45 == pytest.approx(expected, rel=1e-4)
+
+
+def test_auto_epitaxy_improves_nbn_si_score() -> None:
+    base = StructureCandidate(
+        formula="NbN",
+        material_family="tm_nitride",
+        composition={"Nb": 0.5, "N": 0.5},
+        lattice_abc=(4.392, 4.392, 4.392),
+        substrate="Si(001)",
+        metadata={
+            "conventional_lattice_a": 4.392,
+            "epitaxy_orientation": "cube_on_cube",
+            "use_buffers": False,
+        },
+    )
+    auto = base.model_copy(
+        update={
+            "metadata": {
+                "conventional_lattice_a": 4.392,
+                "epitaxy_orientation": "auto",
+                "use_buffers": True,
+            }
+        }
+    )
+    s_cube = score_si_feasibility(base)
+    s_auto = score_si_feasibility(auto)
+    assert s_auto.components.lattice_mismatch >= s_cube.components.lattice_mismatch
+    assert s_auto.total >= s_cube.total
+    assert "45" in s_auto.notes or "buffer" in s_auto.notes.lower()
+
+
+def test_mismatch_options_include_buffer() -> None:
+    cand = StructureCandidate(
+        formula="NbN",
+        material_family="tm_nitride",
+        composition={"Nb": 0.5, "N": 0.5},
+        metadata={
+            "conventional_lattice_a": 4.392,
+            "epitaxy_orientation": "auto",
+            "use_buffers": True,
+        },
+        substrate="Si(001)",
+    )
+    opts = evaluate_mismatch_options(cand)
+    assert any("buffer" in o["path"] for o in opts)
+    assert any(o["match"] == "45deg" for o in opts)
 
 
 def test_weights_sum_to_one() -> None:

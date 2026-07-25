@@ -168,6 +168,17 @@ class EnumerationConfig(BaseModel):
 
     max_candidates: int = Field(default=50, ge=1)
 
+    epitaxy_orientation: Literal["auto", "cube_on_cube", "45deg"] = "auto"
+    """Si-feasibility epitaxy matching for rocksalt nitrides (Phase 2).
+
+    - ``auto``: choose best of cube-on-cube vs 45° (and buffers when enabled)
+    - ``cube_on_cube``: conventional *a* vs *a*_Si
+    - ``45deg``: diagonal *a*√2 vs *a*_Si
+    """
+
+    use_buffers: bool = True
+    """If True, Si-feasibility may assume a buffer from the minimal library."""
+
 
 class CalculatorConfig(BaseModel):
     """Which calculators to run and with what overrides."""

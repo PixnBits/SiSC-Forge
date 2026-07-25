@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Literal
 
@@ -12,6 +13,7 @@ from pymatgen.core import Lattice, Structure
 SI_LATTICE_CONSTANT: float = 5.4307
 
 SubstrateOrientation = Literal["001", "111"]
+EpitaxyMatch = Literal["cube_on_cube", "45deg"]
 
 
 def parse_substrate(substrate: str) -> tuple[str, SubstrateOrientation]:
@@ -29,15 +31,14 @@ def parse_substrate(substrate: str) -> tuple[str, SubstrateOrientation]:
     mat = m.group("mat").capitalize()
     hkl: SubstrateOrientation = m.group("hkl")  # type: ignore[assignment]
     if mat != "Si":
-        raise ValueError(f"Only Si substrates are supported in Phase 0, got {mat!r}")
+        raise ValueError(f"Only Si substrates are supported in Phase 0/2, got {mat!r}")
     return mat, hkl
 
 
 def substrate_in_plane_spacing(substrate: str) -> float:
     """Effective cubic-matching in-plane lattice target (Å) for coherent epitaxy.
 
-    Phase-0 simplification (cube-on-cube conventional cells):
-    - Si(001): match film *a* to *a*_Si
+    - Si(001): match film *a* to *a*_Si (cube-on-cube reference)
     - Si(111): match film *a* to *a*_Si / √2  (common effective spacing)
     """
     _, hkl = parse_substrate(substrate)
@@ -46,18 +47,47 @@ def substrate_in_plane_spacing(substrate: str) -> float:
     return SI_LATTICE_CONSTANT / np.sqrt(2.0)
 
 
+def effective_film_spacing(
+    film_a: float,
+    match: EpitaxyMatch = "cube_on_cube",
+) -> float:
+    """In-plane film period (Å) used for mismatch vs substrate.
+
+    - ``cube_on_cube``: conventional cubic *a*
+    - ``45deg``: diagonal match *a*√2 (rocksalt [110] // Si [100] style)
+    """
+    if film_a <= 0:
+        raise ValueError("film_a must be positive")
+    if match == "45deg":
+        return float(film_a) * math.sqrt(2.0)
+    return float(film_a)
+
+
 def lattice_mismatch_percent(
     film_in_plane_a: float,
     substrate: str = "Si(001)",
+    *,
+    match: EpitaxyMatch = "cube_on_cube",
+    substrate_a: float | None = None,
 ) -> float:
-    """Misfit (%) = 100 * (a_sub - a_film) / a_film.
+    """Misfit (%) = 100 * (a_sub - a_film_eff) / a_film_eff.
 
-    Positive ⇒ substrate larger than film (tensile if film is forced to match).
+    Positive ⇒ substrate larger than effective film spacing (tensile if matched).
+
+    Parameters
+    ----------
+    match:
+        ``cube_on_cube`` or ``45deg`` (diagonal film period).
+    substrate_a:
+        Override substrate spacing (e.g. buffer lattice when stacking).
     """
-    a_sub = substrate_in_plane_spacing(substrate)
-    if film_in_plane_a <= 0:
-        raise ValueError("film_in_plane_a must be positive")
-    return 100.0 * (a_sub - film_in_plane_a) / film_in_plane_a
+    a_sub = float(substrate_a) if substrate_a is not None else substrate_in_plane_spacing(
+        substrate
+    )
+    a_film_eff = effective_film_spacing(film_in_plane_a, match)
+    if a_film_eff <= 0:
+        raise ValueError("effective film spacing must be positive")
+    return 100.0 * (a_sub - a_film_eff) / a_film_eff
 
 
 def voigt_biaxial(eps_ip: float, eps_zz: float) -> tuple[float, float, float, float, float, float]:

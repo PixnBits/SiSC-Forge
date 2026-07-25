@@ -1,5 +1,22 @@
 # Implementation Notes
 
+## Slice 10 (2026-07-25) — Phase 2 kickoff: 45° epitaxy + buffer library
+
+**Scope**: Reduce cube-on-cube Si-mismatch pessimism for rocksalt nitrides.
+
+| Item | Location |
+|------|----------|
+| 45° mismatch | `structure.strain.lattice_mismatch_percent(..., match="45deg")` |
+| Buffer library | `silicon.buffers` — TiN, AlN, ZrN, MgO, direct_Si |
+| Scorer | `silicon.feasibility` **v0.2** — auto picks best of cube / 45° / buffer |
+| Enum flags | `enumeration.epitaxy_orientation`, `use_buffers` |
+| Example | `examples/nbn_si_45deg.yaml` |
+
+Notes on the score always state when 45° or a buffer was assumed. Remaining Phase 2:
+multi-layer stacks, membrane mechanics, critical thickness, interface slabs, Pareto ranking.
+
+---
+
 ## Phase 1 complete (frozen baseline)
 
 **Version**: `0.1.0` · **Tag**: `v0.1.0-phase1` · **Exit checklist**: [phase1-exit.md](phase1-exit.md)  

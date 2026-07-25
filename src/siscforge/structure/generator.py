@@ -166,6 +166,10 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
                 tags = [family, meta.get("kind", "bulk"), "epitaxial"]
                 if abs(float(eps)) < 1e-15:
                     tags.append("bulk_strain_0")
+                epi = getattr(enum, "epitaxy_orientation", "auto")
+                use_buf = bool(getattr(enum, "use_buffers", True))
+                if epi == "45deg":
+                    tags.append("epitaxy_45deg")
                 cand = structure_to_candidate(
                     strained,
                     material_family=family,
@@ -174,7 +178,12 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
                     strain_tensor=tensor,
                     source="structure_generator",
                     tags=tags,
-                    metadata={**meta, "requested_strain": float(eps)},
+                    metadata={
+                        **meta,
+                        "requested_strain": float(eps),
+                        "epitaxy_orientation": epi,
+                        "use_buffers": use_buf,
+                    },
                     formula=meta.get("formula"),
                 )
                 candidates.append(cand)
