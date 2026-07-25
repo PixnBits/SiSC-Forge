@@ -44,6 +44,7 @@ uv pip install -e ".[dev]"
 pytest -q
 siscforge run --dry-run examples/nbti_n_strain.yaml
 siscforge run --dry-run examples/nbti_n_al.yaml
+siscforge run --dry-run examples/nbti_n_al_broad.yaml
 siscforge run --dry-run examples/nbn_epw.yaml
 siscforge run --dry-run examples/mgb2_epw.yaml
 ```
@@ -56,7 +57,9 @@ Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).
 |------|---------|
 | `examples/nbti_n_strain.yaml` | Nitride strain series (mock) |
 | `examples/nbti_n_surrogate.yaml` | λ/Tc surrogate pre-filter |
-| `examples/nbti_n_al.yaml` | AL top-k prioritization |
+| `examples/nbti_n_al.yaml` | AL top-k prioritization (small) |
+| `examples/nbti_n_al_broad.yaml` | Broader AL + 45°/buffer Si (workstation shortlist) |
+| `examples/nbn_si_45deg.yaml` | Si-feasibility v0.2 (45° / buffers) |
 | `examples/nbn_epw.yaml` | NbN EPW golden |
 | `examples/nbn_phonon_qe.yaml` | NbN phonon (real QE) |
 | `examples/mgb2_epw.yaml` | MgB₂ EPW golden |

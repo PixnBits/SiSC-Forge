@@ -1,0 +1,115 @@
+# Broader Nb–Ti–N (+ Zr/Hf) campaign with surrogate + AL + Phase-2 Si scoring
+#
+# Dry-run (mock = stand-in for expensive EPW on the AL top-k):
+#   siscforge run --dry-run examples/nbti_n_al_broad.yaml
+#
+# Real shortlist EPW (after dry-run review of top-k IDs):
+#   # edit dft.pseudo_dir; set calculators to qe-epw; reduce max_candidates
+#   # to the shortlist or re-run with max_epw_jobs and qe-epw calculator
+#   siscforge run --calculator qe-epw examples/nbti_n_al_broad.yaml
+#
+# Compared to examples/nbti_n_al.yaml (~15 candidates, cube-era Si):
+#   - larger composition × strain grid (binaries Nb/Ti/Zr/Hf + Nb–Ti ternaries)
+#   - epitaxy_orientation: auto + use_buffers (Si-feasibility v0.2)
+#   - max_epw_jobs: 6 (workstation-scale shortlist)
+#
+# See docs/examples/nbti_n_al_broad.md
+
+name: nbti_n_al_broad
+description: >
+  Workstation-scale Nb-Ti-N (+ Zr/Hf binaries) strain series with formation
+  filter, λ/Tc surrogate, AL prioritization (top-k EPW jobs), and Phase-2
+  Si-feasibility (45° epitaxy + buffer library).
+version: "0.2"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+  metals:
+    - Nb
+    - Ti
+    - Zr
+    - Hf
+  ternary_metals:
+    - Nb
+    - Ti
+  x_values:
+    - 0.25
+    - 0.5
+    - 0.75
+  supercell: [2, 2, 1]
+  substrates:
+    - Si(001)
+  strain_values:
+    - -0.03
+    - -0.02
+    - -0.01
+    - 0.0
+    - 0.01
+    - 0.02
+    - 0.03
+  poisson_ratio: 0.25
+  seed: 42
+  max_candidates: 60
+  # Phase 2 Si integration: best of cube / 45° / buffer for rocksalt nitrides
+  epitaxy_orientation: auto
+  use_buffers: true
+
+calculators:
+  - name: mock
+
+formation_filter:
+  enabled: true
+  max_e_hull_eV_per_atom: 0.25
+  max_strain_magnitude: 0.05
+
+surrogate:
+  tc_lambda:
+    enabled: true
+    min_predicted_tc_K: 1.0
+    max_uncertainty: 0.90
+    keep_top_n: null
+    use_for_ranking_when_no_epw: true
+    mu_star: 0.10
+
+active_learning:
+  enabled: true
+  strategy: uncertainty_si_tc
+  max_epw_jobs: 6
+  evaluate_deferred_with_surrogate: true
+  weights:
+    uncertainty: 0.35
+    predicted_tc: 0.30
+    si_feasibility: 0.30
+    hull_penalty: 0.10
+
+ranking:
+  performance_weight: 0.55
+  si_feasibility_weight: 0.45
+  prefer_dynamically_stable: true
+  prefer_low_hull: true
+
+# Real EPW shortlist: uncomment / set when running qe-epw on top-k only.
+# dft:
+#   engine: qe-epw
+#   do_epw: true
+#   quality_tag: screening
+#   pseudo_dir: /usr/share/espresso/pseudo
+#   ecutwfc: 60.0
+#   ecutrho: 480.0
+#   kpoints: [4, 4, 4]
+#   qpoints: [2, 2, 2]
+#   epw:
+#     enabled: true
+#     nkf: [6, 6, 6]
+#     nqf: [6, 6, 6]
+#     nqc: [2, 2, 2]
+#     mu_star: 0.10
+#     eps_acustic: 15.0
+
+output_dir: outputs/nbti_n_al_broad
+export_formats:
+  - json
+  - csv
+  - markdown

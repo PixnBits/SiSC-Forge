@@ -1,5 +1,24 @@
 # Implementation Notes
 
+## Slice 12 (2026-07-25) — Broader nitride AL campaign
+
+**Scope**: Workstation-scale Nb–Ti–N (+ Zr/Hf) example that closes the Phase 1
+loop with Phase 2 Si-scoring.
+
+| Item | Location |
+|------|----------|
+| Campaign | `examples/nbti_n_al_broad.yaml` |
+| Walkthrough | `docs/examples/nbti_n_al_broad.md` |
+| Tests | `tests/test_active_learning.py::test_example_al_broad_yaml_loads_and_enumerates` |
+
+Grid: 4 binaries (Nb/Ti/Zr/Hf) + 3 Nb–Ti ternaries × 7 strains → ~49 candidates
+(capped at 60). AL `max_epw_jobs: 6`. Epitaxy `auto` + buffers for Si v0.2.
+
+Dry-run shows acquisition table, top-k selection, surrogate_only deferred rows.
+Real EPW: restrict shortlist + `--calculator qe-epw` (see walkthrough).
+
+---
+
 ## Slice 11 (2026-07-25) — Light EPW practical hardening
 
 **Scope**: Thin pass only — defaults comments, failure diagnostics, quality_tag

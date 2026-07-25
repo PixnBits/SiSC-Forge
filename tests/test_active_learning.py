@@ -144,3 +144,26 @@ def test_example_al_yaml_loads() -> None:
     assert cfg.active_learning.enabled is True
     assert cfg.active_learning.max_epw_jobs == 5
     assert cfg.surrogate.tc_lambda.enabled is True
+
+
+def test_example_al_broad_yaml_loads_and_enumerates() -> None:
+    """Broader AL campaign: larger grid + Phase-2 Si flags + workstation top-k."""
+    from siscforge.structure.generator import generate_candidates
+
+    cfg = CampaignConfig.from_yaml(Path("examples/nbti_n_al_broad.yaml"))
+    assert cfg.active_learning.enabled is True
+    assert cfg.active_learning.max_epw_jobs == 6
+    assert cfg.surrogate.tc_lambda.enabled is True
+    assert cfg.formation_filter.enabled is True
+    assert cfg.enumeration.epitaxy_orientation == "auto"
+    assert cfg.enumeration.use_buffers is True
+    assert set(cfg.enumeration.metals) >= {"Nb", "Ti", "Zr", "Hf"}
+    # Broader than the toy AL example (~15): 4 binaries + 3 ternaries × 7 strains
+    cands = generate_candidates(cfg)
+    assert len(cands) >= 40
+    assert len(cands) <= cfg.enumeration.max_candidates
+    # Si-feasibility metadata for 45° / buffer scoring
+    assert all(c.metadata.get("epitaxy_orientation") == "auto" for c in cands)
+    si0 = score_si_feasibility(cands[0])
+    assert si0.version == "0.2"
+    assert 0.0 <= si0.total <= 100.0
