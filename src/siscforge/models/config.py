@@ -147,6 +147,10 @@ class EPWConfig(BaseModel):
     degaussq: float = 0.05
     """Smearing for phonons in EPW (eV)."""
 
+    eps_acustic: float = 5.0
+    """Lower bound on phonon frequency (cm⁻¹) for a2F / λ. Raise (e.g. 50)
+    to suppress soft/imaginary modes that otherwise inflate λ."""
+
     eliashberg: bool = True
     """If True, request isotropic Eliashberg in EPW when supported."""
 
@@ -192,6 +196,11 @@ class DFTConfig(BaseModel):
     degauss: float = 0.02
     """Marzari–Vanderbilt smearing width (Ry) for metals."""
 
+    nbnd: int | None = None
+    """Number of Kohn–Sham bands. Metals + DFPT/EPW need empty states; when
+    unset and occupations use smearing with phonon/EPW, a screening default
+    is applied in the input builders."""
+
     pseudo_dir: str | None = None
     """Directory containing UPF pseudopotentials. Required for real QE runs."""
 
@@ -218,6 +227,16 @@ class DFTConfig(BaseModel):
 
     tr2_ph: float = 1.0e-12
     """DFPT threshold."""
+
+    ph_alpha_mix: float = 0.3
+    """DFPT Broyden mixing factor ``alpha_mix(1)``. Lower (0.1–0.3) for metals
+    / soft modes that otherwise diverge (``|ddv_scf| → ∞``)."""
+
+    ph_nmix: int = 8
+    """Number of iterations used in DFPT potential mixing (``nmix_ph``)."""
+
+    ph_niter: int = 100
+    """Max DFPT SCF iterations per irreducible representation (``niter_ph``)."""
 
     do_relax: bool = True
     """Run ionic/cell relaxation before SCF + phonon."""

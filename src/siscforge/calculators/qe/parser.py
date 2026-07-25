@@ -185,6 +185,27 @@ def parse_pw_energy_from_text(text: str) -> float | None:
     return None
 
 
+def parse_fermi_energy_eV(path_or_text: Path | str) -> float | None:
+    """Extract Fermi energy (eV) from pw.x / nscf stdout.
+
+    Matches lines like ``the Fermi energy is    20.7390 ev``.
+    """
+    if isinstance(path_or_text, Path) or (
+        isinstance(path_or_text, str) and Path(path_or_text).is_file()
+    ):
+        text = Path(path_or_text).read_text(encoding="utf-8", errors="replace")
+    else:
+        text = str(path_or_text)
+    matches = re.findall(
+        r"the Fermi energy is\s+([-\d.Ee+]+)\s*ev",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if matches:
+        return float(matches[-1])
+    return None
+
+
 def parse_pw_output(
     path_or_text: Path | str,
     *,

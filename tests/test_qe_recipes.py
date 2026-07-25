@@ -47,6 +47,34 @@ def test_build_ph_input_ldisp() -> None:
     assert "ldisp = .true." in text
 
 
+def test_build_ph_input_for_epw() -> None:
+    text = build_ph_input(
+        ldisp=True, nq1=2, nq2=2, nq3=2, fildvscf="dvscf", prefix="s"
+    )
+    assert "fildvscf = 'dvscf'" in text
+    assert "ldisp = .true." in text
+    assert "nq1 = 2" in text
+    assert "alpha_mix(1)" in text
+    assert "nmix_ph" in text
+
+
+def test_build_pw_auto_nbnd_for_metals_phonon() -> None:
+    s = build_binary_nitride("Nb")
+    cfg = DFTConfig(
+        pseudo_dir="/tmp/fake_pseudo",
+        pseudopotentials={"Nb": "Nb.upf", "N": "N.upf"},
+        do_phonon=True,
+        occupations="smearing",
+    )
+    from pathlib import Path
+
+    Path("/tmp/fake_pseudo").mkdir(parents=True, exist_ok=True)
+    (Path("/tmp/fake_pseudo") / "Nb.upf").touch()
+    (Path("/tmp/fake_pseudo") / "N.upf").touch()
+    text = str(build_pw_input(s, cfg, calculation="scf"))
+    assert "nbnd" in text.lower()
+
+
 def test_candidate_to_structure() -> None:
     import pytest
 

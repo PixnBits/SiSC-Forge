@@ -35,26 +35,42 @@ formation_filter:
 
 dft:
   engine: qe-epw
-  ecutwfc: 50.0
-  ecutrho: 400.0
-  kpoints: [4, 4, 4]
+  # PAW Nb needs a bit more cutoff + empty bands for multi-q DFPT/EPW.
+  ecutwfc: 60.0
+  ecutrho: 480.0
+  kpoints: [6, 6, 6]
   qpoints: [2, 2, 2]
-  do_relax: false
+  # Short vc-relax helps EPW avoid the PAW d_matrix symmetry crash seen on
+  # some ibrav=0 CIF-reoriented cells (still screening-level soft modes).
+  do_relax: true
   do_phonon: true
   do_epw: true
-  phonon_method: gamma
+  # EPW path forces multi-q ldisp + fildvscf using epw.nqc.
+  phonon_method: dfpt
+  nbnd: 28
+  tr2_ph: 1.0e-10
+  ph_alpha_mix: 0.1
+  ph_nmix: 12
+  ph_niter: 150
+  degauss: 0.02
   quality_tag: screening
-  pseudo_dir: null
+  pseudo_dir: /usr/share/espresso/pseudo
   epw:
     enabled: true
     nkf: [6, 6, 6]
     nqf: [6, 6, 6]
     nkc: [4, 4, 4]
     nqc: [2, 2, 2]
+    nbndsub: 10
     mu_star: 0.10
     eliashberg: true
     allen_dynes_fallback: true
-    fsthick: 0.4
+    # Slightly wider FS window for coarse screening meshes
+    fsthick: 0.6
+    degaussw: 0.1
+    degaussq: 0.05
+    # Raise above default (5) to temper soft-mode λ inflation under screening DFPT
+    eps_acustic: 15.0
 
 ranking:
   performance_weight: 0.65

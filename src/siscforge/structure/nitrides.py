@@ -48,24 +48,70 @@ def rocksalt_lattice_constant(*metals: str, fractions: list[float] | None = None
     return float(a)
 
 
-def build_rocksalt_primitive(metal: str, a: float | None = None) -> Structure:
-    """Build a 2-atom rocksalt primitive cell (metal + N).
+def build_rocksalt_conventional(metal: str, a: float | None = None) -> Structure:
+    """Build the conventional cubic rocksalt cell (8 atoms: 4 M + 4 N).
 
-    Uses the conventional cubic rocksalt lattice with basis:
-    metal at (0,0,0), N at (0.5,0.5,0.5).
+    *a* is the experimental FCC lattice constant (Å), e.g. 4.392 for NbN.
     """
     metal = metal if metal in ROCKSALT_LATTICE_CONSTANTS else metal.capitalize()
     a = a if a is not None else ROCKSALT_LATTICE_CONSTANTS[metal]
-    lattice = Lattice.cubic(a)
-    return Structure(
-        lattice,
+    # Fm-3m: M at 4a, N at 4b — yields correct density (~8.4 g/cm³ for NbN).
+    return Structure.from_spacegroup(
+        "Fm-3m",
+        Lattice.cubic(float(a)),
         [metal, "N"],
         [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
     )
 
 
-def build_binary_nitride(metal: str, a: float | None = None) -> Structure:
-    """Return a conventional rocksalt MN structure for *metal*."""
+def build_rocksalt_primitive(metal: str, a: float | None = None) -> Structure:
+    """Build a 2-atom primitive rocksalt cell (metal + N).
+
+    Important: the conventional cubic lattice constant *a* (e.g. 4.392 Å for NbN)
+    must **not** be used as a simple-cubic 2-atom cell — that under-densifies by 4×
+    (~2.1 vs ~8.4 g/cm³) and produces soft/imaginary phonons and broken EPW.
+
+    Uses the exact primitive FCC lattice (no spglib float noise). Near-zero
+    components like ``1e-16`` from analyzer-derived cells break QE/EPW PAW
+    symmetry (``d_matrix … not orthogonal``).
+    """
+    import numpy as np
+
+    metal = metal if metal in ROCKSALT_LATTICE_CONSTANTS else metal.capitalize()
+    a_conv = float(a if a is not None else ROCKSALT_LATTICE_CONSTANTS[metal])
+    half = a_conv / 2.0
+    # Standard primitive FCC vectors for conventional cubic *a*
+    matrix = np.array(
+        [
+            [0.0, half, half],
+            [half, 0.0, half],
+            [half, half, 0.0],
+        ],
+        dtype=float,
+    )
+    return Structure(
+        Lattice(matrix),
+        [metal, "N"],
+        [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+
+
+def build_binary_nitride(
+    metal: str,
+    a: float | None = None,
+    *,
+    conventional: bool = False,
+) -> Structure:
+    """Return a rocksalt MN structure for *metal*.
+
+    Parameters
+    ----------
+    conventional:
+        If True, return the 8-atom cubic cell (lattice *a* = experimental FCC
+        constant). Default False → 2-atom primitive cell (cheaper DFPT/EPW).
+    """
+    if conventional:
+        return build_rocksalt_conventional(metal, a=a)
     return build_rocksalt_primitive(metal, a=a)
 
 
@@ -184,15 +230,17 @@ def enumerate_nitrides(
     bin_metals = metals if metals else list(DEFAULT_BINARY_METALS)
     # Binaries
     for m in bin_metals:
-        s = build_binary_nitride(m)
+        mcap = m.capitalize()
+        s = build_binary_nitride(mcap)
         results.append(
             (
                 s,
                 {
-                    "formula": f"{m.capitalize()}N",
+                    "formula": f"{mcap}N",
                     "kind": "binary",
-                    "metals": [m.capitalize()],
+                    "metals": [mcap],
                     "x": 1.0,
+                    "conventional_lattice_a": rocksalt_lattice_constant(mcap),
                 },
             )
         )
@@ -268,12 +316,17 @@ def _structure_from_formula(
     metals = [sym for sym in elements if sym != "N"]
     if len(metals) == 1:
         s = build_binary_nitride(metals[0])
-        return s, {
+        meta: dict[str, Any] = {
             "formula": formula,
             "kind": "binary",
             "metals": metals,
             "x": 1.0,
         }
+        try:
+            meta["conventional_lattice_a"] = rocksalt_lattice_constant(metals[0])
+        except KeyError:
+            pass
+        return s, meta
     if len(metals) == 2:
         m_a, m_b = metals[0], metals[1]
         n_a, n_b = elements[m_a], elements[m_b]

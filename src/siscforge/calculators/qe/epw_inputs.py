@@ -1,10 +1,88 @@
-"""Build minimal EPW input decks for workstation screening."""
+"""Build minimal EPW input decks for workstation screening (QE ≥ 7.x)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from pymatgen.core import Element, Structure
+
 from siscforge.models.config import DFTConfig, EPWConfig
+
+# Default atomic masses (amu) for common species when structure is unavailable.
+_DEFAULT_AMASS: dict[str, float] = {
+    "H": 1.008,
+    "B": 10.811,
+    "C": 12.011,
+    "N": 14.007,
+    "O": 15.999,
+    "Mg": 24.305,
+    "Si": 28.085,
+    "Ti": 47.867,
+    "V": 50.942,
+    "Nb": 92.906,
+    "Zr": 91.224,
+    "Hf": 178.49,
+    "Ta": 180.948,
+    "Pb": 207.2,
+}
+
+
+def qe_atomic_type_symbols(structure: Structure) -> list[str]:
+    """Atomic-type order matching pymatgen ``PWInput`` / QE ``ATOMIC_SPECIES``.
+
+    Types are unique element symbols sorted by atomic number (N before Nb).
+    EPW ``amass(i)`` **must** use this order, not site order in the structure.
+    """
+    symbols = {site.specie.symbol for site in structure}
+    return sorted(symbols, key=lambda s: Element(s).Z)
+
+
+def _amass_lines(
+    structure: Structure | None,
+    species_order: list[str] | None = None,
+) -> list[str]:
+    """Return ``amass(i) = …`` lines for EPW namelist (QE type order)."""
+    if species_order is not None:
+        symbols = list(species_order)
+    elif structure is not None:
+        symbols = qe_atomic_type_symbols(structure)
+    else:
+        return []
+
+    lines: list[str] = []
+    for i, sym in enumerate(symbols, start=1):
+        mass = _DEFAULT_AMASS.get(sym)
+        if mass is None:
+            try:
+                mass = float(Element(sym).atomic_mass)
+            except Exception:  # noqa: BLE001
+                mass = 1.0
+        lines.append(f"  amass({i})    = {mass}")
+    return lines
+
+
+def _wannier_window_lines(fermi_eV: float | None) -> list[str]:
+    """Disentanglement windows.
+
+    Absolute eigenvalue windows must **bracket the Fermi level**. Hard-coded
+    ``dis_win_max = 20`` fails for NbN (E_F ≈ 21 eV) and causes EPW
+    ``efermig: cannot bracket Ef`` after Wannier interpolation.
+    """
+    if fermi_eV is None:
+        # Conservative absolute defaults for mid-gap / low-E_F systems only.
+        return [
+            "  dis_win_min = -10.0",
+            "  dis_win_max = 30.0",
+            "  dis_froz_min= -5.0",
+            "  dis_froz_max= 15.0",
+        ]
+    # Metal screening template relative to DFT E_F (eV, absolute eigenvalues).
+    return [
+        f"  dis_win_min = {fermi_eV - 18.0:.4f}",
+        f"  dis_win_max = {fermi_eV + 12.0:.4f}",
+        f"  dis_froz_min= {fermi_eV - 12.0:.4f}",
+        f"  dis_froz_max= {fermi_eV + 2.0:.4f}",
+    ]
 
 
 def build_epw_input(
@@ -13,53 +91,126 @@ def build_epw_input(
     prefix: str = "siscforge",
     outdir: str = "./out",
     dvscf_dir: str = "./save",
+    structure: Structure | None = None,
+    fermi_eV: float | None = None,
 ) -> str:
-    """Return a coarse-grid ``epw.in`` suitable for metals (screening).
+    """Return a QE-7-compatible coarse-grid ``epw.in`` for metals (screening).
 
-    Full production EPW workflows also need a prepared Wannier90 ``.win`` /
-    NSCF step. This deck documents the SiSC-Forge defaults; users can replace
-    it with a hand-tuned input while still using our parsers.
+    Notes
+    -----
+    - ``bands_skipped`` is a **character** field in EPW (Wannier exclude string),
+      not an integer. Omitting it is safest for screening.
+    - Grid keys are one-per-line (EPW namelist is picky about multi-assignment lines).
+    - When *fermi_eV* is known (from nscf/scf), windows are set relative to E_F and
+      ``efermi_read`` pins the fine-grid Fermi level to the DFT value.
+    - Full production runs still need careful Wannier projections and denser grids.
     """
     epw: EPWConfig = config.epw
-    nkf = list(epw.nkf) + [6, 6, 6]
-    nqf = list(epw.nqf) + [6, 6, 6]
-    nkc = list(epw.nkc) + [4, 4, 4]
-    nqc = list(epw.nqc) + [2, 2, 2]
+    nkf = (list(epw.nkf) + [6, 6, 6])[:3]
+    nqf = (list(epw.nqf) + [6, 6, 6])[:3]
+    nkc = (list(epw.nkc) + [4, 4, 4])[:3]
+    nqc = (list(epw.nqc) + [2, 2, 2])[:3]
+    nbndsub = epw.nbndsub if epw.nbndsub is not None else 10
 
-    lines = [
+    lines: list[str] = [
         "--",
         "&inputepw",
         f"  prefix      = '{prefix}'",
         f"  outdir      = '{outdir}'",
         f"  dvscf_dir   = '{dvscf_dir}'",
-        "  elph        = .true.",
-        "  epbwrite    = .true.",
-        "  epbread     = .false.",
-        "  epwwrite    = .true.",
-        "  epwread     = .false.",
-        f"  nbndsub     = {epw.nbndsub if epw.nbndsub is not None else 8}",
-        f"  bands_skipped = {epw.bands_skipped}",
-        "  wannierize  = .true.",
-        "  num_iter    = 300",
-        "  dis_win_max = 20",
-        "  dis_froz_max= 10",
-        "  proj(1)     = 'random'",
-        "  iverbosity  = 2",
-        f"  fsthick     = {epw.fsthick}",
-        f"  degaussw    = {epw.degaussw}",
-        f"  degaussq    = {epw.degaussq}",
-        f"  nkf1 = {int(nkf[0])}, nkf2 = {int(nkf[1])}, nkf3 = {int(nkf[2])}",
-        f"  nqf1 = {int(nqf[0])}, nqf2 = {int(nqf[1])}, nqf3 = {int(nqf[2])}",
-        f"  nk1  = {int(nkc[0])}, nk2  = {int(nkc[1])}, nk3  = {int(nkc[2])}",
-        f"  nq1  = {int(nqc[0])}, nq2  = {int(nqc[1])}, nq3  = {int(nqc[2])}",
     ]
-    if epw.eliashberg:
+    lines.extend(_amass_lines(structure))
+    lines.extend(
+        [
+            "",
+            "  elph        = .true.",
+            "  epbwrite    = .true.",
+            "  epbread     = .false.",
+            "  epwwrite    = .true.",
+            "  epwread     = .false.",
+            "",
+            f"  nbndsub     = {nbndsub}",
+            "",
+            "  wannierize  = .true.",
+            "  num_iter    = 500",
+        ]
+    )
+    lines.extend(_wannier_window_lines(fermi_eV))
+    lines.extend(
+        [
+            "  proj(1)     = 'random'",
+            "",
+            "  iverbosity  = 2",
+            "",
+            "  elecselfen  = .false.",
+            "  phonselfen  = .true.",
+            "  a2f         = .true.",
+            "",
+            f"  fsthick     = {epw.fsthick}",
+            f"  degaussw    = {epw.degaussw}",
+            f"  degaussq    = {epw.degaussq}",
+            f"  eps_acustic = {epw.eps_acustic}",
+        ]
+    )
+    if fermi_eV is not None:
+        # Avoid efermig failure on a poorly interpolated fine mesh.
         lines.extend(
             [
-                "  eliashberg  = .true.",
-                f"  muc         = {epw.mu_star}",
+                "",
+                "  efermi_read = .true.",
+                f"  fermi_energy = {fermi_eV:.6f}",
             ]
         )
+
+    lines.extend(
+        [
+            "",
+            f"  nk1         = {int(nkc[0])}",
+            f"  nk2         = {int(nkc[1])}",
+            f"  nk3         = {int(nkc[2])}",
+            "",
+            f"  nq1         = {int(nqc[0])}",
+            f"  nq2         = {int(nqc[1])}",
+            f"  nq3         = {int(nqc[2])}",
+            "",
+            f"  nkf1        = {int(nkf[0])}",
+            f"  nkf2        = {int(nkf[1])}",
+            f"  nkf3        = {int(nkf[2])}",
+            "",
+            f"  nqf1        = {int(nqf[0])}",
+            f"  nqf2        = {int(nqf[1])}",
+            f"  nqf3        = {int(nqf[2])}",
+        ]
+    )
+
+    if epw.eliashberg:
+        # Isotropic-oriented flags; anisotropic laniso left off for screening
+        lines.extend(
+            [
+                "",
+                "  eliashberg  = .true.",
+                "  limag       = .true.",
+                "  lpade       = .true.",
+                f"  muc         = {epw.mu_star}",
+                "  nstemp      = 1",
+                "  temps       = 10.0",
+                "  nsiter      = 200",
+                "  wscut       = 1.0",
+                "  ephwrite    = .true.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "  eliashberg  = .false.",
+            ]
+        )
+
+    # Optional Wannier exclude string only if user set a non-empty string in extras
+    # (EPWConfig.bands_skipped is int in our schema — do NOT emit it as integer;
+    # EPW expects character data like "exclude_bands = 1-5".)
+
     lines.append("/")
     lines.append("")
     return "\n".join(lines) + "\n"
@@ -75,7 +226,7 @@ def write_epw_input(content: str, path: Path | str) -> Path:
 def build_nscf_note() -> str:
     """Human-readable reminder of the EPW prerequisite steps."""
     return (
-        "EPW requires: (1) SCF, (2) phonons on coarse q, (3) NSCF on coarse k "
-        "with wavefunctions, (4) Wannierization, (5) epw.x. "
-        "SiSC-Forge writes a screening epw.in; prepare Wannier projections for production."
+        "EPW requires: (1) SCF, (2) phonons with ldisp + fildvscf on coarse q, "
+        "(3) EPW pp.py → save/, (4) NSCF on coarse k, (5) epw.x. "
+        "SiSC-Forge automates a screening template; production needs tuned Wannier projs."
     )

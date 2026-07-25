@@ -45,6 +45,7 @@ dft:
   smearing: mv
   degauss: 0.02
   # REQUIRED for real runs — directory of *.upf files
+  #pseudo_dir: /usr/share/espresso/pseudo
   pseudo_dir: /usr/share/espresso/pseudo
   # Optional explicit map (overrides auto-guess from pseudo_dir):
   # pseudopotentials:
@@ -54,13 +55,15 @@ dft:
   do_phonon: true
   # Ubuntu 6.7 ph.x often aborts (buffer overflow). Prefer phonopy FD on that stack.
   # Use phonon_method: gamma or dfpt when you have a working QE ≥ 7.2 build.
-  phonon_method: phonopy_fd
+  #phonon_method: phonopy_fd
+  phonon_method: gamma
   phonopy_supercell: [2, 2, 2]
   phonopy_distance: 0.01
   quality_tag: screening
   nproc: 1
   # Short scratch path avoids long outdir strings
-  work_dir: /tmp/siscforge_qe/nbn_phonon
+  #work_dir: /tmp/siscforge_qe/nbn_phonon
+  work_dir: /tmp/siscforge_qe/nbn
 
 ranking:
   performance_weight: 0.5

@@ -55,8 +55,12 @@ def _nbn_candidate():
 
 def test_nbn_structure_lattice() -> None:
     s = build_binary_nitride("Nb", a=NBN_LATTICE_A_ANG)
-    assert s.lattice.a == pytest.approx(NBN_LATTICE_A_ANG, rel=1e-6)
+    # Primitive cell: correct density; conventional a is NBN_LATTICE_A_ANG
     assert s.composition.reduced_formula in {"NbN", "NNb"}
+    assert s.density == pytest.approx(8.38, rel=5e-2)
+    assert s.lattice.a == pytest.approx(NBN_LATTICE_A_ANG / (2**0.5), rel=1e-3)
+    conv = build_binary_nitride("Nb", a=NBN_LATTICE_A_ANG, conventional=True)
+    assert conv.lattice.a == pytest.approx(NBN_LATTICE_A_ANG, rel=1e-6)
 
 
 def test_nbn_mock_calculator_phonon() -> None:

@@ -110,15 +110,20 @@ def run_pw(
     calculation: str,
     prefix: str = "siscforge",
     qe_env: QEEnvironment | None = None,
+    outdir: Path | None = None,
 ) -> QEStepResult:
-    """Write and run a ``pw.x`` calculation (scf / relax / vc-relax)."""
+    """Write and run a ``pw.x`` calculation (scf / relax / vc-relax).
+
+    *outdir* defaults to ``work_dir/out``. For EPW prep, pass ``outdir=work_dir``
+    so ``_ph0/``, ``*.save``, and ``*.dyn*`` share one directory (as EPW examples).
+    """
     qe_env = qe_env or require_qe(need_phonon=False)
     assert qe_env.pw is not None
 
     work_dir = Path(work_dir).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
-    outdir = (work_dir / "out").resolve()
-    outdir.mkdir(exist_ok=True)
+    outdir = Path(outdir).resolve() if outdir is not None else (work_dir / "out").resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
 
     # Ensure pseudo_dir is absolute in the input deck
     dft = config
@@ -169,26 +174,50 @@ def run_ph(
     *,
     prefix: str = "siscforge",
     qe_env: QEEnvironment | None = None,
+    for_epw: bool = False,
+    outdir: Path | None = None,
 ) -> QEStepResult:
-    """Write and run ``ph.x`` in *work_dir* (expects prior pw.x outdir)."""
+    """Write and run ``ph.x`` in *work_dir* (expects prior pw.x outdir).
+
+    When *for_epw* is True, force multi-q ``ldisp`` with ``fildvscf='dvscf'``
+    (required for EPW's ``save/`` preparation via ``pp.py``).
+    """
     qe_env = qe_env or require_qe(need_phonon=True)
     assert qe_env.ph is not None
 
     work_dir = Path(work_dir).resolve()
-    outdir = (work_dir / "out").resolve()
-    qpts = list(config.qpoints) + [2, 2, 2]
+    out = Path(outdir).resolve() if outdir is not None else (work_dir / "out").resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    if for_epw:
+        qpts = list(config.epw.nqc) if config.epw.nqc else list(config.qpoints)
+        qpts = (list(qpts) + [2, 2, 2])[:3]
+        ldisp = True
+        fildvscf: str | None = "dvscf"
+    else:
+        qpts = (list(config.qpoints) + [2, 2, 2])[:3]
+        ldisp = config.phonon_method != "gamma"
+        fildvscf = None
     nq1, nq2, nq3 = int(qpts[0]), int(qpts[1]), int(qpts[2])
 
-    gamma_only = config.phonon_method == "gamma"
+    # Softer mixing for multi-q / EPW metals (zone-boundary often harder)
+    alpha_mix = float(config.ph_alpha_mix)
+    if for_epw and alpha_mix > 0.2:
+        alpha_mix = min(alpha_mix, 0.2)
+
     ph_text = build_ph_input(
         prefix=prefix,
-        outdir=str(outdir),
+        outdir=str(out),
         tr2_ph=config.tr2_ph,
-        ldisp=not gamma_only,
+        ldisp=ldisp,
         nq1=nq1,
         nq2=nq2,
         nq3=nq3,
         fildyn=f"{prefix}.dyn",
+        fildvscf=fildvscf,
+        alpha_mix=alpha_mix,
+        nmix_ph=config.ph_nmix,
+        niter_ph=config.ph_niter,
     )
     in_path = work_dir / "ph.in"
     out_path = work_dir / "ph.out"

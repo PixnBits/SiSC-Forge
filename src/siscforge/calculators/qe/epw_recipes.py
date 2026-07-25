@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +19,14 @@ from siscforge.calculators.qe.eliashberg import (
 from siscforge.calculators.qe.env import QEEnvironment, require_epw
 from siscforge.calculators.qe.epw_inputs import build_epw_input, write_epw_input
 from siscforge.calculators.qe.epw_parser import parse_epw_output
-from siscforge.calculators.qe.recipes import QEStepResult, QEWorkflowResult, run_relax_scf_phonon
+from siscforge.calculators.qe.inputs import build_nscf_epw_input
+from siscforge.calculators.qe.parser import parse_ph_output, parse_pw_output
+from siscforge.calculators.qe.recipes import (
+    QEStepResult,
+    QEWorkflowResult,
+    run_ph,
+    run_pw,
+)
 from siscforge.models.config import DFTConfig
 from siscforge.models.results import ElectronPhononResult
 
@@ -31,15 +40,192 @@ class EPWWorkflowResult(QEWorkflowResult):
     epw_steps: list[QEStepResult] = field(default_factory=list)
 
 
+def _find_epw_pp_py() -> Path | None:
+    """Locate EPW's ``pp.py`` next to epw.x or under a source tree."""
+    env = os.environ.get("QE_BIN")
+    candidates: list[Path] = []
+    if env:
+        candidates.append(Path(env) / "pp.py")
+        candidates.append(Path(env).parent / "EPW" / "bin" / "pp.py")
+    # Common source layout: .../q-e-*/bin/epw.x → .../EPW/bin/pp.py
+    which_epw = shutil.which("epw.x")
+    if which_epw:
+        p = Path(which_epw).resolve()
+        candidates.append(p.parent / "pp.py")
+        candidates.append(p.parent.parent / "EPW" / "bin" / "pp.py")
+        # symlink .../bin/epw.x → .../EPW/src/epw.x
+        if p.is_symlink() or "EPW" in str(p):
+            for parent in p.parents:
+                cand = parent / "EPW" / "bin" / "pp.py"
+                candidates.append(cand)
+                if parent.name.startswith("q-e"):
+                    break
+    home = Path.home() / "src"
+    if home.is_dir():
+        candidates.extend(home.glob("q-e-*/EPW/bin/pp.py"))
+    for c in candidates:
+        if c.is_file():
+            return c
+    return None
+
+
+def run_epw_pp(work_dir: Path, prefix: str) -> QEStepResult:
+    """Run EPW ``pp.py`` to assemble the ``save/`` directory for epw.x.
+
+    ``pp.py`` expects CWD to contain ``_ph0/``, ``{prefix}.save/``, and
+    ``{prefix}.dyn*`` (QE EPW examples use ``outdir='./'``).
+    """
+    work_dir = Path(work_dir).resolve()
+    out_path = work_dir / "pp.out"
+    pp_py = _find_epw_pp_py()
+    if pp_py is None:
+        return QEStepResult(
+            name="epw_pp",
+            work_dir=work_dir,
+            returncode=1,
+            stdout_path=out_path,
+            input_path=work_dir / "pp.py",
+            success=False,
+            message=(
+                "EPW pp.py not found. Set QE_BIN to a QE build that includes "
+                "EPW/bin/pp.py (source build), or place pp.py next to epw.x."
+            ),
+        )
+
+    # pp.py prompts for prefix on stdin
+    try:
+        with out_path.open("w", encoding="utf-8") as fh:
+            proc = subprocess.run(
+                ["python3", str(pp_py)],
+                cwd=str(work_dir),
+                input=f"{prefix}\n",
+                text=True,
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        rc = int(proc.returncode)
+    except OSError as exc:
+        return QEStepResult(
+            name="epw_pp",
+            work_dir=work_dir,
+            returncode=1,
+            stdout_path=out_path,
+            input_path=pp_py,
+            success=False,
+            message=f"Failed to run pp.py: {exc}",
+        )
+
+    save_dir = work_dir / "save"
+    ok = rc == 0 and save_dir.is_dir()
+    msg = f"epw pp.py rc={rc}; save_dir={'ok' if save_dir.is_dir() else 'missing'}"
+    if not ok and out_path.is_file():
+        try:
+            msg += "\n" + out_path.read_text(encoding="utf-8", errors="replace")[-800:]
+        except OSError:
+            pass
+    return QEStepResult(
+        name="epw_pp",
+        work_dir=work_dir,
+        returncode=rc,
+        stdout_path=out_path,
+        input_path=pp_py,
+        success=ok,
+        message=msg,
+    )
+
+
+def run_nscf_for_epw(
+    structure: Structure,
+    config: DFTConfig,
+    work_dir: Path,
+    *,
+    prefix: str = "siscforge",
+    qe_env: QEEnvironment | None = None,
+    outdir: Path | None = None,
+) -> QEStepResult:
+    """Run NSCF on the full crystal k-mesh required by EPW Wannierization.
+
+    Uses ``outdir='./'``-style flat layout when *outdir* equals *work_dir*.
+    """
+    from siscforge.calculators.qe.recipes import _mpi_prefix, _run_cmd
+
+    qe_env = qe_env or require_epw()
+    assert qe_env.pw is not None
+
+    work_dir = Path(work_dir).resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out = Path(outdir).resolve() if outdir is not None else work_dir
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Relative outdir when flat (matches official EPW examples)
+    outdir_str = "./" if out.resolve() == work_dir.resolve() else str(out)
+
+    dft = config
+    if dft.pseudo_dir:
+        dft = dft.model_copy(update={"pseudo_dir": str(Path(dft.pseudo_dir).resolve())})
+
+    nscf_text = build_nscf_epw_input(
+        structure,
+        dft,
+        prefix=prefix,
+        outdir=outdir_str,
+    )
+    in_path = work_dir / "nscf.in"
+    out_path = work_dir / "nscf.out"
+    # build_nscf returns a string; write directly
+    in_path.write_text(nscf_text, encoding="utf-8")
+
+    cmd = [
+        *_mpi_prefix(qe_env, config.nproc),
+        qe_env.pw,
+        "-in",
+        in_path.name,
+    ]
+    rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
+    ok = rc == 0 and out_path.is_file()
+    msg = f"pw.x nscf (EPW) rc={rc}"
+    if not ok:
+        try:
+            tail = out_path.read_text(encoding="utf-8", errors="replace")[-800:]
+            msg += f"\n--- output tail ---\n{tail}"
+        except OSError:
+            pass
+    return QEStepResult(
+        name="nscf",
+        work_dir=work_dir,
+        returncode=rc,
+        stdout_path=out_path,
+        input_path=in_path,
+        success=ok,
+        message=msg,
+    )
+
+
+def _fermi_from_work_dir(work_dir: Path) -> float | None:
+    """Prefer NSCF Fermi energy, then SCF (eV)."""
+    from siscforge.calculators.qe.parser import parse_fermi_energy_eV
+
+    for name in ("nscf.out", "scf.out"):
+        path = work_dir / name
+        if path.is_file():
+            ef = parse_fermi_energy_eV(path)
+            if ef is not None:
+                return ef
+    return None
+
+
 def run_epw(
     config: DFTConfig,
     work_dir: Path,
     *,
     prefix: str = "siscforge",
     qe_env: QEEnvironment | None = None,
+    structure: Structure | None = None,
+    outdir: Path | None = None,
+    fermi_eV: float | None = None,
 ) -> tuple[QEStepResult, ElectronPhononResult | None]:
     """Write and run ``epw.x`` in *work_dir*; parse stdout into ElectronPhononResult."""
-    # Local import avoids circular issues; reuse MPI-safe launcher from recipes.
     from siscforge.calculators.qe.recipes import _mpi_prefix, _run_cmd
 
     qe_env = qe_env or require_epw()
@@ -47,14 +233,29 @@ def run_epw(
 
     work_dir = Path(work_dir).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
-    outdir = (work_dir / "out").resolve()
-    outdir.mkdir(exist_ok=True)
+    # EPW examples use outdir='./' (same as work_dir); keep that layout for save/
+    out = Path(outdir).resolve() if outdir is not None else work_dir
+    out.mkdir(parents=True, exist_ok=True)
+    save_dir = work_dir / "save"
+
+    # Prefer relative paths (official EPW decks); absolute still works.
+    if out.resolve() == work_dir.resolve():
+        outdir_str = "./"
+        dvscf_str = "./save"
+    else:
+        outdir_str = str(out)
+        dvscf_str = str(save_dir.resolve())
+
+    if fermi_eV is None:
+        fermi_eV = _fermi_from_work_dir(work_dir)
 
     epw_text = build_epw_input(
         config,
         prefix=prefix,
-        outdir=str(outdir),
-        dvscf_dir=str((work_dir / "save").resolve()),
+        outdir=outdir_str,
+        dvscf_dir=dvscf_str,
+        structure=structure,
+        fermi_eV=fermi_eV,
     )
     in_path = work_dir / "epw.in"
     out_path = work_dir / "epw.out"
@@ -95,7 +296,6 @@ def run_epw(
             mu_star=config.epw.mu_star,
             quality_tag=config.quality_tag,
         )
-        # Ensure Allen–Dynes fallback if λ, ω_log present but Tc missing
         if (
             config.epw.allen_dynes_fallback
             and eph.lambda_total is not None
@@ -116,62 +316,147 @@ def run_relax_scf_phonon_epw(
     prefix: str = "siscforge",
     qe_env: QEEnvironment | None = None,
 ) -> EPWWorkflowResult:
-    """Full conventional path: relax → SCF → phonon → EPW (when enabled)."""
-    work_dir = Path(work_dir)
-    want_epw = config.do_epw or config.epw.enabled
-    qe_env = qe_env or (
-        require_epw() if want_epw else None
-    )
+    """Conventional path tuned for EPW: SCF → multi-q DFPT → pp.py → EPW.
 
-    base = run_relax_scf_phonon(
-        structure,
+    Uses a flat work directory layout (``outdir = work_dir``) so EPW's ``pp.py``
+    can find ``_ph0/``, ``*.save``, and ``*.dyn*`` as in the official examples.
+    """
+    work_dir = Path(work_dir).resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    want_epw = config.do_epw or config.epw.enabled
+    qe_env = qe_env or (require_epw() if want_epw else None)
+
+    result = EPWWorkflowResult(work_dir=work_dir, structure=structure)
+    current = structure
+
+    # Flat outdir for EPW compatibility
+    flat_out = work_dir if want_epw else (work_dir / "out")
+
+    # 1. Optional relax — strongly recommended before multi-q DFPT (soft metals).
+    # For EPW flat layout, write relax outdir under 01_relax; final SCF is re-done
+    # in 02_scf with empty bands + flat outdir for ph/pp/epw.
+    if config.do_relax:
+        step = run_pw(
+            current,
+            config,
+            work_dir / "01_relax",
+            calculation="vc-relax",
+            prefix=prefix,
+            qe_env=qe_env,
+        )
+        result.steps.append(step)
+        if not step.success:
+            result.message = f"Relaxation failed: {step.message}"
+            result.success = False
+            return result
+        from siscforge.calculators.qe.recipes import _try_read_relaxed_structure
+
+        current = _try_read_relaxed_structure(work_dir / "01_relax", current)
+        result.relaxed_structure = current
+
+    # 2. SCF (flat outdir for EPW; ensure empty bands via DFTConfig.nbnd)
+    scf_dir = work_dir / "02_scf"
+    step = run_pw(
+        current,
         config,
-        work_dir,
+        scf_dir,
+        calculation="scf",
         prefix=prefix,
         qe_env=qe_env,
+        outdir=scf_dir if want_epw else None,
     )
-    result = EPWWorkflowResult(
-        work_dir=base.work_dir,
-        structure=base.structure,
-        scf=base.scf,
-        phonon=base.phonon,
-        steps=list(base.steps),
-        relaxed_structure=base.relaxed_structure,
-        success=base.success,
-        message=base.message,
-    )
-
-    if not want_epw:
+    result.steps.append(step)
+    if step.stdout_path.is_file():
+        result.scf = parse_pw_output(step.stdout_path, quality_tag=config.quality_tag)
+    if not step.success:
+        result.message = f"SCF failed: {step.message}"
+        result.success = False
         return result
 
-    if not base.success:
+    # 3. Phonon (multi-q + dvscf when EPW requested)
+    step = run_ph(
+        config,
+        scf_dir,
+        prefix=prefix,
+        qe_env=qe_env,
+        for_epw=want_epw,
+        outdir=scf_dir if want_epw else None,
+    )
+    result.steps.append(step)
+    if step.stdout_path.is_file():
+        texts = [step.stdout_path.read_text(encoding="utf-8", errors="replace")]
+        for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
+            try:
+                texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+        result.phonon = parse_ph_output(
+            "\n".join(texts), quality_tag=config.quality_tag
+        )
+    if not step.success:
+        result.message = f"Phonon failed: {step.message}"
+        result.success = False
+        return result
+
+    if not want_epw:
+        result.success = True
+        result.message = "ok"
+        return result
+
+    # 4. EPW pp.py → save/
+    pp_step = run_epw_pp(scf_dir, prefix)
+    result.epw_steps.append(pp_step)
+    result.steps.append(pp_step)
+    if not pp_step.success:
         result.message = (
-            f"Skipping EPW because phonon workflow failed: {base.message}"
+            f"EPW prep (pp.py) failed: {pp_step.message}\n"
+            "Need multi-q DFPT with fildvscf and dyn files in the work directory."
         )
         result.success = False
         return result
 
-    # Prefer running EPW from the SCF directory (shared outdir / wavefunctions)
-    scf_dir = work_dir / "02_scf"
-    if not scf_dir.is_dir():
-        scf_dir = work_dir / "03_epw"
-        scf_dir.mkdir(parents=True, exist_ok=True)
+    # 5. NSCF on full crystal k-mesh (nk1×nk2×nk3) for Wannierization
+    nscf_step = run_nscf_for_epw(
+        current,
+        config,
+        scf_dir,
+        prefix=prefix,
+        qe_env=qe_env,
+        outdir=scf_dir,
+    )
+    result.epw_steps.append(nscf_step)
+    result.steps.append(nscf_step)
+    if not nscf_step.success:
+        result.message = f"EPW NSCF failed: {nscf_step.message}"
+        result.success = False
+        return result
 
-    step, eph = run_epw(config, scf_dir, prefix=prefix, qe_env=qe_env)
+    # 6. epw.x
+    step, eph = run_epw(
+        config,
+        scf_dir,
+        prefix=prefix,
+        qe_env=qe_env,
+        structure=current,
+        outdir=scf_dir,
+    )
     result.epw_steps.append(step)
     result.steps.append(step)
     result.electron_phonon = eph
 
-    if eph is not None and eph.converged:
+    if eph is not None and (eph.converged or eph.lambda_total is not None):
         tc = eph.best_tc_K()
         result.performance_score = performance_score_from_epw(tc)
-        result.success = True
-        result.message = "ok"
+        # Accept partial success if λ was extracted even if rc != 0
+        result.success = eph.status == "ok" or eph.lambda_total is not None
+        result.message = "ok" if result.success else step.message
     else:
         result.success = False
         result.message = (
             f"EPW failed or did not converge: {step.message}\n"
-            "Ensure Wannierization inputs, coarse grids, and dvscf data are present."
+            "Common issues: Wannier projections for metals (proj=random is "
+            "screening-only), nscf k-grid must match nk1–nk3, and dense enough "
+            "q-mesh / soft modes in unstable structures."
         )
 
     return result
@@ -208,7 +493,9 @@ def recipe_epw_info() -> dict[str, Any]:
         "steps": [
             "vc-relax (optional)",
             "scf",
-            "ph.x DFPT",
+            "ph.x multi-q DFPT (ldisp + fildvscf)",
+            "EPW pp.py → save/",
+            "nscf (crystal k-mesh = nk1×nk2×nk3)",
             "epw.x (Wannier + e-ph + isotropic Eliashberg)",
         ],
         "models": ["SCFResult", "PhononResult", "ElectronPhononResult"],

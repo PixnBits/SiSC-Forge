@@ -10,6 +10,8 @@ from siscforge.structure.mgb2 import build_mgb2, mgb2_metadata
 from siscforge.structure.nitrides import (
     ROCKSALT_LATTICE_CONSTANTS,
     build_binary_nitride,
+    build_rocksalt_conventional,
+    build_rocksalt_primitive,
     build_ternary_nitride,
     enumerate_nitrides,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "build_b_doped_si",
     "build_binary_nitride",
     "build_mgb2",
+    "build_rocksalt_conventional",
+    "build_rocksalt_primitive",
     "build_ternary_nitride",
     "enumerate_b_doped_si",
     "mgb2_metadata",

@@ -98,7 +98,32 @@ def _thermal_score(process_temp_c: float, *, cmos_limit_c: float = 450.0) -> flo
 
 
 def _film_in_plane_a(candidate: StructureCandidate) -> float | None:
-    """Best-effort in-plane lattice constant from candidate fields."""
+    """Best-effort *conventional* in-plane lattice constant for epitaxy metrics.
+
+    Primitive rocksalt cells have a ≈ a_conv/√2; for cube-on-cube Si mismatch we
+    prefer the conventional FCC *a* (stored in metadata or looked up).
+    """
+    meta = candidate.metadata or {}
+    for key in ("conventional_lattice_a", "rocksalt_a", "a_conventional"):
+        if key in meta and meta[key] is not None:
+            return float(meta[key])
+
+    # Unstrained tm nitrides: use tabulated conventional a when available
+    if (
+        candidate.material_family == "tm_nitride"
+        and (candidate.in_plane_strain is None or abs(float(candidate.in_plane_strain)) < 1e-12)
+    ):
+        from siscforge.structure.nitrides import ROCKSALT_LATTICE_CONSTANTS
+
+        metals = meta.get("metals") or []
+        if len(metals) == 1 and metals[0] in ROCKSALT_LATTICE_CONSTANTS:
+            return float(ROCKSALT_LATTICE_CONSTANTS[metals[0]])
+        # Formula like NbN
+        formula = (candidate.formula or "").replace(" ", "")
+        for m, a in ROCKSALT_LATTICE_CONSTANTS.items():
+            if formula in {f"{m}N", f"N{m}"}:
+                return float(a)
+
     if candidate.lattice_abc is not None:
         return float(candidate.lattice_abc[0])
     return None

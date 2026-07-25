@@ -24,10 +24,15 @@ def test_binary_nitride_is_valid_structure() -> None:
     assert isinstance(s, Structure)
     assert len(s) == 2
     assert s.composition.reduced_formula in {"NbN", "NNb"}
-    assert s.lattice.a == pytest.approx(ROCKSALT_LATTICE_CONSTANTS["Nb"], rel=1e-6)
-    # Lattice is cubic
-    assert s.lattice.a == pytest.approx(s.lattice.b)
-    assert s.lattice.a == pytest.approx(s.lattice.c)
+    # Primitive rocksalt: density ~8.4 g/cm³ (NOT simple-cubic a=4.39 with 2 atoms)
+    assert s.density == pytest.approx(8.38, rel=5e-2)
+    a_conv = ROCKSALT_LATTICE_CONSTANTS["Nb"]
+    assert s.lattice.a == pytest.approx(a_conv / (2**0.5), rel=1e-3)
+    # Conventional cell still available for epitaxy metrics
+    conv = build_binary_nitride("Nb", conventional=True)
+    assert len(conv) == 8
+    assert conv.lattice.a == pytest.approx(a_conv, rel=1e-6)
+    assert conv.density == pytest.approx(s.density, rel=1e-6)
 
 
 def test_ternary_nitride_composition() -> None:

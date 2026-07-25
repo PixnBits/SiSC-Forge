@@ -145,6 +145,75 @@ def test_epw_config_round_trip() -> None:
     assert restored.epw.mu_star == 0.12
 
 
+def test_build_epw_input_qe73_namelist() -> None:
+    """EPW 5.x rejects integer bands_skipped and multi-assign grid lines."""
+    from siscforge.calculators.qe.epw_inputs import build_epw_input
+
+    s = build_binary_nitride("Nb")
+    cfg = DFTConfig(do_epw=True, epw=EPWConfig(enabled=True, eliashberg=True))
+    text = build_epw_input(cfg, prefix="test", outdir="./", dvscf_dir="./save", structure=s)
+    assert "bands_skipped" not in text
+    assert "nkf1 = 6, nkf2" not in text
+    assert "nkf1" in text and "nkf2" in text and "nkf3" in text
+    assert "phonselfen" in text
+    assert "a2f" in text
+    assert "amass(1)" in text
+    assert "amass(2)" in text
+    # QE type order: N (Z=7) before Nb (Z=41), not site order
+    assert "amass(1)    = 14.007" in text
+    assert "amass(2)    = 92.906" in text
+    # Namelist terminator
+    assert "\n/" in text or text.rstrip().endswith("/")
+
+
+def test_build_epw_input_fermi_windows() -> None:
+    from siscforge.calculators.qe.epw_inputs import build_epw_input
+    from siscforge.calculators.qe.parser import parse_fermi_energy_eV
+
+    s = build_binary_nitride("Nb")
+    cfg = DFTConfig(do_epw=True, epw=EPWConfig(enabled=True))
+    text = build_epw_input(
+        cfg, prefix="t", outdir="./", dvscf_dir="./save", structure=s, fermi_eV=20.739
+    )
+    assert "efermi_read = .true." in text
+    assert "fermi_energy = 20.739000" in text
+    assert "dis_win_max = 32.7390" in text
+    assert "dis_froz_max= 22.7390" in text
+    # Windows must sit above old hard-coded 20 eV for NbN-like E_F
+    assert "dis_win_max = 20.0" not in text
+
+    sample = "     the Fermi energy is    20.7390 ev\n"
+    assert parse_fermi_energy_eV(sample) == pytest.approx(20.739)
+
+
+def test_build_nscf_epw_crystal_mesh() -> None:
+    from siscforge.calculators.qe.inputs import (
+        build_nscf_epw_input,
+        uniform_crystal_kpoints,
+    )
+
+    pts = uniform_crystal_kpoints(2, 2, 2)
+    assert len(pts) == 8
+    assert abs(sum(p[3] for p in pts) - 1.0) < 1e-12
+
+    s = build_binary_nitride("Nb")
+    cfg = DFTConfig(
+        pseudo_dir="/tmp/fake_pseudo",
+        pseudopotentials={"Nb": "Nb.upf", "N": "N.upf"},
+        epw=EPWConfig(enabled=True, nkc=[2, 2, 2], nbndsub=8),
+    )
+    # Ensure fake pseudos exist for resolution
+    Path("/tmp/fake_pseudo").mkdir(parents=True, exist_ok=True)
+    (Path("/tmp/fake_pseudo") / "Nb.upf").touch()
+    (Path("/tmp/fake_pseudo") / "N.upf").touch()
+    text = build_nscf_epw_input(s, cfg, prefix="t", outdir="./", nk=(2, 2, 2))
+    assert "calculation" in text.lower()
+    assert "nscf" in text.lower()
+    assert "K_POINTS crystal" in text
+    assert "\n8\n" in text or text.count("0.00000000") >= 1
+    assert "nbnd" in text.lower()
+
+
 def test_isotropic_eliashberg_factor() -> None:
     tc0 = allen_dynes_tc(1.2, 300.0, 0.1)
     tc1 = isotropic_eliashberg_tc_from_moments(1.2, 300.0, 0.1, omega_2_K=400.0)
