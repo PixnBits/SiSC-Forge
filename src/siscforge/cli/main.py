@@ -617,7 +617,7 @@ def run_cmd(
                     "epw": dft.epw.model_copy(update={"enabled": True}),
                 }
             )
-        calc_params = {**calc_params, "dft": dft}
+        calc_params = {**calc_params, "dft": dft, "run_config": run_cfg}
         if dft.work_dir is None:
             calc_params.setdefault("work_dir", str(out / "qe_work"))
         console.print(
@@ -627,12 +627,14 @@ def run_cmd(
             f"do_epw={dft.do_epw or dft.epw.enabled})"
         )
     else:
+        calc_params = {**calc_params, "run_config": run_cfg}
         console.print(f"[bold]Calculator[/bold] {calc_name}")
 
     console.print(
         f"[dim]Run policy:[/dim] resume={run_cfg.resume} "
         f"continue_on_error={run_cfg.continue_on_error} "
-        f"force_rerun={run_cfg.force_rerun}"
+        f"force_rerun={run_cfg.force_rerun} "
+        f"resume_qe_steps={run_cfg.resume_qe_steps}"
     )
 
     # 4. Evaluate expensive path + optional surrogate-only deferred set

@@ -463,12 +463,33 @@ def run_relax_scf_phonon_epw(
     *,
     prefix: str = "siscforge",
     qe_env: QEEnvironment | None = None,
+    resume_qe_steps: bool | None = None,
+    force_qe_steps: bool | None = None,
+    step_log: list[str] | None = None,
 ) -> EPWWorkflowResult:
     """Conventional path tuned for EPW: SCF → multi-q DFPT → pp.py → EPW.
 
     Uses a flat work directory layout (``outdir = work_dir``) so EPW's ``pp.py``
     can find ``_ph0/``, ``*.save``, and ``*.dyn*`` as in the official examples.
+
+    Mid-step resume: when enabled (default), successful upstream outputs in the
+    candidate workdir are re-used. A kill during ``ph.x`` therefore skips
+    vc-relax/SCF and restarts phonon from the beginning of that step only.
+    Incomplete step outputs are cleaned before re-running that step.
     """
+    from siscforge.calculators.qe.qe_checkpoint import (
+        clean_step_outputs,
+        probe_workdir,
+    )
+    from siscforge.calculators.qe.recipes import (
+        _force_qe_steps,
+        _should_resume_qe_steps,
+        _skipped_step,
+        _try_read_relaxed_structure,
+        run_ph,
+        run_pw,
+    )
+
     work_dir = Path(work_dir).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
     want_epw = config.do_epw or config.epw.enabled
@@ -476,129 +497,245 @@ def run_relax_scf_phonon_epw(
 
     result = EPWWorkflowResult(work_dir=work_dir, structure=structure)
     current = structure
+    log: list[str] = step_log if step_log is not None else []
 
-    # Flat outdir for EPW compatibility
-    flat_out = work_dir if want_epw else (work_dir / "out")
+    do_resume = _should_resume_qe_steps(config, resume_qe_steps=resume_qe_steps)
+    do_force = _force_qe_steps(config, force_qe_steps=force_qe_steps) or not do_resume
+    ckpt = probe_workdir(
+        work_dir,
+        config,
+        prefix=prefix,
+        structure=structure,
+        want_epw=want_epw,
+        force=do_force,
+    )
+    log.extend(ckpt.log)
 
-    # 1. Optional relax — strongly recommended before multi-q DFPT (soft metals).
-    # For EPW flat layout, write relax outdir under 01_relax; final SCF is re-done
-    # in 02_scf with empty bands + flat outdir for ph/pp/epw.
+    # 1. Optional relax
     if config.do_relax:
+        if ckpt.is_complete("vc-relax"):
+            probe = ckpt.steps["vc-relax"]
+            current = probe.relaxed_structure or current
+            result.relaxed_structure = current
+            result.steps.append(
+                _skipped_step(
+                    "vc-relax",
+                    work_dir / "01_relax",
+                    stdout_path=probe.stdout_path,
+                    message="skip vc-relax (checkpoint)",
+                )
+            )
+            log.append("skip vc-relax (checkpoint)")
+        else:
+            if (work_dir / "01_relax").exists():
+                clean_step_outputs(work_dir, "vc-relax", prefix=prefix)
+            log.append("running vc-relax")
+            step = run_pw(
+                current,
+                config,
+                work_dir / "01_relax",
+                calculation="vc-relax",
+                prefix=prefix,
+                qe_env=qe_env,
+            )
+            result.steps.append(step)
+            if not step.success:
+                result.message = f"Relaxation failed: {step.message}"
+                result.success = False
+                return result
+            current = _try_read_relaxed_structure(work_dir / "01_relax", current)
+            result.relaxed_structure = current
+    else:
+        prior = _try_read_relaxed_structure(work_dir / "01_relax", current)
+        if prior is not current:
+            current = prior
+            result.relaxed_structure = current
+
+    # 2. SCF (flat outdir for EPW)
+    scf_dir = work_dir / "02_scf"
+    if ckpt.is_complete("scf"):
+        probe = ckpt.steps["scf"]
+        result.scf = probe.scf
+        result.steps.append(
+            _skipped_step(
+                "scf",
+                scf_dir,
+                stdout_path=probe.stdout_path,
+                message="skip SCF (checkpoint)",
+            )
+        )
+        log.append("skip SCF (checkpoint)")
+        if result.relaxed_structure is not None:
+            current = result.relaxed_structure
+    else:
+        # Only clean scf.out — keep prefix.save if partially present from crash
+        # after JOB DONE edge cases; incomplete scf.out means re-run.
+        if (scf_dir / "scf.out").is_file():
+            clean_step_outputs(work_dir, "scf", prefix=prefix)
+        log.append("running SCF")
         step = run_pw(
             current,
             config,
-            work_dir / "01_relax",
-            calculation="vc-relax",
+            scf_dir,
+            calculation="scf",
             prefix=prefix,
             qe_env=qe_env,
+            outdir=scf_dir if want_epw else None,
         )
         result.steps.append(step)
+        if step.stdout_path.is_file():
+            result.scf = parse_pw_output(
+                step.stdout_path, quality_tag=config.quality_tag
+            )
         if not step.success:
-            result.message = f"Relaxation failed: {step.message}"
+            result.message = f"SCF failed: {step.message}"
             result.success = False
             return result
-        from siscforge.calculators.qe.recipes import _try_read_relaxed_structure
-
-        current = _try_read_relaxed_structure(work_dir / "01_relax", current)
-        result.relaxed_structure = current
-
-    # 2. SCF (flat outdir for EPW; ensure empty bands via DFTConfig.nbnd)
-    scf_dir = work_dir / "02_scf"
-    step = run_pw(
-        current,
-        config,
-        scf_dir,
-        calculation="scf",
-        prefix=prefix,
-        qe_env=qe_env,
-        outdir=scf_dir if want_epw else None,
-    )
-    result.steps.append(step)
-    if step.stdout_path.is_file():
-        result.scf = parse_pw_output(step.stdout_path, quality_tag=config.quality_tag)
-    if not step.success:
-        result.message = f"SCF failed: {step.message}"
-        result.success = False
-        return result
 
     # 3. Phonon (multi-q + dvscf when EPW requested)
-    step = run_ph(
-        config,
-        scf_dir,
-        prefix=prefix,
-        qe_env=qe_env,
-        for_epw=want_epw,
-        outdir=scf_dir if want_epw else None,
-    )
-    result.steps.append(step)
-    if step.stdout_path.is_file():
-        texts = [step.stdout_path.read_text(encoding="utf-8", errors="replace")]
-        for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
-            try:
-                texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
-            except OSError:
-                continue
-        result.phonon = parse_ph_output(
-            "\n".join(texts), quality_tag=config.quality_tag
+    if ckpt.is_complete("phonon"):
+        probe = ckpt.steps["phonon"]
+        result.phonon = probe.phonon
+        result.steps.append(
+            _skipped_step(
+                "phonon",
+                scf_dir,
+                stdout_path=probe.stdout_path,
+                message="skip phonon (checkpoint)",
+            )
         )
-    if not step.success:
-        result.message = f"Phonon failed: {step.message}"
-        result.success = False
-        return result
+        log.append("skip phonon (checkpoint)")
+    else:
+        if (scf_dir / "ph.out").exists() or list(scf_dir.glob(f"{prefix}.dyn*")):
+            clean_step_outputs(work_dir, "phonon", prefix=prefix)
+        log.append("running DFPT / phonon")
+        step = run_ph(
+            config,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            for_epw=want_epw,
+            outdir=scf_dir if want_epw else None,
+        )
+        result.steps.append(step)
+        if step.stdout_path.is_file():
+            texts = [step.stdout_path.read_text(encoding="utf-8", errors="replace")]
+            for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
+                try:
+                    texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    continue
+            result.phonon = parse_ph_output(
+                "\n".join(texts), quality_tag=config.quality_tag
+            )
+        if not step.success:
+            result.message = f"Phonon failed: {step.message}"
+            result.success = False
+            return result
 
     if not want_epw:
         result.success = True
-        result.message = "ok"
+        result.message = "ok" if not any(
+            "skip" in (s.message or "") for s in result.steps
+        ) else "ok (mid-step resume)"
+        if step_log is not None:
+            step_log.extend(log)
         return result
 
     # 4. EPW pp.py → save/
-    pp_step = run_epw_pp(scf_dir, prefix)
-    result.epw_steps.append(pp_step)
-    result.steps.append(pp_step)
-    if not pp_step.success:
-        result.message = (
-            f"EPW prep (pp.py) failed: {pp_step.message}\n"
-            "Need multi-q DFPT with fildvscf and dyn files in the work directory.\n"
-            + diagnose_epw_failure(
-                pp_step.message, work_dir=scf_dir, step_name="epw_pp"
+    if ckpt.is_complete("epw_pp"):
+        result.steps.append(
+            _skipped_step(
+                "epw_pp",
+                scf_dir,
+                message="skip epw_pp (checkpoint)",
             )
         )
-        result.success = False
-        return result
+        log.append("skip epw_pp (checkpoint)")
+    else:
+        if (scf_dir / "save").exists():
+            clean_step_outputs(work_dir, "epw_pp", prefix=prefix)
+        log.append("running epw_pp")
+        pp_step = run_epw_pp(scf_dir, prefix)
+        result.epw_steps.append(pp_step)
+        result.steps.append(pp_step)
+        if not pp_step.success:
+            result.message = (
+                f"EPW prep (pp.py) failed: {pp_step.message}\n"
+                "Need multi-q DFPT with fildvscf and dyn files in the work directory.\n"
+                + diagnose_epw_failure(
+                    pp_step.message, work_dir=scf_dir, step_name="epw_pp"
+                )
+            )
+            result.success = False
+            return result
 
     # 5. NSCF on full crystal k-mesh (nk1×nk2×nk3) for Wannierization
-    nscf_step = run_nscf_for_epw(
-        current,
-        config,
-        scf_dir,
-        prefix=prefix,
-        qe_env=qe_env,
-        outdir=scf_dir,
-    )
-    result.epw_steps.append(nscf_step)
-    result.steps.append(nscf_step)
-    if not nscf_step.success:
-        result.message = (
-            f"EPW NSCF failed: {nscf_step.message}\n"
-            + diagnose_epw_failure(
-                nscf_step.message, work_dir=scf_dir, step_name="nscf"
+    if ckpt.is_complete("nscf"):
+        result.steps.append(
+            _skipped_step(
+                "nscf",
+                scf_dir,
+                stdout_path=ckpt.steps["nscf"].stdout_path,
+                message="skip nscf (checkpoint)",
             )
         )
-        result.success = False
-        return result
+        log.append("skip nscf (checkpoint)")
+    else:
+        if (scf_dir / "nscf.out").is_file():
+            clean_step_outputs(work_dir, "nscf", prefix=prefix)
+        log.append("running nscf")
+        nscf_step = run_nscf_for_epw(
+            current,
+            config,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            outdir=scf_dir,
+        )
+        result.epw_steps.append(nscf_step)
+        result.steps.append(nscf_step)
+        if not nscf_step.success:
+            result.message = (
+                f"EPW NSCF failed: {nscf_step.message}\n"
+                + diagnose_epw_failure(
+                    nscf_step.message, work_dir=scf_dir, step_name="nscf"
+                )
+            )
+            result.success = False
+            return result
 
     # 6. epw.x
-    step, eph = run_epw(
-        config,
-        scf_dir,
-        prefix=prefix,
-        qe_env=qe_env,
-        structure=current,
-        outdir=scf_dir,
-    )
-    result.epw_steps.append(step)
-    result.steps.append(step)
-    result.electron_phonon = eph
+    if ckpt.is_complete("epw"):
+        probe = ckpt.steps["epw"]
+        result.electron_phonon = probe.electron_phonon
+        result.steps.append(
+            _skipped_step(
+                "epw",
+                scf_dir,
+                stdout_path=probe.stdout_path,
+                message="skip epw (checkpoint)",
+            )
+        )
+        log.append("skip epw (checkpoint)")
+        eph = result.electron_phonon
+        step_msg = "skip epw (checkpoint)"
+    else:
+        if (scf_dir / "epw.out").is_file():
+            clean_step_outputs(work_dir, "epw", prefix=prefix)
+        log.append("running epw")
+        step, eph = run_epw(
+            config,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            structure=current,
+            outdir=scf_dir,
+        )
+        result.epw_steps.append(step)
+        result.steps.append(step)
+        result.electron_phonon = eph
+        step_msg = step.message
 
     if eph is not None and (eph.converged or eph.lambda_total is not None):
         tc = eph.best_tc_K()
@@ -606,19 +743,36 @@ def run_relax_scf_phonon_epw(
         # Accept partial success if λ was extracted even if rc != 0
         result.success = eph.status == "ok" or eph.lambda_total is not None
         if result.success:
-            result.message = f"ok (quality_tag={config.quality_tag})"
+            skipped = any("skip" in (s.message or "") for s in result.steps)
+            tag = config.quality_tag
+            result.message = (
+                f"ok (quality_tag={tag}; mid-step resume)"
+                if skipped
+                else f"ok (quality_tag={tag})"
+            )
         else:
-            result.message = step.message
+            result.message = step_msg
     else:
         result.success = False
         result.message = (
             f"EPW failed or did not converge (quality_tag={config.quality_tag}):\n"
-            f"{step.message}\n"
+            f"{step_msg}\n"
             "Common issues: Wannier projections for metals (proj=random is "
             "screening-only), nscf k-grid must match nk1–nk3, and dense enough "
             "q-mesh / soft modes in unstable structures. "
             "See recommended_grids() / docs/examples/nbN_epw.md to tighten settings."
         )
+
+    if step_log is not None:
+        step_log.extend(log)
+    elif log:
+        # surface checkpoint trail in message when useful
+        if any(x.startswith("skip ") or x.startswith("running ") for x in log):
+            trail = "; ".join(log)
+            if result.message == "ok" or result.message.startswith("ok "):
+                result.message = f"{result.message} [{trail}]"
+            elif not result.success:
+                result.message = f"{result.message}\n[steps: {trail}]"
 
     return result
 

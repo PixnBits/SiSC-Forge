@@ -67,8 +67,8 @@ siscforge run --calculator qe-epw examples/nbti_n_al_broad_shortlist.yaml
 ### Resume after sleep / reboot / kill
 
 Re-run the **same** command. Finished `status=ok` candidates are **skipped**;
-`failed` are re-attempted. Dry-run `mock` rows in another store are **not**
-treated as real EPW success.
+`failed` are re-attempted. Dry-run `mock` rows are **not** treated as real EPW
+success when using `qe-epw`.
 
 ```text
 [1/6] Nb0.25Ti0.75N strain=-0.030 — skip (already ok)
@@ -77,9 +77,19 @@ treated as real EPW success.
 Checkpoint summary (expensive path): skipped=1, ran=5, ok=3, failed=2
 ```
 
+**Kill during DFPT / EPW (mid-candidate):** re-issue the same command. Campaign
+resume does not skip that candidate (no successful evaluation yet), but
+**mid-step QE resume** reuses valid `qe_work/` artifacts:
+
+```text
+skip vc-relax (checkpoint)
+skip SCF (checkpoint)
+running DFPT / phonon    # restarts ph.x from step start, not mid-iteration
+```
+
 | Flag | Use |
 |------|-----|
-| `--force-rerun` | Recompute all successes |
+| `--force-rerun` | Recompute all successes **and** disable QE step checkpoints |
 | `--fail-fast` | Abort shortlist on first hard error |
 
 Failed candidates: notes include workdir + `diagnose_epw_failure` hints; see
@@ -136,10 +146,10 @@ with QE 7.3.1 / 4 MPI ranks:
 | DFPT | In progress at ~18 min wall-time when the session timeout hit |
 | EPW / λ / Tc | Not finished — re-run same command to resume after DFPT completes |
 
-Store records failed only if the process dies mid-candidate **before**
-`append_evaluation` (resume does not mid-step checkpoint QE files yet — workdir
-artifacts remain under `qe_work/`). Full resume of a finished candidate is
-evaluation-level; re-run continues the shortlist.
+If the process dies mid-candidate, re-run the same command: campaign resume
+does not skip that candidate (no successful evaluation yet), but **mid-step
+QE resume** reuses completed relax/SCF in `qe_work/` and restarts the
+incomplete step (e.g. DFPT) only.
 
 ## Related
 

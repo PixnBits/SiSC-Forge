@@ -282,6 +282,53 @@ def _try_read_relaxed_structure(work_dir: Path, fallback: Structure) -> Structur
     return fallback
 
 
+def _skipped_step(
+    name: str,
+    work_dir: Path,
+    *,
+    stdout_path: Path | None = None,
+    message: str = "",
+) -> QEStepResult:
+    """Synthetic step result for a checkpoint-skipped stage."""
+    out = stdout_path or (work_dir / f"{name}.out")
+    return QEStepResult(
+        name=name,
+        work_dir=work_dir,
+        returncode=0,
+        stdout_path=out,
+        input_path=work_dir / f"{name}.in",
+        success=True,
+        message=message or f"skip {name} (checkpoint)",
+    )
+
+
+def _should_resume_qe_steps(config: DFTConfig, *, resume_qe_steps: bool | None) -> bool:
+    """Whether mid-step workdir checkpoints are enabled."""
+    if resume_qe_steps is not None:
+        return bool(resume_qe_steps)
+    # Prefer RunConfig if attached via private attr; default True for real path
+    run = getattr(config, "_run_config", None)
+    if run is not None:
+        if getattr(run, "force_rerun", False) or getattr(
+            run, "force_rerun_qe_steps", False
+        ):
+            return False
+        return bool(getattr(run, "resume_qe_steps", True))
+    return True
+
+
+def _force_qe_steps(config: DFTConfig, *, force_qe_steps: bool | None) -> bool:
+    if force_qe_steps is not None:
+        return bool(force_qe_steps)
+    run = getattr(config, "_run_config", None)
+    if run is not None:
+        return bool(
+            getattr(run, "force_rerun", False)
+            or getattr(run, "force_rerun_qe_steps", False)
+        )
+    return False
+
+
 def run_relax_scf_phonon(
     structure: Structure,
     config: DFTConfig,
@@ -289,6 +336,9 @@ def run_relax_scf_phonon(
     *,
     prefix: str = "siscforge",
     qe_env: QEEnvironment | None = None,
+    resume_qe_steps: bool | None = None,
+    force_qe_steps: bool | None = None,
+    step_log: list[str] | None = None,
 ) -> QEWorkflowResult:
     """Execute relax (optional) → SCF → phonon (optional) in *work_dir*.
 
@@ -296,7 +346,17 @@ def run_relax_scf_phonon(
     After ``vc-relax``, the final geometry is parsed from the pw.x output and
     fed into SCF / phonon. Phonon method is selected via ``config.phonon_method``:
     ``dfpt`` / ``gamma`` (ph.x) or ``phonopy_fd`` (optional).
+
+    Mid-step resume: when enabled (default), successful upstream outputs in
+    *work_dir* are re-used so a kill during phonon does not re-run relax/SCF.
+    Incomplete step outputs are cleaned and that step is re-run from its start
+    (not mid-iteration recovery).
     """
+    from siscforge.calculators.qe.qe_checkpoint import (
+        clean_step_outputs,
+        probe_workdir,
+    )
+
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     use_phonopy = config.do_phonon and config.phonon_method == "phonopy_fd"
@@ -305,61 +365,131 @@ def run_relax_scf_phonon(
 
     result = QEWorkflowResult(work_dir=work_dir, structure=structure)
     current = structure
+    log: list[str] = []
+
+    do_resume = _should_resume_qe_steps(config, resume_qe_steps=resume_qe_steps)
+    do_force = _force_qe_steps(config, force_qe_steps=force_qe_steps) or not do_resume
+    ckpt = probe_workdir(
+        work_dir,
+        config,
+        prefix=prefix,
+        structure=structure,
+        want_epw=False,
+        force=do_force,
+    )
+    log.extend(ckpt.log)
 
     # 1. Optional relaxation
     if config.do_relax:
+        if ckpt.is_complete("vc-relax"):
+            probe = ckpt.steps["vc-relax"]
+            current = probe.relaxed_structure or current
+            result.relaxed_structure = current
+            result.steps.append(
+                _skipped_step(
+                    "vc-relax",
+                    work_dir / "01_relax",
+                    stdout_path=probe.stdout_path,
+                    message="skip vc-relax (checkpoint)",
+                )
+            )
+            log.append("skip vc-relax (checkpoint)")
+        else:
+            if (work_dir / "01_relax").exists():
+                clean_step_outputs(work_dir, "vc-relax", prefix=prefix)
+            log.append("running vc-relax")
+            step = run_pw(
+                current,
+                config,
+                work_dir / "01_relax",
+                calculation="vc-relax",
+                prefix=prefix,
+                qe_env=qe_env,
+            )
+            result.steps.append(step)
+            if not step.success:
+                result.message = (
+                    f"Relaxation failed (pw.x vc-relax).\n{step.message}\n"
+                    f"Check cutoffs, pseudopotentials, and {work_dir / '01_relax'}."
+                )
+                result.success = False
+                if step.stdout_path.is_file():
+                    result.scf = parse_pw_output(
+                        step.stdout_path, quality_tag=config.quality_tag
+                    )
+                return result
+            current = _try_read_relaxed_structure(work_dir / "01_relax", current)
+            result.relaxed_structure = current
+    elif config.do_relax is False:
+        # Still try to reuse a prior relaxed geometry if present
+        prior = _try_read_relaxed_structure(work_dir / "01_relax", current)
+        if prior is not current:
+            current = prior
+            result.relaxed_structure = current
+
+    # 2. SCF on (possibly relaxed) geometry
+    scf_dir = work_dir / "02_scf"
+    if ckpt.is_complete("scf"):
+        probe = ckpt.steps["scf"]
+        result.scf = probe.scf
+        result.steps.append(
+            _skipped_step(
+                "scf",
+                scf_dir,
+                stdout_path=probe.stdout_path,
+                message="skip SCF (checkpoint)",
+            )
+        )
+        log.append("skip SCF (checkpoint)")
+        # Prefer relaxed geometry from checkpoint when available
+        if result.relaxed_structure is not None:
+            current = result.relaxed_structure
+    else:
+        if scf_dir.exists():
+            clean_step_outputs(work_dir, "scf", prefix=prefix)
+        log.append("running SCF")
         step = run_pw(
             current,
             config,
-            work_dir / "01_relax",
-            calculation="vc-relax",
+            scf_dir,
+            calculation="scf",
             prefix=prefix,
             qe_env=qe_env,
         )
         result.steps.append(step)
+        if step.stdout_path.is_file():
+            result.scf = parse_pw_output(
+                step.stdout_path, quality_tag=config.quality_tag
+            )
         if not step.success:
             result.message = (
-                f"Relaxation failed (pw.x vc-relax).\n{step.message}\n"
-                f"Check cutoffs, pseudopotentials, and {work_dir / '01_relax'}."
+                f"SCF failed (pw.x scf).\n{step.message}\n"
+                f"Work directory: {scf_dir}"
             )
             result.success = False
-            if step.stdout_path.is_file():
-                result.scf = parse_pw_output(
-                    step.stdout_path, quality_tag=config.quality_tag
-                )
             return result
-        current = _try_read_relaxed_structure(work_dir / "01_relax", current)
-        result.relaxed_structure = current
-
-    # 2. SCF on (possibly relaxed) geometry
-    scf_dir = work_dir / "02_scf"
-    step = run_pw(
-        current,
-        config,
-        scf_dir,
-        calculation="scf",
-        prefix=prefix,
-        qe_env=qe_env,
-    )
-    result.steps.append(step)
-    if step.stdout_path.is_file():
-        result.scf = parse_pw_output(step.stdout_path, quality_tag=config.quality_tag)
-    if not step.success:
-        result.message = (
-            f"SCF failed (pw.x scf).\n{step.message}\n"
-            f"Work directory: {scf_dir}"
-        )
-        result.success = False
-        return result
 
     # 3. Phonons
     if config.do_phonon:
-        if use_phonopy:
+        if ckpt.is_complete("phonon"):
+            probe = ckpt.steps["phonon"]
+            result.phonon = probe.phonon
+            result.steps.append(
+                _skipped_step(
+                    "phonon",
+                    scf_dir,
+                    stdout_path=probe.stdout_path,
+                    message="skip phonon (checkpoint)",
+                )
+            )
+            log.append("skip phonon (checkpoint)")
+        elif use_phonopy:
             from siscforge.calculators.qe.phonopy_fd import (
                 PhonopyNotAvailableError,
                 run_phonopy_fd,
             )
 
+            log.append("running phonopy_fd")
             try:
                 ph, diag = run_phonopy_fd(
                     current,
@@ -381,6 +511,9 @@ def run_relax_scf_phonon(
                 result.success = False
                 return result
         else:
+            if (scf_dir / "ph.out").exists():
+                clean_step_outputs(work_dir, "phonon", prefix=prefix)
+            log.append("running DFPT / phonon")
             step = run_ph(config, scf_dir, prefix=prefix, qe_env=qe_env)
             result.steps.append(step)
             texts: list[str] = []
@@ -412,7 +545,17 @@ def run_relax_scf_phonon(
             "ok",
             "mock",
         }
-    result.message = "ok" if result.success else (result.message or "incomplete")
+    if result.success:
+        if any("skip" in (s.message or "") for s in result.steps):
+            result.message = "ok (mid-step resume)"
+        else:
+            result.message = "ok"
+        if log:
+            result.message = f"{result.message} [{'; '.join(log)}]"
+    else:
+        result.message = result.message or "incomplete"
+    if step_log is not None:
+        step_log.extend(log)
     return result
 
 

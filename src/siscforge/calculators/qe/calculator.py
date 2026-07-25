@@ -112,6 +112,28 @@ class QECalculator(BaseCalculator):
 
         # Short prefix — some QE builds have tight internal path buffers
         prefix = f"s{short_id}"
+        # Mid-step QE resume: reuse workdir checkpoints unless force_rerun*
+        run_cfg = kwargs.get("run_config")
+        resume_qe = kwargs.get("resume_qe_steps")
+        force_qe = kwargs.get("force_qe_steps")
+        if run_cfg is not None:
+            # Attach for recipe helpers that read config._run_config
+            dft.__dict__["_run_config"] = run_cfg
+            if force_qe is None:
+                force_qe = bool(
+                    getattr(run_cfg, "force_rerun", False)
+                    or getattr(run_cfg, "force_rerun_qe_steps", False)
+                )
+            if resume_qe is None:
+                resume_qe = bool(
+                    getattr(run_cfg, "resume_qe_steps", True)
+                ) and not bool(force_qe)
+        if force_qe is None:
+            force_qe = False
+        if resume_qe is None:
+            resume_qe = not force_qe
+
+        step_log: list[str] = []
         if want_epw:
             wf = run_relax_scf_phonon_epw(
                 structure,
@@ -119,6 +141,9 @@ class QECalculator(BaseCalculator):
                 cand_dir,
                 prefix=prefix,
                 qe_env=qe_env,
+                resume_qe_steps=resume_qe,
+                force_qe_steps=force_qe,
+                step_log=step_log,
             )
         else:
             base = run_relax_scf_phonon(
@@ -127,6 +152,9 @@ class QECalculator(BaseCalculator):
                 cand_dir,
                 prefix=prefix,
                 qe_env=qe_env,
+                resume_qe_steps=resume_qe,
+                force_qe_steps=force_qe,
+                step_log=step_log,
             )
             from siscforge.calculators.qe.epw_recipes import EPWWorkflowResult
 
@@ -228,6 +256,8 @@ class QECalculator(BaseCalculator):
         notes_parts.append(f"phonon_method={dft.phonon_method}")
         notes_parts.append(f"do_epw={want_epw}")
         notes_parts.append(f"work_dir={cand_dir}")
+        if step_log:
+            notes_parts.append("qe_steps: " + "; ".join(step_log))
 
         scf = wf.scf
         phonon = wf.phonon

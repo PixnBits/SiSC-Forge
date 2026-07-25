@@ -416,7 +416,17 @@ class RunConfig(BaseModel):
     campaign continues; when False, the first hard error aborts the run."""
 
     force_rerun: bool = False
-    """When True, ignore prior successes and re-run the expensive calculator."""
+    """When True, ignore prior successes and re-run the expensive calculator
+    (also disables mid-step QE workdir checkpoints for that candidate)."""
+
+    resume_qe_steps: bool = True
+    """When True, re-use successful upstream QE artifacts in the candidate
+    workdir (vc-relax → SCF → phonon → EPW). Default on; applies when the
+    candidate itself is not skipped by campaign-level resume."""
+
+    force_rerun_qe_steps: bool = False
+    """When True, ignore workdir checkpoints and re-run every QE step.
+    Implied by ``force_rerun``."""
 
 
 class CampaignConfig(BaseModel):

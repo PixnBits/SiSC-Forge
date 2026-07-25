@@ -1,5 +1,50 @@
 # Implementation Notes
 
+## Slice 15 (2026-07-25) — Mid-step QE/EPW workdir checkpoint resume
+
+**Scope**: Inside one candidate’s `qe_work/<formula>_<id>/`, reuse successful
+upstream steps after a kill during DFPT/EPW. Complements campaign-level resume
+(Slice 13).
+
+| Item | Location |
+|------|----------|
+| Step probes | `calculators/qe/qe_checkpoint.py` |
+| Phonon recipe | `run_relax_scf_phonon(..., resume_qe_steps=)` |
+| EPW recipe | `run_relax_scf_phonon_epw(..., resume_qe_steps=)` |
+| Config | `RunConfig.resume_qe_steps` (default true), `force_rerun_qe_steps` |
+| CLI | `--force-rerun` also forces QE step re-runs |
+| Tests | `tests/test_qe_checkpoint.py` (fixture workdirs, no real QE) |
+
+### Step graph
+`vc-relax` → `scf` → `phonon` → (`epw_pp` → `nscf` → `epw` when EPW enabled)
+
+### Success probes (conservative)
+| Step | Complete when |
+|------|----------------|
+| vc-relax | `01_relax/vc-relax.out` has JOB DONE + parseable CELL_PARAMETERS |
+| scf | `02_scf/scf.out` JOB DONE + energy + `*.save` present |
+| phonon | `ph.out` JOB DONE (+ dyn mesh files when EPW); partial ph.out ⇒ incomplete |
+| epw_pp | non-empty `02_scf/save/` |
+| nscf | `nscf.out` JOB DONE + parseable energy |
+| epw | `epw.out` JOB DONE + parseable λ or Tc |
+
+Incomplete step: clean that step’s partial outputs only, then re-run **from the
+start of that step** (not mid-iteration `ph.x` recover).
+
+### Kill-during-ph.x scenario
+1. Campaign store has no successful evaluation → candidate is selected to run.
+2. Workdir probe: skip vc-relax, skip SCF, incomplete phonon.
+3. Logs: `skip vc-relax (checkpoint)`, `skip SCF (checkpoint)`, `running DFPT / phonon`.
+4. Partial `ph.out` / dyn* removed; `ph.x` restarts; charge density `*.save` kept.
+5. `--force-rerun` / `force_rerun_qe_steps`: no step skips.
+
+### Limitations
+- Cannot attach to a live mid-iteration `ph.x` recoverably; we restart the step.
+- Phonopy FD mid-step only checks `band.yaml` completeness.
+- Campaign-level skip still wins when the evaluation is already successful.
+
+---
+
 ## Slice 14 (2026-07-25) — Desktop shortlist → real EPW
 
 **Scope**: Practical path from AL dry-run top-k to real `qe-epw` without
@@ -28,6 +73,7 @@ siscforge run --calculator qe-epw examples/nbti_n_al_broad_shortlist.yaml
 - Resume for `qe`/`qe-epw` uses `require_real=True` so **mock** dry-run hits
   do not block real EPW.
 - Failed QE/EPW evaluations store workdir + `diagnose_epw_failure` in notes.
+- Mid-step workdir resume: Slice 15.
 
 ### Remaining Phase 2 (not this slice)
 Multi-layer stacks, critical thickness / membrane, interface slabs, denser
@@ -38,7 +84,6 @@ production Wannier, full AL retrain.
 ## Slice 13 (2026-07-25) — Resume / checkpoint for multi-candidate runs
 
 **Scope**: Desktop-friendly re-launch after interrupt for EPW shortlists (and mock).
-Does **not** generate shortlist YAMLs (next session).
 
 | Item | Location |
 |------|----------|
@@ -56,12 +101,12 @@ An evaluation is **successful** (skippable on resume) when:
 
 `failed`, `pending`, and `surrogate_only` are **not** skipped as expensive successes.
 
+For `qe` / `qe-epw`, resume uses `require_real=True`: dry-run **mock** evaluations
+are not treated as finished.
+
 ### Matching policy
 1. **candidate_id** exact match
 2. Else **fingerprint** `material_family|formula|substrate|±strain` (6 dp)
-
-Re-enumeration regenerates UUIDs → fingerprint is the usual hit when reusing the
-same `output_dir` / campaign shape.
 
 ### Defaults
 ```yaml
@@ -69,6 +114,8 @@ run:
   resume: true
   continue_on_error: true
   force_rerun: false
+  resume_qe_steps: true
+  force_rerun_qe_steps: false
 ```
 
 - After each expensive candidate: flush `evaluations.json`
@@ -78,12 +125,12 @@ run:
 
 ### How to resume after reboot / kill
 ```bash
-# same campaign YAML + same output_dir
-siscforge run --calculator qe-epw examples/nbti_n_al_broad.yaml
-# finished candidates skipped; failed ones re-attempted (not successful)
-# force everything:
-siscforge run --calculator qe-epw --force-rerun examples/nbti_n_al_broad.yaml
+siscforge run --calculator qe-epw examples/nbti_n_al_broad_shortlist.yaml
+# finished candidates skipped; in-progress candidate reuses relax/SCF if valid
+siscforge run --calculator qe-epw --force-rerun examples/nbti_n_al_broad_shortlist.yaml
 ```
+
+Mid-step workdir resume: **Slice 15**.
 
 ---
 
