@@ -88,6 +88,9 @@ siscforge run --dry-run examples/mgb2_epw.yaml
 # Nb–Ti–N with λ/Tc surrogate stub pre-filter (still mock calculator)
 siscforge run --dry-run examples/nbti_n_surrogate.yaml
 
+# Nb–Ti–N with active-learning top-k prioritization (mock = expensive path)
+siscforge run --dry-run examples/nbti_n_al.yaml
+
 # Structure enumeration only
 siscforge enumerate -c examples/nbti_n_strain.yaml
 ```

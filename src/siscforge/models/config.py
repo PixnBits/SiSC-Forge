@@ -84,6 +84,41 @@ class SurrogateConfig(BaseModel):
     """λ / ω_log / Tc pre-filter stub (not a trained production GNN)."""
 
 
+class ActiveLearningWeights(BaseModel):
+    """Weights for the uncertainty_si_tc acquisition score (need not sum to 1)."""
+
+    uncertainty: float = Field(default=0.4, ge=0.0)
+    predicted_tc: float = Field(default=0.3, ge=0.0)
+    si_feasibility: float = Field(default=0.3, ge=0.0)
+    hull_penalty: float = Field(default=0.1, ge=0.0)
+    """Soft penalty weight for high energy_above_hull_proxy."""
+
+
+class ActiveLearningConfig(BaseModel):
+    """Minimal AL prioritization for expensive EPW jobs (Phase 1 first cut).
+
+    Disabled by default. This coordinator **orders** the queue and selects a
+    top-k subset for the real calculator; it does **not** retrain surrogates.
+    """
+
+    enabled: bool = False
+    strategy: Literal["uncertainty_si_tc"] = "uncertainty_si_tc"
+    """Acquisition strategy name (extensible later)."""
+
+    max_epw_jobs: int = Field(default=5, ge=1)
+    """How many candidates receive the expensive calculator (QE/EPW/mock)."""
+
+    weights: ActiveLearningWeights = Field(default_factory=ActiveLearningWeights)
+    tc_ceiling_K: float = Field(default=40.0, gt=0.0)
+    """Normalize predicted Tc by this ceiling for the acquisition feature."""
+
+    evaluate_deferred_with_surrogate: bool = True
+    """If True, non-selected candidates still get surrogate-only evaluations
+    so the final ranked table includes the full shortlist pool."""
+
+    version: str = "0.1-priority-queue"
+
+
 class EnumerationConfig(BaseModel):
     """Parameters controlling structure enumeration.
 
@@ -324,6 +359,11 @@ class CampaignConfig(BaseModel):
     formation_filter: FormationFilterConfig = Field(default_factory=FormationFilterConfig)
     surrogate: SurrogateConfig = Field(default_factory=SurrogateConfig)
     """Optional λ/Tc (and future) surrogates for pre-filtering."""
+
+    active_learning: ActiveLearningConfig = Field(
+        default_factory=ActiveLearningConfig
+    )
+    """Optional top-k prioritization for expensive EPW jobs."""
 
     ranking: RankingConfig = Field(default_factory=RankingConfig)
     josephson: JosephsonConfig = Field(default_factory=JosephsonConfig)

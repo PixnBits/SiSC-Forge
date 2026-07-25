@@ -143,8 +143,15 @@ class CandidateEvaluation(BaseModel):
     rank: int | None = None
     """1-based rank after sorting (filled by ranking module)."""
 
+    acquisition_score: float | None = None
+    """Active-learning acquisition score (higher → run expensive job sooner)."""
+
+    al_selected_for_expensive: bool | None = None
+    """Whether AL selected this candidate for the expensive calculator path."""
+
     status: str = "pending"
-    """Overall evaluation status: ``pending``, ``ok``, ``failed``, ``mock``."""
+    """Overall evaluation status: ``pending``, ``ok``, ``failed``, ``mock``,
+    ``surrogate_only`` (AL-deferred)."""
 
     calculator_name: str | None = None
     """Name of the calculator that produced this evaluation."""

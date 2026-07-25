@@ -2,6 +2,8 @@
 
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import (
+    ActiveLearningConfig,
+    ActiveLearningWeights,
     CalculatorConfig,
     CampaignConfig,
     DFTConfig,
@@ -23,6 +25,8 @@ from siscforge.models.results import (
 )
 
 __all__ = [
+    "ActiveLearningConfig",
+    "ActiveLearningWeights",
     "CalculatorConfig",
     "CampaignConfig",
     "CandidateEvaluation",

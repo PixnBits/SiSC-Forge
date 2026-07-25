@@ -1,0 +1,82 @@
+# Nb–Ti–N campaign with λ/Tc surrogate + active-learning prioritization
+#
+# Dry-run (mock calculator = stand-in for expensive EPW path):
+#   siscforge run --dry-run examples/nbti_n_al.yaml
+#
+# AL selects top-k for the expensive calculator; deferred candidates get
+# surrogate-only evaluations. This is prioritization only — no surrogate retrain.
+#
+# See docs/implementation-notes.md Slice 9.
+
+name: nbti_n_active_learning
+description: >
+  Nb-Ti-N strain series with formation filter, λ/Tc surrogate, and a minimal
+  active-learning coordinator that prioritizes top-k candidates for the expensive
+  calculator path (mock in dry-run; qe-epw in real runs).
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+  metals:
+    - Nb
+    - Ti
+  ternary_metals:
+    - Nb
+    - Ti
+  x_values:
+    - 0.25
+    - 0.5
+    - 0.75
+  supercell: [2, 2, 1]
+  substrates:
+    - Si(001)
+  strain_values:
+    - -0.02
+    - 0.0
+    - 0.02
+  poisson_ratio: 0.25
+  seed: 42
+  max_candidates: 20
+
+calculators:
+  - name: mock
+
+formation_filter:
+  enabled: true
+  max_e_hull_eV_per_atom: 0.25
+  max_strain_magnitude: 0.05
+
+surrogate:
+  tc_lambda:
+    enabled: true
+    # Soft cuts so AL still has a pool to prioritize
+    min_predicted_tc_K: 1.0
+    max_uncertainty: 0.90
+    keep_top_n: null
+    use_for_ranking_when_no_epw: true
+    mu_star: 0.10
+
+active_learning:
+  enabled: true
+  strategy: uncertainty_si_tc
+  max_epw_jobs: 5
+  evaluate_deferred_with_surrogate: true
+  weights:
+    uncertainty: 0.4
+    predicted_tc: 0.3
+    si_feasibility: 0.3
+    hull_penalty: 0.1
+
+ranking:
+  performance_weight: 0.55
+  si_feasibility_weight: 0.45
+  prefer_dynamically_stable: true
+  prefer_low_hull: true
+
+output_dir: outputs/nbti_n_active_learning
+export_formats:
+  - json
+  - csv
+  - markdown

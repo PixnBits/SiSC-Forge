@@ -1,5 +1,69 @@
 # Implementation Notes
 
+## Slice 9 (2026-07-25) — Minimal active-learning prioritization
+
+**Scope**: Queue prioritization for expensive EPW jobs. **Not** a full retrain loop, Bayesian optimization, or batch BO.
+
+### Module
+| Item | Location |
+|------|----------|
+| Acquisition | `siscforge.active_learning.acquisition` |
+| Config | `CampaignConfig.active_learning` |
+| Evaluation fields | `acquisition_score`, `al_selected_for_expensive` |
+| Example | `examples/nbti_n_al.yaml` |
+| Tests | `tests/test_active_learning.py` |
+| Store artifact | `active_learning.json` |
+
+### Acquisition (`uncertainty_si_tc`)
+```
+score = w_u·unc + w_tc·(Tĉ/Tc_max) + w_si·(Si/100) − w_hull·(E_hull/0.25)
+```
+Default weights: uncertainty 0.4, predicted_tc 0.3, si_feasibility 0.3, hull_penalty 0.1.
+
+### Campaign YAML
+```yaml
+active_learning:
+  enabled: true                 # default false
+  strategy: uncertainty_si_tc
+  max_epw_jobs: 5
+  evaluate_deferred_with_surrogate: true
+  weights:
+    uncertainty: 0.4
+    predicted_tc: 0.3
+    si_feasibility: 0.3
+    hull_penalty: 0.1
+```
+
+### Run-path behavior
+1. Enumerate → formation filter → λ/Tc surrogate
+2. Score Si-feasibility (cheap) for all remaining
+3. If AL enabled: compute acquisition, print ranking, select top-k for calculator
+4. Deferred candidates → `status=surrogate_only` evaluations (optional)
+5. Final ranking uses real/mock EPW Tc when present (overrides surrogate)
+
+### Dry-run
+```bash
+siscforge run --dry-run examples/nbti_n_al.yaml
+```
+Mock calculator stands in for the expensive path on the selected top-k; deferred rows are labeled `surrogate_only*`.
+
+### Explicitly out of scope (this cut)
+- Surrogate retraining on new EPW labels
+- Batch / diversity-aware selection
+- Bayesian optimization / Gaussian processes
+- Avoidance of known-failure regions from past CRASH logs
+
+### Future full AL loop would add
+- Retrain λ/Tc surrogate on accumulated EPW results
+- Uncertainty calibration from ensemble models
+- Multi-fidelity / cost-aware acquisition
+- Persistent job queue across campaign restarts
+
+### Next session (Phase 1 largely complete)
+Pick one: **(a)** production Wannier/EPW hardening, **(b)** broader nitride alloy campaigns driven by AL, or **(c)** start Phase 2 Si-integration maturity.
+
+---
+
 ## Slice 8 (2026-07-25) — λ/Tc surrogate stub (pre-filter)
 
 **Scope**: Lightweight family-heuristic λ / ω_log / Tc predictions for **pre-filtering** before expensive EPW. Not a trained production GNN. No active learning.
@@ -44,7 +108,7 @@ surrogate:
 - Future: ALIGNN/MatGL multi-task head on the same `TcLambdaPrediction` schema
 
 ### Next session (best single focus)
-**Minimal active-learning coordinator** that combines surrogate uncertainty + Si-feasibility to prioritize EPW jobs and re-rank the queue after new results arrive.
+See **Slice 9** (minimal AL prioritization) — implemented.
 
 ---
 

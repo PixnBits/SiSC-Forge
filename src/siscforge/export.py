@@ -103,6 +103,8 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
             if getattr(ev, "tc_lambda_surrogate", None)
             else None
         ),
+        "acquisition_score": getattr(ev, "acquisition_score", None),
+        "al_selected_for_expensive": getattr(ev, "al_selected_for_expensive", None),
         "si_feasibility_total": si.total if si else None,
         "si_lattice_mismatch": comps.lattice_mismatch if comps else None,
         "si_thermal_budget": comps.thermal_budget if comps else None,
@@ -155,6 +157,8 @@ CSV_FIELDNAMES = [
     "surrogate_Tc",
     "surrogate_uncertainty",
     "surrogate_model_version",
+    "acquisition_score",
+    "al_selected_for_expensive",
     "si_feasibility_total",
     "si_lattice_mismatch",
     "si_thermal_budget",
@@ -248,6 +252,19 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- predicted Tc (K): {surr.get('predicted_Tc')}",
                 f"- uncertainty (0–1): {surr.get('uncertainty')}",
                 f"- notes: {surr.get('notes', '—')}",
+            ]
+        )
+
+    acq = getattr(ev, "acquisition_score", None)
+    if acq is not None:
+        lines.extend(
+            [
+                "",
+                "### Active learning (prioritization)",
+                f"- acquisition score: {acq}",
+                f"- selected for expensive path: "
+                f"{getattr(ev, 'al_selected_for_expensive', None)}",
+                "- note: prioritization only — not a surrogate retrain loop",
             ]
         )
 

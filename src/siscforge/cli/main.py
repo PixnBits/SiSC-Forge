@@ -31,6 +31,8 @@ from siscforge.ranking import rank_evaluations
 from siscforge.silicon.feasibility import score_si_feasibility
 from siscforge.store import EvaluationStore
 from siscforge.structure.generator import generate_candidates, generate_fake_candidates
+from siscforge.active_learning import prioritize_candidates
+from siscforge.models.provenance import Provenance
 from siscforge.surrogates.formation import FormationEnergyFilter
 from siscforge.surrogates.tc_lambda import TcLambdaSurrogate
 
@@ -361,6 +363,38 @@ def run_cmd(
         console.print("[red]No candidates left after λ/Tc surrogate filter.[/red]")
         raise typer.Exit(code=1)
 
+    # 2c. Si-feasibility (cheap) + active-learning prioritization
+    si_by_id = {c.candidate_id: score_si_feasibility(c) for c in candidates}
+    al_cfg = config.active_learning
+    al_plan = prioritize_candidates(
+        candidates,
+        config=al_cfg,
+        si_scores=si_by_id,
+        predictions=tc_fres.predictions,
+    )
+    store.save_json(
+        "active_learning.json",
+        {
+            **al_plan.summary(),
+            "config": al_cfg.model_dump(mode="json"),
+        },
+    )
+    acq_by_id = {r.candidate_id: r for r in al_plan.ranked}
+    if al_cfg.enabled:
+        console.print(
+            f"[bold]Active learning[/bold] strategy={al_cfg.strategy} "
+            f"selected {len(al_plan.selected)}/{len(candidates)} for expensive path "
+            f"(max_epw_jobs={al_cfg.max_epw_jobs})"
+        )
+        _print_acquisition_table(al_plan.ranked, max_rows=15)
+        expensive_candidates = list(al_plan.selected)
+        deferred_candidates = (
+            list(al_plan.deferred) if al_cfg.evaluate_deferred_with_surrogate else []
+        )
+    else:
+        expensive_candidates = list(candidates)
+        deferred_candidates = []
+
     # 3. Select calculator
     calc_name = _resolve_calculator_name(
         config, dry_run=dry_run, calculator=calculator
@@ -408,10 +442,71 @@ def run_cmd(
     else:
         console.print(f"[bold]Calculator[/bold] {calc_name}")
 
-    # 4. Score Si-feasibility + evaluate
+    # 4. Evaluate expensive path + optional surrogate-only deferred set
     evaluations: list[CandidateEvaluation] = []
-    for cand in candidates:
-        si = score_si_feasibility(cand)
+
+    def _finalize_eval(
+        result: CandidateEvaluation,
+        cand: StructureCandidate,
+        *,
+        selected: bool,
+    ) -> CandidateEvaluation:
+        si = si_by_id[cand.candidate_id]
+        if result.si_feasibility is None or str(
+            getattr(result.si_feasibility, "version", "")
+        ).endswith("mock"):
+            result = result.model_copy(update={"si_feasibility": si})
+        if result.candidate.energy_above_hull_proxy is None or (
+            "tc_lambda_surrogate" in cand.metadata
+            and "tc_lambda_surrogate" not in result.candidate.metadata
+        ):
+            result = result.model_copy(update={"candidate": cand})
+
+        pred = tc_fres.predictions.get(cand.candidate_id)
+        acq = acq_by_id.get(cand.candidate_id)
+        updates: dict = {
+            "al_selected_for_expensive": selected if al_cfg.enabled else None,
+            "acquisition_score": (
+                acq.acquisition_score
+                if (al_cfg.enabled and acq is not None)
+                else None
+            ),
+        }
+        if pred is not None:
+            updates["tc_lambda_surrogate"] = pred.model_dump(mode="json")
+            real_tc = (
+                result.electron_phonon.best_tc_K()
+                if result.electron_phonon is not None
+                else None
+            )
+            has_real_eph = real_tc is not None and result.electron_phonon is not None
+            if has_real_eph:
+                if result.performance_score is None:
+                    updates["performance_score"] = real_tc
+                    updates["performance_score_source"] = (
+                        "mock"
+                        if result.electron_phonon.status == "mock"
+                        else "epw"
+                    )
+                elif result.performance_score_source is None:
+                    updates["performance_score_source"] = (
+                        "mock"
+                        if result.electron_phonon.status == "mock"
+                        else "epw"
+                    )
+            elif tc_cfg.use_for_ranking_when_no_epw and result.performance_score is None:
+                notes = (result.notes or "").strip()
+                note_add = (
+                    "performance_score from λ/Tc surrogate stub "
+                    f"(unc={pred.uncertainty:.2f}; not EPW)"
+                )
+                updates["performance_score"] = pred.score_for_ranking()
+                updates["performance_score_source"] = "surrogate"
+                updates["notes"] = f"{notes}; {note_add}" if notes else note_add
+        return result.model_copy(update=updates)
+
+    for cand in expensive_candidates:
+        si = si_by_id[cand.candidate_id]
         params = {**calc_params, "si_feasibility": si}
         try:
             result = calc.run(cand, **params)
@@ -425,72 +520,38 @@ def run_cmd(
             raise typer.Exit(code=1) from exc
         if not isinstance(result, CandidateEvaluation):
             raise typer.Exit(code=1)
-        if result.si_feasibility is None or result.si_feasibility.version.endswith(
-            "mock"
-        ):
-            result = result.model_copy(update={"si_feasibility": si})
-        # Keep annotated candidate (hull proxy + surrogate metadata) on the evaluation
-        if result.candidate.energy_above_hull_proxy is None or (
-            "tc_lambda_surrogate" in cand.metadata
-            and "tc_lambda_surrogate" not in result.candidate.metadata
-        ):
-            result = result.model_copy(update={"candidate": cand})
-
-        # Attach surrogate prediction; never override real EPW Tc
-        pred = tc_fres.predictions.get(cand.candidate_id)
-        if pred is not None:
-            result = result.model_copy(
-                update={"tc_lambda_surrogate": pred.model_dump(mode="json")}
-            )
-            real_tc = (
-                result.electron_phonon.best_tc_K()
-                if result.electron_phonon is not None
-                else None
-            )
-            has_real_eph = real_tc is not None and result.electron_phonon is not None
-            if has_real_eph:
-                # Prefer real/mock e-ph performance_score
-                if result.performance_score is None:
-                    result = result.model_copy(
-                        update={
-                            "performance_score": real_tc,
-                            "performance_score_source": (
-                                "mock"
-                                if result.electron_phonon.status == "mock"
-                                else "epw"
-                            ),
-                        }
-                    )
-                elif result.performance_score_source is None:
-                    src = (
-                        "mock"
-                        if result.electron_phonon.status == "mock"
-                        else "epw"
-                    )
-                    result = result.model_copy(
-                        update={"performance_score_source": src}
-                    )
-            elif tc_cfg.use_for_ranking_when_no_epw:
-                if result.performance_score is None:
-                    notes = (result.notes or "").strip()
-                    note_add = (
-                        "performance_score from λ/Tc surrogate stub "
-                        f"(unc={pred.uncertainty:.2f}; not EPW)"
-                    )
-                    result = result.model_copy(
-                        update={
-                            "performance_score": pred.score_for_ranking(),
-                            "performance_score_source": "surrogate",
-                            "notes": (
-                                f"{notes}; {note_add}" if notes else note_add
-                            ),
-                        }
-                    )
-
+        result = _finalize_eval(result, cand, selected=True)
         evaluations.append(result)
         store.append_evaluation(result)
 
-    # 5. Rank + persist ranked
+    for cand in deferred_candidates:
+        pred = tc_fres.predictions.get(cand.candidate_id)
+        if pred is None:
+            pred = TcLambdaSurrogate(tc_cfg).predict(cand)
+        si = si_by_id[cand.candidate_id]
+        result = CandidateEvaluation(
+            candidate=cand,
+            si_feasibility=si,
+            tc_lambda_surrogate=pred.model_dump(mode="json"),
+            performance_score=pred.score_for_ranking(),
+            performance_score_source="surrogate",
+            status="surrogate_only",
+            calculator_name="surrogate",
+            notes=(
+                "AL deferred expensive calculator; surrogate-only evaluation "
+                f"(acq would re-rank after real EPW)"
+            ),
+            provenance=Provenance(
+                source="active_learning_deferred",
+                software={"siscforge": __version__},
+                notes="Phase-1 AL prioritization first cut",
+            ),
+        )
+        result = _finalize_eval(result, cand, selected=False)
+        evaluations.append(result)
+        store.append_evaluation(result)
+
+    # 5. Rank + persist ranked (real/mock EPW Tc dominates when present)
     ranked = rank_evaluations(evaluations, config.ranking)
     store.save_evaluations(ranked, ranked=True)
     store.save_evaluations(ranked, ranked=False)  # canonical evaluations.json
@@ -526,6 +587,42 @@ def run_cmd(
     console.print(f"[dim]Store root: {store.root.resolve()}[/dim]")
 
 
+def _print_acquisition_table(
+    records: list,
+    *,
+    max_rows: int = 15,
+    title: str = "AL acquisition ranking",
+) -> None:
+    """Print top acquisition scores (selected vs deferred)."""
+    table = Table(title=title)
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("Formula")
+    table.add_column("Acq", justify="right", style="bold")
+    table.add_column("Tĉ", justify="right")
+    table.add_column("Unc", justify="right")
+    table.add_column("Si", justify="right")
+    table.add_column("Hull*", justify="right")
+    table.add_column("EPW?")
+    for i, rec in enumerate(records[:max_rows], start=1):
+        table.add_row(
+            str(i),
+            rec.formula,
+            f"{rec.acquisition_score:.3f}",
+            f"{rec.predicted_tc:.1f}" if rec.predicted_tc is not None else "—",
+            f"{rec.uncertainty:.2f}" if rec.uncertainty is not None else "—",
+            f"{rec.si_feasibility:.1f}" if rec.si_feasibility is not None else "—",
+            (
+                f"{rec.energy_above_hull_proxy:.3f}"
+                if rec.energy_above_hull_proxy is not None
+                else "—"
+            ),
+            "yes" if rec.selected_for_expensive else "defer",
+        )
+    if len(records) > max_rows:
+        table.caption = f"Showing top {max_rows} of {len(records)} (see active_learning.json)"
+    console.print(table)
+
+
 def _print_rank_table(
     ranked: list[CandidateEvaluation],
     *,
@@ -540,6 +637,7 @@ def _print_rank_table(
     table.add_column("E_hull*", justify="right")
     table.add_column("Perf", justify="right")
     table.add_column("Si", justify="right")
+    table.add_column("Acq", justify="right")
     table.add_column("Composite", justify="right", style="bold")
     table.add_column("Stable")
     table.add_column("Status")
@@ -548,6 +646,11 @@ def _print_rank_table(
         si = f"{ev.si_feasibility.total:.1f}" if ev.si_feasibility else "—"
         perf = f"{ev.performance_score:.1f}" if ev.performance_score is not None else "—"
         comp = f"{ev.composite_score:.1f}" if ev.composite_score is not None else "—"
+        acq = (
+            f"{ev.acquisition_score:.3f}"
+            if ev.acquisition_score is not None
+            else "—"
+        )
         stable = "—"
         if ev.phonon is not None:
             stable = "yes" if ev.phonon.dynamically_stable else "NO"
@@ -556,6 +659,9 @@ def _print_rank_table(
             strain = f"{ev.candidate.in_plane_strain:+.3f}"
         hull = ev.candidate.energy_above_hull_proxy
         hull_s = f"{hull:.3f}" if hull is not None else "—"
+        status = ev.status
+        if ev.al_selected_for_expensive is False:
+            status = f"{status}*"
         table.add_row(
             str(ev.rank or "—"),
             ev.candidate.candidate_id[:8] + "…",
@@ -565,9 +671,10 @@ def _print_rank_table(
             hull_s,
             perf,
             si,
+            acq,
             comp,
             stable,
-            ev.status,
+            status,
         )
     console.print(table)
 

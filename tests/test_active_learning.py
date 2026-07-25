@@ -1,0 +1,146 @@
+"""Tests for Phase-1 active-learning prioritization (not a retrain loop)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from siscforge.active_learning import acquisition_score, prioritize_candidates
+from siscforge.models.candidate import StructureCandidate
+from siscforge.models.config import (
+    ActiveLearningConfig,
+    ActiveLearningWeights,
+    CampaignConfig,
+)
+from siscforge.models.results import SiFeasibilityScore
+from siscforge.silicon.feasibility import score_si_feasibility
+from siscforge.structure.generator import structure_to_candidate
+from siscforge.structure.mgb2 import build_mgb2
+from siscforge.structure.nitrides import build_binary_nitride
+from siscforge.surrogates.tc_lambda import predict_tc_lambda
+
+
+def _cand(formula: str, family: str = "tm_nitride", strain: float = 0.0):
+    if formula == "MgB2":
+        s = build_mgb2()
+        family = "mgb2_boride"
+    elif formula == "TiN":
+        s = build_binary_nitride("Ti")
+    else:
+        s = build_binary_nitride("Nb")
+        formula = formula if formula != "NbN" else "NbN"
+    return structure_to_candidate(
+        s,
+        material_family=family,  # type: ignore[arg-type]
+        formula=formula,
+        in_plane_strain=strain,
+    )
+
+
+def test_acquisition_score_increases_with_uncertainty() -> None:
+    low, _ = acquisition_score(
+        uncertainty=0.1, predicted_tc=15.0, si_total=50.0
+    )
+    high, _ = acquisition_score(
+        uncertainty=0.9, predicted_tc=15.0, si_total=50.0
+    )
+    assert high > low
+
+
+def test_acquisition_score_increases_with_tc_and_si() -> None:
+    base, _ = acquisition_score(
+        uncertainty=0.3, predicted_tc=10.0, si_total=40.0
+    )
+    hi_tc, _ = acquisition_score(
+        uncertainty=0.3, predicted_tc=35.0, si_total=40.0
+    )
+    hi_si, _ = acquisition_score(
+        uncertainty=0.3, predicted_tc=10.0, si_total=90.0
+    )
+    assert hi_tc > base
+    assert hi_si > base
+
+
+def test_hull_penalty_reduces_score() -> None:
+    clean, _ = acquisition_score(
+        uncertainty=0.4,
+        predicted_tc=20.0,
+        si_total=50.0,
+        energy_above_hull=0.0,
+        weights={
+            "uncertainty": 0.3,
+            "predicted_tc": 0.3,
+            "si_feasibility": 0.3,
+            "hull_penalty": 0.5,
+        },
+    )
+    dirty, _ = acquisition_score(
+        uncertainty=0.4,
+        predicted_tc=20.0,
+        si_total=50.0,
+        energy_above_hull=0.25,
+        weights={
+            "uncertainty": 0.3,
+            "predicted_tc": 0.3,
+            "si_feasibility": 0.3,
+            "hull_penalty": 0.5,
+        },
+    )
+    assert dirty < clean
+
+
+def test_prioritize_selects_top_k() -> None:
+    cands = [
+        _cand("NbN", strain=0.0),
+        _cand("TiN", strain=0.0),
+        _cand("MgB2"),
+        _cand("NbN", strain=0.03),
+    ]
+    # Attach hull proxies so sorting is stable
+    for c in cands:
+        c.energy_above_hull_proxy = 0.02
+    si = {c.candidate_id: score_si_feasibility(c) for c in cands}
+    preds = {c.candidate_id: predict_tc_lambda(c) for c in cands}
+    cfg = ActiveLearningConfig(enabled=True, max_epw_jobs=2)
+    plan = prioritize_candidates(
+        cands, config=cfg, si_scores=si, predictions=preds
+    )
+    assert plan.enabled is True
+    assert len(plan.selected) == 2
+    assert len(plan.deferred) == 2
+    assert len(plan.ranked) == 4
+    assert plan.ranked[0].acquisition_score >= plan.ranked[-1].acquisition_score
+    assert plan.ranked[0].selected_for_expensive is True
+    assert plan.ranked[-1].selected_for_expensive is False
+
+
+def test_prioritize_disabled_selects_all() -> None:
+    cands = [_cand("NbN"), _cand("TiN")]
+    cfg = ActiveLearningConfig(enabled=False)
+    plan = prioritize_candidates(cands, config=cfg)
+    assert len(plan.selected) == 2
+    assert plan.deferred == []
+
+
+def test_campaign_config_al_round_trip() -> None:
+    cfg = CampaignConfig(
+        name="al",
+        active_learning=ActiveLearningConfig(
+            enabled=True,
+            max_epw_jobs=3,
+            weights=ActiveLearningWeights(uncertainty=0.5, predicted_tc=0.25),
+        ),
+    )
+    data = cfg.model_dump()
+    restored = CampaignConfig.model_validate(data)
+    assert restored.active_learning.enabled is True
+    assert restored.active_learning.max_epw_jobs == 3
+    assert restored.active_learning.weights.uncertainty == 0.5
+
+
+def test_example_al_yaml_loads() -> None:
+    cfg = CampaignConfig.from_yaml(Path("examples/nbti_n_al.yaml"))
+    assert cfg.active_learning.enabled is True
+    assert cfg.active_learning.max_epw_jobs == 5
+    assert cfg.surrogate.tc_lambda.enabled is True
