@@ -25,9 +25,14 @@ from siscforge.export import (
     write_evaluations_json,
     write_synthesis_cards,
 )
-from siscforge.models.candidate import CandidateEvaluation
-from siscforge.models.config import CampaignConfig
+from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
+from siscforge.models.config import CampaignConfig, RunConfig
 from siscforge.ranking import rank_evaluations
+from siscforge.resume import (
+    find_resumable_evaluation,
+    is_successful_evaluation,
+    resume_fingerprint,
+)
 from siscforge.silicon.feasibility import score_si_feasibility
 from siscforge.store import EvaluationStore
 from siscforge.structure.generator import generate_candidates, generate_fake_candidates
@@ -262,6 +267,21 @@ def _resolve_calculator_name(
     return "mock"
 
 
+def _resolve_run_config(
+    run: RunConfig,
+    *,
+    force_rerun: bool,
+    fail_fast: bool,
+) -> RunConfig:
+    """Merge CLI overrides into campaign ``run`` block."""
+    updates: dict = {}
+    if force_rerun:
+        updates["force_rerun"] = True
+    if fail_fast:
+        updates["continue_on_error"] = False
+    return run.model_copy(update=updates) if updates else run
+
+
 @app.command("run")
 def run_cmd(
     campaign: Path = typer.Argument(
@@ -294,11 +314,33 @@ def run_cmd(
         "--no-filter",
         help="Skip the formation-energy pre-filter.",
     ),
+    force_rerun: bool = typer.Option(
+        False,
+        "--force-rerun",
+        help="Ignore successful evaluations already in output_dir and recompute.",
+    ),
+    fail_fast: bool = typer.Option(
+        False,
+        "--fail-fast",
+        help="Abort the campaign on the first calculator failure "
+        "(default is continue-on-error).",
+    ),
 ) -> None:
-    """Load a campaign, filter, evaluate candidates, rank, persist, and export."""
+    """Load a campaign, filter, evaluate candidates, rank, persist, and export.
+
+    Resume/checkpoint (default): re-running the same ``output_dir`` skips
+    candidates that already have a successful evaluation (status ok/mock with
+    result fields). Failures are recorded and the shortlist continues unless
+    ``--fail-fast`` or ``run.continue_on_error: false``.
+    """
     config = CampaignConfig.from_yaml(campaign)
     if dry_run:
         config = config.model_copy(update={"dry_run": True})
+
+    run_cfg = _resolve_run_config(
+        config.run, force_rerun=force_rerun, fail_fast=fail_fast
+    )
+    config = config.model_copy(update={"run": run_cfg})
 
     out = Path(output_dir) if output_dir is not None else Path(config.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -442,8 +484,19 @@ def run_cmd(
     else:
         console.print(f"[bold]Calculator[/bold] {calc_name}")
 
+    console.print(
+        f"[dim]Run policy:[/dim] resume={run_cfg.resume} "
+        f"continue_on_error={run_cfg.continue_on_error} "
+        f"force_rerun={run_cfg.force_rerun}"
+    )
+
     # 4. Evaluate expensive path + optional surrogate-only deferred set
     evaluations: list[CandidateEvaluation] = []
+    # Prior successes from this output_dir (for skip-finished)
+    resume_by_id, resume_by_fp = (
+        store.resume_index() if run_cfg.resume and not run_cfg.force_rerun else ({}, {})
+    )
+    stats = {"skipped": 0, "ran": 0, "ok": 0, "failed": 0}
 
     def _finalize_eval(
         result: CandidateEvaluation,
@@ -505,7 +558,40 @@ def run_cmd(
                 updates["notes"] = f"{notes}; {note_add}" if notes else note_add
         return result.model_copy(update=updates)
 
-    for cand in expensive_candidates:
+    def _progress_label(cand: StructureCandidate) -> str:
+        strain = cand.in_plane_strain
+        strain_s = f" strain={strain:+.3f}" if strain is not None else ""
+        return f"{cand.formula}{strain_s}"
+
+    n_expensive = len(expensive_candidates)
+    for idx, cand in enumerate(expensive_candidates, start=1):
+        prefix = f"[{idx}/{n_expensive}] {_progress_label(cand)}"
+        prior = None
+        if run_cfg.resume and not run_cfg.force_rerun:
+            prior = find_resumable_evaluation(
+                cand,
+                by_id=resume_by_id,
+                by_fp=resume_by_fp,
+                force_rerun=False,
+            )
+        if prior is not None:
+            console.print(
+                f"[cyan]{prefix}[/cyan] — skip (already {prior.status})"
+            )
+            result = _finalize_eval(prior, cand, selected=True)
+            notes = (result.notes or "").strip()
+            skip_note = "resumed from store (skipped recalculation)"
+            if skip_note not in notes:
+                result = result.model_copy(
+                    update={"notes": f"{notes}; {skip_note}" if notes else skip_note}
+                )
+            evaluations.append(result)
+            store.append_evaluation(result)
+            stats["skipped"] += 1
+            stats["ok"] += 1
+            continue
+
+        console.print(f"[bold]{prefix}[/bold] — running {calc_name}")
         si = si_by_id[cand.candidate_id]
         params = {**calc_params, "si_feasibility": si}
         try:
@@ -513,16 +599,73 @@ def run_cmd(
         except Exception as exc:  # noqa: BLE001
             from siscforge.calculators.qe import QENotAvailableError
 
+            # Missing QE install is environment-wide — always abort.
             if isinstance(exc, QENotAvailableError):
                 console.print(f"[red]QE not available:[/red]\n{exc}")
                 raise typer.Exit(code=3) from exc
-            console.print(f"[red]Calculator error for {cand.formula}:[/red] {exc}")
-            raise typer.Exit(code=1) from exc
+            if not run_cfg.continue_on_error:
+                console.print(f"[red]Calculator error for {cand.formula}:[/red] {exc}")
+                raise typer.Exit(code=1) from exc
+            console.print(
+                f"[yellow]{prefix}[/yellow] — failed ({exc}); continuing"
+            )
+            result = CandidateEvaluation(
+                candidate=cand,
+                si_feasibility=si,
+                status="failed",
+                calculator_name=calc_name,
+                errors=[str(exc)],
+                notes=f"Calculator raised: {exc}",
+                provenance=Provenance(
+                    source="run_continue_on_error",
+                    software={"siscforge": __version__},
+                    parent_ids=[cand.candidate_id],
+                    notes=f"fingerprint={resume_fingerprint(cand)}",
+                ),
+            )
+            result = _finalize_eval(result, cand, selected=True)
+            evaluations.append(result)
+            store.append_evaluation(result)
+            stats["ran"] += 1
+            stats["failed"] += 1
+            continue
+
         if not isinstance(result, CandidateEvaluation):
-            raise typer.Exit(code=1)
+            if not run_cfg.continue_on_error:
+                raise typer.Exit(code=1)
+            result = CandidateEvaluation(
+                candidate=cand,
+                si_feasibility=si,
+                status="failed",
+                calculator_name=calc_name,
+                errors=["Calculator returned non-CandidateEvaluation"],
+                notes="Invalid calculator return type",
+            )
         result = _finalize_eval(result, cand, selected=True)
         evaluations.append(result)
         store.append_evaluation(result)
+        stats["ran"] += 1
+        if is_successful_evaluation(result):
+            stats["ok"] += 1
+            # Make this success visible to later candidates in the same run
+            resume_by_id[result.candidate.candidate_id] = result
+            resume_by_fp[resume_fingerprint(cand)] = result
+            console.print(f"[green]{prefix}[/green] — ok ({result.status})")
+        else:
+            stats["failed"] += 1
+            err_hint = (
+                result.errors[0][:80]
+                if result.errors
+                else (result.notes or "see store")[:80]
+            )
+            console.print(
+                f"[yellow]{prefix}[/yellow] — failed ({err_hint})"
+            )
+            if not run_cfg.continue_on_error:
+                console.print(
+                    "[red]Fail-fast: aborting remaining expensive candidates.[/red]"
+                )
+                raise typer.Exit(code=1)
 
     for cand in deferred_candidates:
         pred = tc_fres.predictions.get(cand.candidate_id)
@@ -551,6 +694,17 @@ def run_cmd(
         evaluations.append(result)
         store.append_evaluation(result)
 
+    console.print(
+        f"[bold]Checkpoint summary[/bold] (expensive path): "
+        f"skipped={stats['skipped']}, ran={stats['ran']}, "
+        f"ok={stats['ok']}, failed={stats['failed']}"
+        + (
+            f", deferred_surrogate={len(deferred_candidates)}"
+            if deferred_candidates
+            else ""
+        )
+    )
+
     # 5. Rank + persist ranked (real/mock EPW Tc dominates when present)
     ranked = rank_evaluations(evaluations, config.ranking)
     store.save_evaluations(ranked, ranked=True)
@@ -563,6 +717,8 @@ def run_cmd(
             "n_candidates": len(candidates),
             "n_evaluations": len(ranked),
             "campaign": config.name,
+            "run": run_cfg.model_dump(mode="json"),
+            "checkpoint": stats,
         }
     )
     _print_rank_table(ranked, title=f"Ranked results — {config.name}")

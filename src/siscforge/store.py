@@ -3,6 +3,9 @@
 Phase 0 persistence: a campaign directory holds candidates, evaluations,
 filter summaries, and ranked exports. Ranking / export read from this store
 so re-ranking does not require re-running calculators.
+
+Resume: :meth:`append_evaluation` replaces by candidate_id **or** resume
+fingerprint so interrupted multi-candidate runs can checkpoint after each job.
 """
 
 from __future__ import annotations
@@ -13,6 +16,11 @@ from typing import Any
 
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import CampaignConfig
+from siscforge.resume import (
+    evaluation_matches_candidate,
+    find_resumable_evaluation,
+    index_evaluations,
+)
 
 
 class EvaluationStore:
@@ -78,13 +86,39 @@ class EvaluationStore:
         return [CandidateEvaluation.model_validate(item) for item in raw]
 
     def append_evaluation(self, evaluation: CandidateEvaluation) -> Path:
-        """Append one evaluation to the unranked store (read-modify-write)."""
+        """Append one evaluation; replace same candidate_id or resume fingerprint.
+
+        Flushed immediately (full rewrite of ``evaluations.json``) so a killed
+        process still leaves partial shortlist results on disk.
+        """
         current = self.load_evaluations(ranked=False)
-        # Replace same candidate_id if re-run
-        cid = evaluation.candidate.candidate_id
-        current = [e for e in current if e.candidate.candidate_id != cid]
+        current = [
+            e
+            for e in current
+            if not evaluation_matches_candidate(e, evaluation.candidate)
+        ]
         current.append(evaluation)
         return self.save_evaluations(current, ranked=False)
+
+    def find_successful(
+        self,
+        candidate: StructureCandidate,
+        *,
+        force_rerun: bool = False,
+    ) -> CandidateEvaluation | None:
+        """Return a prior successful evaluation for *candidate*, if any."""
+        if force_rerun:
+            return None
+        by_id, by_fp = index_evaluations(self.load_evaluations(ranked=False))
+        return find_resumable_evaluation(
+            candidate, by_id=by_id, by_fp=by_fp, force_rerun=force_rerun
+        )
+
+    def resume_index(
+        self,
+    ) -> tuple[dict[str, CandidateEvaluation], dict[str, CandidateEvaluation]]:
+        """Id / fingerprint indexes of successful evaluations currently on disk."""
+        return index_evaluations(self.load_evaluations(ranked=False))
 
     # --- filter / campaign / meta ---
     def save_filter_summary(self, summary: dict[str, Any]) -> Path:

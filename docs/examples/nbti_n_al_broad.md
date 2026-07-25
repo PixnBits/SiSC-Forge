@@ -60,6 +60,42 @@ when only 6 EPW jobs are budgeted (`active_learning.max_epw_jobs: 6`).
    synthesis cards. Soft modes on strained cells may inflate λ — treat
    screening Tc as order-of-magnitude.
 
+## Resume after interrupt (sleep / reboot / kill)
+
+EPW shortlists are long. SiSC-Forge **checkpoints after each expensive
+candidate** into `output_dir` (`evaluations.json`). Re-run the **same command**
+with the **same `output_dir`**:
+
+```bash
+# first launch (may die mid-shortlist)
+siscforge run --calculator qe-epw examples/nbti_n_al_broad.yaml
+
+# after reboot — skips candidates with status ok/mock + results
+siscforge run --calculator qe-epw examples/nbti_n_al_broad.yaml
+```
+
+Console shows lines like:
+
+```text
+[1/6] Nb0.25Ti0.75N strain=-0.030 — skip (already ok)
+[2/6] Nb0.5Ti0.5N strain=-0.020 — running qe-epw
+…
+Checkpoint summary (expensive path): skipped=2, ran=4, ok=3, failed=1
+```
+
+| Knob | Default | Effect |
+|------|---------|--------|
+| `run.resume` | `true` | Skip successful store hits |
+| `run.continue_on_error` | `true` | Record failure, next candidate |
+| `run.force_rerun` | `false` | Recompute all successes |
+| `--force-rerun` | off | CLI override |
+| `--fail-fast` | off | Abort on first failure |
+
+Matching: `candidate_id` first, then fingerprint
+`family|formula|substrate|strain`. Failed candidates are **re-attempted** on
+resume (they are not “successful”). Use `--force-rerun` only when you want to
+throw away good results.
+
 ## Related examples
 
 | Example | Role |

@@ -12,6 +12,7 @@ from siscforge.models.config import (
     FormationFilterConfig,
     JosephsonConfig,
     RankingConfig,
+    RunConfig,
     SurrogateConfig,
     TcLambdaSurrogateConfig,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "PhononResult",
     "Provenance",
     "RankingConfig",
+    "RunConfig",
     "SCFResult",
     "SiFeasibilityComponents",
     "SiFeasibilityScore",

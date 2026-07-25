@@ -256,6 +256,30 @@ If a previous run hung, stop it (`Ctrl+C`) and kill stragglers before retrying:
 pkill -f 'pw.x|ph.x|epw.x'   # only if you are sure no other QE jobs matter
 ```
 
+### C.5b Resume multi-candidate EPW after interrupt
+
+Long shortlists (e.g. AL top-k with `qe-epw`) checkpoint after **each** expensive
+candidate into the campaign `output_dir` (`evaluations.json`). Re-launch with the
+**same YAML and output directory**:
+
+```bash
+siscforge run --calculator qe-epw examples/nbti_n_al_broad.yaml
+# reboot / sleep / kill …
+siscforge run --calculator qe-epw examples/nbti_n_al_broad.yaml
+# → skips finished ok/mock; re-attempts failed; continues past single failures
+```
+
+| Flag / YAML | Meaning |
+|-------------|---------|
+| `run.resume: true` (default) | Skip successful store hits |
+| `run.continue_on_error: true` (default) | Do not abort whole shortlist on one crash |
+| `--force-rerun` | Recompute even successful candidates |
+| `--fail-fast` | Abort on first failure |
+
+Matching: `candidate_id`, else fingerprint `family|formula|substrate|strain`.
+Details: [implementation-notes Slice 13](implementation-notes.md) and
+[nbti_n_al_broad walkthrough](examples/nbti_n_al_broad.md).
+
 ### C.6 Build QE ≥ 7.2 from source (working `ph.x` + EPW)
 
 Ubuntu’s packaged `ph.x` (6.7) can abort with a fortify buffer overflow. Build a

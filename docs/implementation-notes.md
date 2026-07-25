@@ -1,5 +1,57 @@
 # Implementation Notes
 
+## Slice 13 (2026-07-25) — Resume / checkpoint for multi-candidate runs
+
+**Scope**: Desktop-friendly re-launch after interrupt for EPW shortlists (and mock).
+Does **not** generate shortlist YAMLs (next session).
+
+| Item | Location |
+|------|----------|
+| Success + fingerprint | `siscforge.resume` |
+| Store append / lookup | `EvaluationStore.append_evaluation`, `.find_successful` |
+| Run knobs | `CampaignConfig.run` → `RunConfig` |
+| CLI | `siscforge run --force-rerun` / `--fail-fast` |
+| Tests | `tests/test_resume.py` |
+
+### Success criteria (skip-finished)
+An evaluation is **successful** (skippable on resume) when:
+
+- `status` ∈ {`ok`, `mock`}, **and**
+- `electron_phonon` has status ok/mock with λ or Tc, **or** phonon ok/mock, **or** scf ok/mock.
+
+`failed`, `pending`, and `surrogate_only` are **not** skipped as expensive successes.
+
+### Matching policy
+1. **candidate_id** exact match
+2. Else **fingerprint** `material_family|formula|substrate|±strain` (6 dp)
+
+Re-enumeration regenerates UUIDs → fingerprint is the usual hit when reusing the
+same `output_dir` / campaign shape.
+
+### Defaults
+```yaml
+run:
+  resume: true
+  continue_on_error: true
+  force_rerun: false
+```
+
+- After each expensive candidate: flush `evaluations.json`
+- Progress: `[i/N] Formula strain=… — skip|running|ok|failed`
+- End: `Checkpoint summary: skipped=, ran=, ok=, failed=`
+- `QENotAvailableError` (missing binaries) still aborts the whole campaign (exit 3)
+
+### How to resume after reboot / kill
+```bash
+# same campaign YAML + same output_dir
+siscforge run --calculator qe-epw examples/nbti_n_al_broad.yaml
+# finished candidates skipped; failed ones re-attempted (not successful)
+# force everything:
+siscforge run --calculator qe-epw --force-rerun examples/nbti_n_al_broad.yaml
+```
+
+---
+
 ## Slice 12 (2026-07-25) — Broader nitride AL campaign
 
 **Scope**: Workstation-scale Nb–Ti–N (+ Zr/Hf) example that closes the Phase 1

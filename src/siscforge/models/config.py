@@ -360,6 +360,31 @@ class JosephsonConfig(BaseModel):
     secondary_ranking: bool = False
 
 
+class RunConfig(BaseModel):
+    """Resume / checkpoint / error-handling knobs for ``siscforge run``.
+
+    Workstation multi-candidate EPW jobs are long; these defaults make re-launch
+    after sleep, reboot, or a single failure safe:
+
+    - ``resume``: skip candidates with a successful evaluation already in the
+      campaign ``output_dir`` store (match by candidate_id, then fingerprint).
+    - ``continue_on_error``: record failed candidates and proceed (default);
+      set false or pass ``--fail-fast`` to abort on first calculator error.
+    - ``force_rerun``: ignore existing successes and recompute everything.
+    """
+
+    resume: bool = True
+    """When True, skip candidates that already have a successful evaluation
+    in the campaign store under ``output_dir``."""
+
+    continue_on_error: bool = True
+    """When True, a failed candidate is stored as ``status=failed`` and the
+    campaign continues; when False, the first hard error aborts the run."""
+
+    force_rerun: bool = False
+    """When True, ignore prior successes and re-run the expensive calculator."""
+
+
 class CampaignConfig(BaseModel):
     """Top-level YAML campaign definition.
 
@@ -390,6 +415,9 @@ class CampaignConfig(BaseModel):
 
     ranking: RankingConfig = Field(default_factory=RankingConfig)
     josephson: JosephsonConfig = Field(default_factory=JosephsonConfig)
+
+    run: RunConfig = Field(default_factory=RunConfig)
+    """Resume / continue-on-error / force-rerun (desktop-friendly checkpoints)."""
 
     output_dir: str = "outputs"
     export_formats: list[Literal["json", "csv", "markdown"]] = Field(
