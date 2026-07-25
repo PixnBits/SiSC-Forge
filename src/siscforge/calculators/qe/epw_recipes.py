@@ -215,6 +215,130 @@ def _fermi_from_work_dir(work_dir: Path) -> float | None:
     return None
 
 
+# Common EPW / Wannier failure fingerprints → short remediation hints
+_EPW_FAILURE_HINTS: list[tuple[str, str]] = [
+    (
+        "cannot bracket",
+        "Fermi bracket failed after Wannier: ensure dis_win_* brackets E_F "
+        "(SiSC-Forge sets windows from nscf/scf E_F) and try efermi_read / denser nkf.",
+    ),
+    (
+        "efermig",
+        "Fine-mesh Fermi search failed: pin fermi_energy from DFT (efermi_read) "
+        "or widen fsthick / denser nkf.",
+    ),
+    (
+        "d_matrix",
+        "PAW d_matrix / symmetry crash: re-run vc-relax so the cell matches "
+        "the symmetry used in DFPT; avoid nosym on multi-q paths.",
+    ),
+    (
+        "error in routine dafopen",
+        "Missing phonon/dvscf files: confirm multi-q DFPT wrote dyn* + fildvscf "
+        "and that pp.py created save/ in the same work directory.",
+    ),
+    (
+        "error opening",
+        "Missing EPW prerequisite files: check save/, *.save, and nscf wavefunctions "
+        "in the work directory (flat outdir layout).",
+    ),
+    (
+        "wannier",
+        "Wannierization issue: screening uses proj=random — for production, set "
+        "material-specific projections and freeze windows; raise num_iter if needed.",
+    ),
+    (
+        "imaginary",
+        "Imaginary / soft modes present: raise eps_acustic, improve structure "
+        "relaxation, or denser DFPT q-mesh before trusting λ/Tc.",
+    ),
+    (
+        "not enough bands",
+        "Insufficient bands for Wannier: increase dft.nbnd and epw.nbndsub.",
+    ),
+    (
+        "nbndsub",
+        "nbndsub / Wannier band count mismatch: set epw.nbndsub consistently "
+        "with occupied + empty bands in the window.",
+    ),
+    (
+        "k-point",
+        "k-grid inconsistency: nscf crystal mesh must match epw nk1–nk3 (nkc).",
+    ),
+    (
+        "segmentation",
+        "EPW segfault: often symmetry/PAW or MPI pool issues — try nproc=1, "
+        "npool=1, or re-relax; check QE/EPW build vs Wannier90 version.",
+    ),
+    (
+        "%% error",
+        "QE fatal error block in output — see tail of epw.out / workdir logs.",
+    ),
+]
+
+
+def diagnose_epw_failure(
+    text: str | None,
+    *,
+    work_dir: Path | str | None = None,
+    step_name: str = "epw",
+) -> str:
+    """Return a multi-line diagnostic string for failed Wannier/EPW steps.
+
+    Scans *text* (typically ``epw.out`` or a step message) for known fingerprints
+    and appends workdir / quality_tag guidance. Safe for missing files.
+    """
+    parts: list[str] = [f"[{step_name}] EPW/Wannier diagnostic"]
+    if work_dir is not None:
+        wd = Path(work_dir)
+        parts.append(f"  work_dir: {wd}")
+        for name in ("epw.out", "epw.in", "nscf.out", "ph.out", "pp.out", "scf.out"):
+            p = wd / name
+            if p.is_file():
+                try:
+                    size = p.stat().st_size
+                except OSError:
+                    size = -1
+                parts.append(f"  present: {name} ({size} bytes)")
+        save = wd / "save"
+        if save.is_dir():
+            n_files = sum(1 for _ in save.rglob("*") if _.is_file())
+            parts.append(f"  present: save/ ({n_files} files)")
+        else:
+            parts.append("  missing: save/  ← run EPW pp.py after multi-q DFPT")
+
+    blob = (text or "").lower()
+    hits: list[str] = []
+    if blob:
+        for needle, hint in _EPW_FAILURE_HINTS:
+            if needle.lower() in blob:
+                hits.append(f"  · matched '{needle}': {hint}")
+        if not hits:
+            hits.append(
+                "  · no known fingerprint matched — inspect epw.out tail and "
+                "Wannier90 .wout if present."
+            )
+    else:
+        hits.append("  · no output text available to scan.")
+    parts.append("hints:")
+    parts.extend(hits)
+    parts.append(
+        "  · screening vs denser: raise epw.nkf/nqf and dft.qpoints (nqc must "
+        "match DFPT); set dft.quality_tag: production when using denser grids."
+    )
+    parts.append(
+        "  · docs: docs/examples/nbN_epw.md (NbN), docs/examples/mgb2_epw.md (MgB2)"
+    )
+    return "\n".join(parts)
+
+
+def _output_tail(path: Path, n_chars: int = 1600) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-n_chars:]
+    except OSError:
+        return ""
+
+
 def run_epw(
     config: DFTConfig,
     work_dir: Path,
@@ -271,13 +395,15 @@ def run_epw(
 
     rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
     ok = rc == 0 and out_path.is_file()
-    msg = f"epw.x rc={rc}"
+    qtag = config.quality_tag
+    msg = f"epw.x rc={rc}; quality_tag={qtag}"
     if not ok:
-        try:
-            tail = out_path.read_text(encoding="utf-8", errors="replace")[-1200:]
+        tail = _output_tail(out_path) if out_path.is_file() else ""
+        if tail:
             msg += f"\n--- output tail ---\n{tail}"
-        except OSError:
-            pass
+        msg += "\n" + diagnose_epw_failure(
+            tail or msg, work_dir=work_dir, step_name="epw"
+        )
 
     step = QEStepResult(
         name="epw",
@@ -313,6 +439,18 @@ def run_epw(
             summary = dict(eph.alpha2F_summary or {})
             summary.setdefault("material_notes", mat_note)
             summary.setdefault("tc_model", "isotropic_average")
+            summary.setdefault("quality_tag", config.quality_tag)
+            eph = eph.model_copy(update={"alpha2F_summary": summary})
+
+        # Partial parse after non-zero rc: surface diagnostics on the result
+        if eph is not None and not ok and eph.status != "ok":
+            diag = diagnose_epw_failure(
+                _output_tail(out_path) if out_path.is_file() else msg,
+                work_dir=work_dir,
+                step_name="epw",
+            )
+            summary = dict(eph.alpha2F_summary or {})
+            summary["failure_diagnostic"] = diag
             eph = eph.model_copy(update={"alpha2F_summary": summary})
 
     return step, eph
@@ -420,7 +558,10 @@ def run_relax_scf_phonon_epw(
     if not pp_step.success:
         result.message = (
             f"EPW prep (pp.py) failed: {pp_step.message}\n"
-            "Need multi-q DFPT with fildvscf and dyn files in the work directory."
+            "Need multi-q DFPT with fildvscf and dyn files in the work directory.\n"
+            + diagnose_epw_failure(
+                pp_step.message, work_dir=scf_dir, step_name="epw_pp"
+            )
         )
         result.success = False
         return result
@@ -437,7 +578,12 @@ def run_relax_scf_phonon_epw(
     result.epw_steps.append(nscf_step)
     result.steps.append(nscf_step)
     if not nscf_step.success:
-        result.message = f"EPW NSCF failed: {nscf_step.message}"
+        result.message = (
+            f"EPW NSCF failed: {nscf_step.message}\n"
+            + diagnose_epw_failure(
+                nscf_step.message, work_dir=scf_dir, step_name="nscf"
+            )
+        )
         result.success = False
         return result
 
@@ -459,14 +605,19 @@ def run_relax_scf_phonon_epw(
         result.performance_score = performance_score_from_epw(tc)
         # Accept partial success if λ was extracted even if rc != 0
         result.success = eph.status == "ok" or eph.lambda_total is not None
-        result.message = "ok" if result.success else step.message
+        if result.success:
+            result.message = f"ok (quality_tag={config.quality_tag})"
+        else:
+            result.message = step.message
     else:
         result.success = False
         result.message = (
-            f"EPW failed or did not converge: {step.message}\n"
+            f"EPW failed or did not converge (quality_tag={config.quality_tag}):\n"
+            f"{step.message}\n"
             "Common issues: Wannier projections for metals (proj=random is "
             "screening-only), nscf k-grid must match nk1–nk3, and dense enough "
-            "q-mesh / soft modes in unstable structures."
+            "q-mesh / soft modes in unstable structures. "
+            "See recommended_grids() / docs/examples/nbN_epw.md to tighten settings."
         )
 
     return result

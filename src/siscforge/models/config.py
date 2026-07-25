@@ -192,8 +192,16 @@ class CalculatorConfig(BaseModel):
 class EPWConfig(BaseModel):
     """Electron-phonon Wannier (EPW) + isotropic Tc settings (Phase 1).
 
-    Workstation defaults are intentionally coarse (screening). Raise grids and
-    set ``quality_tag: production`` for production campaigns.
+    Workstation defaults are intentionally coarse (**screening**). For denser
+    workstation or production campaigns:
+
+    1. Raise ``nkf`` / ``nqf`` (and matching DFPT ``qpoints`` / ``nqc``).
+    2. Set parent ``DFTConfig.quality_tag`` to ``production`` so exports and
+       results clearly distinguish screening vs better settings.
+    3. See ``siscforge.calculators.qe.epw_inputs.recommended_grids`` and
+       docs/examples/nbN_epw.md for NbN / MgB₂ grid ladders.
+
+    This config does not auto-upgrade grids from ``quality_tag`` alone.
     """
 
     enabled: bool = False
@@ -201,16 +209,17 @@ class EPWConfig(BaseModel):
 
     # Coarse (screening) vs denser grids — EPW nk/nq are interpolation grids
     nkf: list[int] = Field(default_factory=lambda: [6, 6, 6])
-    """Fine k-grid for electron-phonon interpolation (screening default)."""
+    """Fine k-grid for electron-phonon interpolation (screening default 6³).
+    Workstation denser: 12³; production-oriented: 18³+."""
 
     nqf: list[int] = Field(default_factory=lambda: [6, 6, 6])
-    """Fine q-grid for electron-phonon interpolation (screening default)."""
+    """Fine q-grid for electron-phonon interpolation (screening default 6³)."""
 
     nkc: list[int] = Field(default_factory=lambda: [4, 4, 4])
     """Coarse k-grid consistent with Wannierization / NSCF."""
 
     nqc: list[int] = Field(default_factory=lambda: [2, 2, 2])
-    """Coarse q-grid (should match DFPT q-mesh when possible)."""
+    """Coarse q-grid (**must match DFPT q-mesh** when possible)."""
 
     nbndsub: int | None = None
     """Number of Wannier bands; None → leave for EPW auto / user .win."""
@@ -334,6 +343,9 @@ class DFTConfig(BaseModel):
     """EPW / Eliashberg knobs (used when do_epw or calculator is qe-epw)."""
 
     quality_tag: Literal["screening", "production"] = "screening"
+    """Propagated to SCF / Phonon / ElectronPhononResult. Use ``screening`` for
+    coarse workstation defaults; ``production`` when grids/projections are
+    intentionally denser (label only — raise grids in YAML yourself)."""
 
 
 class JosephsonConfig(BaseModel):

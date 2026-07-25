@@ -1,8 +1,20 @@
-"""Build minimal EPW input decks for workstation screening (QE ≥ 7.x)."""
+"""Build minimal EPW input decks for workstation screening (QE ≥ 7.x).
+
+Grid tiers
+----------
+``quality_tag: screening`` (default) uses coarse DFPT/EPW meshes suitable for
+order-of-magnitude λ / Tc on a workstation.  ``quality_tag: production`` is a
+label for denser hand-tuned campaigns — raise k/q grids in YAML (see
+``recommended_grids`` and docs/examples/nbN_epw.md).
+
+This module does **not** auto-discover Wannier projections; ``proj=random`` is
+intentional for screening. Production runs need material-specific projections.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Literal
 
 from pymatgen.core import Element, Structure
 
@@ -85,6 +97,145 @@ def _wannier_window_lines(fermi_eV: float | None) -> list[str]:
     ]
 
 
+def recommended_grids(
+    family: Literal["tm_nitride", "mgb2_boride", "generic"] = "generic",
+    tier: Literal["screening", "workstation_dense", "production"] = "screening",
+) -> dict[str, Any]:
+    """Suggested DFT/EPW grid knobs by material family and quality tier.
+
+    These are **guidance** for YAML overrides — not applied automatically.
+    ``workstation_dense`` is a practical next step after screening on a
+    high-end workstation; ``production`` still needs hand-tuned Wannier.
+    """
+    # Common skeleton
+    base: dict[str, Any] = {
+        "quality_tag": "screening" if tier == "screening" else "production",
+        "notes": "",
+    }
+    if family == "tm_nitride":
+        if tier == "screening":
+            base.update(
+                {
+                    "kpoints": [6, 6, 6],
+                    "qpoints": [2, 2, 2],
+                    "epw": {
+                        "nkc": [4, 4, 4],
+                        "nqc": [2, 2, 2],
+                        "nkf": [6, 6, 6],
+                        "nqf": [6, 6, 6],
+                        "eps_acustic": 15.0,
+                        "fsthick": 0.6,
+                    },
+                    "notes": (
+                        "Order-of-magnitude NbN-like λ/Tc; soft modes may inflate λ."
+                    ),
+                }
+            )
+        elif tier == "workstation_dense":
+            base.update(
+                {
+                    "kpoints": [8, 8, 8],
+                    "qpoints": [4, 4, 4],
+                    "epw": {
+                        "nkc": [6, 6, 6],
+                        "nqc": [4, 4, 4],
+                        "nkf": [12, 12, 12],
+                        "nqf": [12, 12, 12],
+                        "eps_acustic": 5.0,
+                        "fsthick": 0.4,
+                        "degaussw": 0.05,
+                    },
+                    "notes": (
+                        "Denser DFPT q + EPW fine mesh; nqc must match DFPT q-grid. "
+                        "Expect multi-hour wall-time on 16–32 cores."
+                    ),
+                }
+            )
+        else:  # production
+            base.update(
+                {
+                    "kpoints": [12, 12, 12],
+                    "qpoints": [6, 6, 6],
+                    "epw": {
+                        "nkc": [8, 8, 8],
+                        "nqc": [6, 6, 6],
+                        "nkf": [18, 18, 18],
+                        "nqf": [18, 18, 18],
+                        "eps_acustic": 2.0,
+                        "fsthick": 0.3,
+                    },
+                    "notes": (
+                        "Literature recovery needs tuned Wannier projections "
+                        "(not proj=random) and careful soft-mode treatment."
+                    ),
+                }
+            )
+    elif family == "mgb2_boride":
+        if tier == "screening":
+            base.update(
+                {
+                    "kpoints": [6, 6, 4],
+                    "qpoints": [2, 2, 2],
+                    "epw": {
+                        "nkc": [4, 4, 2],
+                        "nqc": [2, 2, 2],
+                        "nkf": [8, 8, 6],
+                        "nqf": [8, 8, 6],
+                    },
+                    "notes": "Isotropic average of two-gap MgB2; order-of-magnitude Tc.",
+                }
+            )
+        elif tier == "workstation_dense":
+            base.update(
+                {
+                    "kpoints": [8, 8, 6],
+                    "qpoints": [4, 4, 2],
+                    "epw": {
+                        "nkc": [6, 6, 4],
+                        "nqc": [4, 4, 2],
+                        "nkf": [16, 16, 12],
+                        "nqf": [16, 16, 12],
+                    },
+                    "notes": (
+                        "Denser anisotropic-cell meshes; still isotropic λ/Tc. "
+                        "Tune B-p / Mg-s projections for better recovery of ~39 K."
+                    ),
+                }
+            )
+        else:
+            base.update(
+                {
+                    "kpoints": [12, 12, 8],
+                    "qpoints": [6, 6, 4],
+                    "epw": {
+                        "nkc": [8, 8, 6],
+                        "nqc": [6, 6, 4],
+                        "nkf": [24, 24, 16],
+                        "nqf": [24, 24, 16],
+                    },
+                    "notes": (
+                        "Production isotropic still underestimates two-gap physics; "
+                        "full recovery needs anisotropic Eliashberg (out of scope)."
+                    ),
+                }
+            )
+    else:
+        base.update(
+            {
+                "kpoints": [4, 4, 4],
+                "qpoints": [2, 2, 2],
+                "epw": {
+                    "nkc": [4, 4, 4],
+                    "nqc": [2, 2, 2],
+                    "nkf": [6, 6, 6],
+                    "nqf": [6, 6, 6],
+                },
+                "notes": "Generic screening defaults (EPWConfig).",
+            }
+        )
+    return base
+
+
 def build_epw_input(
     config: DFTConfig,
     *,
@@ -106,6 +257,7 @@ def build_epw_input(
     - MgB₂ (and other multi-band systems) still use **isotropic** λ / Tc here;
       anisotropic Eliashberg is not generated by this template.
     - Full production runs still need careful Wannier projections and denser grids.
+    - Generated file includes a header comment recording ``quality_tag`` and grids.
     """
     epw: EPWConfig = config.epw
     nkf = (list(epw.nkf) + [6, 6, 6])[:3]
@@ -121,8 +273,20 @@ def build_epw_input(
         elif n_at >= 4:
             default_nbndsub = 10
     nbndsub = epw.nbndsub if epw.nbndsub is not None else default_nbndsub
+    qtag = getattr(config, "quality_tag", "screening") or "screening"
+
+    header = [
+        "!",
+        f"! SiSC-Forge EPW input — quality_tag={qtag}",
+        f"! Fine k/q (nkf/nqf) = {nkf} / {nqf}",
+        f"! Coarse k/q (nkc/nqc) = {nkc} / {nqc}  (nqc should match DFPT q-grid)",
+        "! Screening template: proj=random; denser grids → set quality_tag: production",
+        "! and raise nkf/nqf/qpoints (see recommended_grids / docs/examples/nbN_epw.md).",
+        "!",
+    ]
 
     lines: list[str] = [
+        *header,
         "--",
         "&inputepw",
         f"  prefix      = '{prefix}'",

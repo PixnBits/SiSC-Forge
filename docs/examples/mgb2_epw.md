@@ -60,7 +60,35 @@ If `epw.x` is missing, the CLI exits with `QENotAvailableError` (no silent mock)
 | EPW fine k/q | 8×8×6 |
 | μ* | 0.10 |
 
-Raise grids and tune Wannier projections for production.
+Raise grids and tune Wannier projections for production (see table below).
+
+## Tightening grids (screening → denser workstation)
+
+| Tier | `quality_tag` | DFPT `qpoints` / `nqc` | `epw.nkf` / `nqf` | Notes |
+|------|---------------|------------------------|-------------------|--------|
+| Screening (example) | `screening` | 2×2×2 | 8×8×6 | Isotropic average; order-of-magnitude Tc |
+| Workstation denser | `production` | 4×4×2 | 16×16×12 | Better λ/ω_log; still isotropic |
+| Production-oriented | `production` | 6×6×4 | 24×24×16 | Tuned B-p / Mg-s Wannier; anisotropic Eliashberg still out of scope |
+
+```python
+from siscforge.calculators.qe.epw_inputs import recommended_grids
+recommended_grids("mgb2_boride", "workstation_dense")
+```
+
+```yaml
+dft:
+  quality_tag: production
+  kpoints: [8, 8, 6]
+  qpoints: [4, 4, 2]
+  epw:
+    nkc: [6, 6, 4]
+    nqc: [4, 4, 2]
+    nkf: [16, 16, 12]
+    nqf: [16, 16, 12]
+```
+
+Failed Wannier/EPW steps print diagnostics (workdir inventory + common-error
+hints). See also docs/examples/nbN_epw.md.
 
 ## Order-of-magnitude MgB₂ targets
 

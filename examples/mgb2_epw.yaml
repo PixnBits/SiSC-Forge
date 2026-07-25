@@ -51,15 +51,17 @@ dft:
   ph_nmix: 8
   ph_niter: 100
   degauss: 0.02
+  # Label only — denser grids: docs/examples/mgb2_epw.md "Tightening grids"
   quality_tag: screening
   # Override on your machine (SSSP or similar for Mg, B)
   pseudo_dir: /usr/share/espresso/pseudo
   epw:
     enabled: true
+    # Screening; workstation denser: nkf/nqf [16,16,12], nqc/qpoints [4,4,2]
     nkf: [8, 8, 6]
     nqf: [8, 8, 6]
     nkc: [4, 4, 2]
-    nqc: [2, 2, 2]
+    nqc: [2, 2, 2]  # must match dft.qpoints
     nbndsub: 8
     mu_star: 0.10
     eliashberg: true

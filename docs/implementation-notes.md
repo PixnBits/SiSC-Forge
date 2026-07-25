@@ -1,5 +1,30 @@
 # Implementation Notes
 
+## Slice 11 (2026-07-25) — Light EPW practical hardening
+
+**Scope**: Thin pass only — defaults comments, failure diagnostics, quality_tag
+clarity, denser-grid docs. **Not** production Wannier automation or anisotropic Eliashberg.
+
+| Item | Location |
+|------|----------|
+| Grid guidance | `epw_inputs.recommended_grids(family, tier)` |
+| EPW input header | `build_epw_input` comments: quality_tag + nkf/nqc |
+| Failure diagnostics | `epw_recipes.diagnose_epw_failure` on pp/nscf/epw fail |
+| Docs | `docs/examples/nbN_epw.md`, `mgb2_epw.md` grid ladders |
+
+### quality_tag
+- `dft.quality_tag: screening | production` is **propagated** to SCF / Phonon /
+  ElectronPhononResult and exports.
+- It does **not** auto-change grids — raise `qpoints` / `epw.nqc` / `nkf` / `nqf`
+  in YAML and set `quality_tag: production` when intentionally denser.
+
+### Explicitly still deferred
+- Automated Wannier projection discovery
+- Anisotropic / multi-band Eliashberg
+- Full soft-mode remediation pipeline
+
+---
+
 ## Slice 10 (2026-07-25) — Phase 2 kickoff: 45° epitaxy + buffer library
 
 **Scope**: Reduce cube-on-cube Si-mismatch pessimism for rocksalt nitrides.

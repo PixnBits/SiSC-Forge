@@ -218,8 +218,33 @@ def test_build_epw_input_qe73_namelist() -> None:
     # QE type order: N (Z=7) before Nb (Z=41), not site order
     assert "amass(1)    = 14.007" in text
     assert "amass(2)    = 92.906" in text
+    # Header records quality_tag for screening vs denser distinction
+    assert "quality_tag=screening" in text
     # Namelist terminator
     assert "\n/" in text or text.rstrip().endswith("/")
+
+
+def test_recommended_grids_and_diagnose() -> None:
+    from siscforge.calculators.qe.epw_inputs import recommended_grids
+    from siscforge.calculators.qe.epw_recipes import diagnose_epw_failure
+
+    scr = recommended_grids("tm_nitride", "screening")
+    dense = recommended_grids("tm_nitride", "workstation_dense")
+    assert scr["quality_tag"] == "screening"
+    assert dense["quality_tag"] == "production"
+    assert dense["epw"]["nkf"][0] > scr["epw"]["nkf"][0]
+    assert dense["qpoints"][0] >= scr["qpoints"][0]
+
+    mg = recommended_grids("mgb2_boride", "workstation_dense")
+    assert mg["epw"]["nkf"] == [16, 16, 12]
+
+    diag = diagnose_epw_failure(
+        "Error: cannot bracket Ef in efermig",
+        work_dir="/tmp/nonexistent_epw_work",
+        step_name="epw",
+    )
+    assert "cannot bracket" in diag.lower() or "fermi" in diag.lower()
+    assert "quality_tag" in diag or "docs/examples" in diag
 
 
 def test_build_epw_input_mgb2_amass() -> None:

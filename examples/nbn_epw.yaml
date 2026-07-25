@@ -53,14 +53,17 @@ dft:
   ph_nmix: 12
   ph_niter: 150
   degauss: 0.02
+  # Label only — denser grids need explicit nkf/nqf/qpoints overrides
+  # (see docs/examples/nbN_epw.md "Tightening grids").
   quality_tag: screening
   pseudo_dir: /usr/share/espresso/pseudo
   epw:
     enabled: true
+    # Screening fine mesh; workstation denser: [12,12,12] + qpoints/nqc [4,4,4]
     nkf: [6, 6, 6]
     nqf: [6, 6, 6]
     nkc: [4, 4, 4]
-    nqc: [2, 2, 2]
+    nqc: [2, 2, 2]  # must match dft.qpoints
     nbndsub: 10
     mu_star: 0.10
     eliashberg: true

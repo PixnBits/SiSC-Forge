@@ -61,8 +61,53 @@ export SISCFORGE_PSEUDO_DIR=/path/to/upf
 pytest tests/test_epw.py -k real_epw -v
 ```
 
+## Tightening grids (screening → literature recovery)
+
+Screening NbN on a workstation often yields **~18–22 K** Allen–Dynes Tc with
+inflated λ from soft modes. To move toward literature bulk ~16 K with more
+stable λ:
+
+| Tier | `quality_tag` | DFPT `qpoints` / `epw.nqc` | `epw.nkf` / `nqf` | Notes |
+|------|---------------|----------------------------|-------------------|--------|
+| Screening (example) | `screening` | 2×2×2 | 6×6×6 | Order-of-magnitude; soft modes common |
+| Workstation denser | `production` | 4×4×4 | 12×12×12 | Multi-hour on 16–32 cores; lower `eps_acustic` |
+| Production-oriented | `production` | 6×6×6 | 18×18×18 | Needs **tuned Wannier projections** (not `proj=random`) |
+
+Programmatic suggestions:
+
+```python
+from siscforge.calculators.qe.epw_inputs import recommended_grids
+recommended_grids("tm_nitride", "workstation_dense")
+```
+
+YAML sketch (override `examples/nbn_epw.yaml`):
+
+```yaml
+dft:
+  quality_tag: production
+  kpoints: [8, 8, 8]
+  qpoints: [4, 4, 4]
+  epw:
+    nkc: [6, 6, 6]
+    nqc: [4, 4, 4]   # must match DFPT q-grid
+    nkf: [12, 12, 12]
+    nqf: [12, 12, 12]
+    eps_acustic: 5.0
+    degaussw: 0.05
+```
+
+**`quality_tag` is a label** propagated to SCF / phonon / e-ph results and
+exports. Changing it alone does not densify grids — edit the knobs above.
+
+## Failure diagnostics
+
+On failed `pp.py` / NSCF / `epw.x` steps, SiSC-Forge appends a short diagnostic
+block: which files exist under the work directory, and hints for common
+patterns (`cannot bracket` Ef, missing `save/`, PAW `d_matrix`, soft modes).
+Inspect `epw.out` tails under `{output_dir}/qe_work/...`.
+
 ## Limitations
 
 - Isotropic Allen–Dynes / simplified Eliashberg only (no anisotropic Eliashberg)
 - EPW input is a **screening template**; production Wannier projections must be tuned
-- Full NSCF + Wannier prep automation is minimal — expect to stage wavefunctions manually for production
+- Full automated Wannier projection discovery is out of scope (Phase 1 freeze)
