@@ -14,8 +14,18 @@ Aligned with [ROADMAP.md](ROADMAP.md) Phase 1 and Technical Specifications v0.3.
 | 4 | MgB₂ golden (mock + optional real) | **Met** | `examples/mgb2_epw.yaml`, fixture + docs |
 | 5 | λ/Tc surrogate stub for pre-filter | **Met** | `surrogates/tc_lambda.py`; campaign `surrogate.tc_lambda` |
 | 6 | Minimal AL prioritization | **Met** | `active_learning/` acquisition + top-k expensive path |
-| 7 | Dry-run / mock path intact | **Met** | All example dry-runs green; 109+ tests |
+| 7 | Dry-run / mock path intact | **Met** | All example dry-runs green; 124+ tests |
 | 8 | Quality tags screening vs production | **Met** | `DFTConfig.quality_tag`; EPW screening templates |
+
+## Shipped after Phase 1 freeze (not deferred)
+
+| Item | Status | Notes |
+|------|--------|--------|
+| 45° epitaxy + buffer library (Si v0.2) | **Shipped** | Slice 10 — `silicon.buffers`, scorer auto cube/45°/buffer |
+| Light EPW diagnostics / grid ladders | **Shipped** | Slice 11 — `diagnose_epw_failure`, `recommended_grids` |
+| Broader AL campaign example | **Shipped** | Slice 12 — `examples/nbti_n_al_broad.yaml` |
+| Resume / checkpoint on re-run | **Shipped** | Slice 13 — skip finished, continue-on-error |
+| Desktop shortlist → real EPW | **In progress** | Slice 14 — `siscforge shortlist` |
 
 ## Explicitly deferred (not Phase 1 blockers)
 
@@ -25,8 +35,8 @@ Aligned with [ROADMAP.md](ROADMAP.md) Phase 1 and Technical Specifications v0.3.
 | Anisotropic / multi-band Eliashberg | MgB₂ σ–π; SCDFT |
 | Trained λ/Tc GNN (ALIGNN/MatGL) | Family-heuristic stub only |
 | Full AL retrain loop | Prioritization only; no retrain on EPW labels |
-| Richer Si buffers / 45° epitaxy | **Phase 2** kickoff |
-| Membrane / interface slabs | Phase 2+ |
+| Multi-layer buffer stacks / critical thickness | Remaining **Phase 2** |
+| Membrane mechanics / interface slabs | Phase 2+ |
 | DMFT / Josephson | Phases 3–4 |
 
 ## Smoke commands
@@ -36,8 +46,10 @@ pip install -e ".[dev]"
 pytest -q
 siscforge run --dry-run examples/nbti_n_strain.yaml
 siscforge run --dry-run examples/nbti_n_al.yaml
+siscforge run --dry-run examples/nbti_n_al_broad.yaml
 siscforge run --dry-run examples/nbn_epw.yaml
 siscforge run --dry-run examples/mgb2_epw.yaml
+siscforge run --dry-run examples/nbn_si_45deg.yaml
 ```
 
 Validation record: [validation-phase1.md](validation-phase1.md).
@@ -57,4 +69,8 @@ active_learning:
   enabled: true
   max_epw_jobs: 5
   strategy: uncertainty_si_tc
+
+run:
+  resume: true
+  continue_on_error: true
 ```
