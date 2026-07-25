@@ -4,6 +4,27 @@
 
 SiSC-Forge searches and ranks transition-metal nitrides, B-doped Si, MgB₂/borides, and (later) nickelates/cuprates for elevated-temperature Josephson-friendly superconductivity with CMOS-compatible integration.
 
+## Why search for silicon-compatible superconductors?
+
+Superconducting electronics based on Josephson junctions already demonstrate switching energies and speeds that leave conventional CMOS far behind at cryogenic temperatures. The persistent barrier is integration. Most high-performance superconducting materials are process-hostile to silicon: lattice mismatch, thermal-budget conflicts, chemistry incompatibility, and the absence of mature foundry pathways keep the technology confined to specialized laboratories rather than scalable platforms.
+
+SiSC-Forge is a high-throughput computational discovery engine built to close that gap. It systematically searches and ranks transition-metal nitrides, boron-doped silicon/silicides, MgB₂-family compounds, and (later) nickelates for elevated-temperature, Josephson-friendly superconductivity while scoring quantitative silicon-integration feasibility (epitaxy options, buffers, thermal budgets, chemical windows). The same codebase runs on a single high-end workstation for method development and scales transparently to institutional or cloud HPC for large campaigns.
+
+**For researchers already working the problem**  
+The platform couples structure enumeration, graph-neural-network surrogates, first-principles electron-phonon (EPW) and (later) DMFT pathways, multi-objective ranking that includes a Silicon Feasibility Score, and active-learning prioritization. It produces ranked candidate lists accompanied by synthesis-relevant metadata so experimental groups can focus scarce growth and characterization resources on the materials most likely to survive a real CMOS-compatible process flow. Small campaigns and golden-system validation are designed to run on workstation-class hardware; the architecture is ready for production-scale sweeps the moment larger compute is available.
+
+**On scale and resources**  
+Materials discovery remains the rate-limiting step between laboratory demonstrations of superconducting logic and anything that can share a process line or package with silicon. A successful silicon-compatible material would open hybrid architectures, simplify quantum-processor integration, and give energy-efficient beyond-CMOS options a realistic manufacturing path.
+
+The software itself is open-source and already productive at small scale. Exhaustive campaigns across the priority families, however, require substantial high-performance computing resources—order-of-magnitude estimates for a full sweep sit in the multi-million-dollar range (roughly $7 M). That cost is outside the reach of most individual researchers, but the same campaign definitions and ranking logic transfer without rewrite from a workstation prototype to large allocations. Applying that level of compute multiplies the probability of identifying experimentally actionable candidates.
+
+**For everyone else**  
+Today’s processors typically top out around 5 GHz, limited by heat and internal resistance. Superconducting circuits have already shown they can operate at tens of gigahertz (with simpler laboratory circuits exceeding 100 GHz) while consuming a tiny fraction of the energy.
+
+Finding a material that works with existing silicon manufacturing could make those gains practical. The earliest and largest impact would appear in data centers and high-performance systems that could deliver far more computation for far less power. Over a longer horizon, materials that also operate at higher temperatures could extend similar efficiency benefits toward more everyday devices.
+
+In short: the search is for the missing manufacturing link that would let an already-proven physical advantage leave the laboratory and enter the same industrial ecosystem that already produces the chips we rely on.
+
 ## Spec-driven development
 
 | Document | Path |
