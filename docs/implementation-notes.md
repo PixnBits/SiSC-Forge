@@ -1,5 +1,13 @@
 # Implementation Notes
 
+## Phase 1 automated validation (2026-07-25)
+
+See **[docs/validation-phase1.md](validation-phase1.md)**: pytest 109 passed; dry-runs for
+`nbti_n_strain`, `nbti_n_al`, `nbn_epw`, `mgb2_epw` green. Real EPW scientific gate remains
+optional (NbN workstation run ~18–22 K Tc already recorded).
+
+---
+
 ## Slice 9 (2026-07-25) — Minimal active-learning prioritization
 
 **Scope**: Queue prioritization for expensive EPW jobs. **Not** a full retrain loop, Bayesian optimization, or batch BO.
