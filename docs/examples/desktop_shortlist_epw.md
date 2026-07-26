@@ -64,6 +64,32 @@ export PATH="$QE_BIN:$PATH"
 siscforge run --calculator qe-epw examples/nbti_n_al_broad_shortlist.yaml
 ```
 
+### EPW parallel (nproc / npool) — desktop one-liner
+
+Fine-grid EPW requires **`nproc == npool`** (nimage=1). If you set
+`dft.nproc: 8` but leave `epw.npool: 1`, EPW aborts after DFPT with:
+
+```text
+Number of processes must be equal to product of number of pools and number of images
+```
+
+**Fix (or rely on auto-set):**
+
+```yaml
+dft:
+  nproc: 8
+  epw:
+    npool: 8   # must equal nproc for fine-grid EPW
+```
+
+SiSC-Forge **auto-sets** `npool = nproc` when inconsistent and logs:
+
+```text
+EPW parallel: auto-set npool=8 to match nproc=8 (nimage=1)
+```
+
+Set `epw.strict_parallel: true` to refuse launch instead of auto-fix.
+
 ### Resume after sleep / reboot / kill
 
 Re-run the **same** command. Finished `status=ok` candidates are **skipped**;

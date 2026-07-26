@@ -151,6 +151,8 @@ def default_screening_dft(
             degaussw=0.1,
             degaussq=0.05,
             eps_acustic=15.0,
+            # Fine-grid EPW: npool must equal nproc (nimage=1)
+            npool=max(1, int(nproc)),
         ),
     )
 

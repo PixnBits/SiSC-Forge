@@ -617,6 +617,34 @@ def run_cmd(
                     "epw": dft.epw.model_copy(update={"enabled": True}),
                 }
             )
+        # EPW fine-grid: nproc must equal npool (nimage=1). Auto-fix early so
+        # users see the message before multi-hour DFPT, not only at epw.x launch.
+        want_epw = bool(dft.do_epw or dft.epw.enabled or calc_name == "qe-epw")
+        if want_epw:
+            from siscforge.calculators.qe.epw_recipes import (
+                resolve_epw_launch_topology,
+            )
+            from siscforge.calculators.qe.epw_parallel import validate_epw_parallel
+
+            raw = validate_epw_parallel(
+                max(1, int(dft.nproc)),
+                max(1, int(dft.epw.npool)),
+                nimage=1,
+                fine_grid=True,
+            )
+            if not raw.ok:
+                console.print(
+                    f"[yellow]EPW parallel warning:[/yellow] {raw.message}"
+                )
+            try:
+                dft, par_msg = resolve_epw_launch_topology(dft)
+                if "auto-set" in par_msg.lower():
+                    console.print(f"[cyan]{par_msg}[/cyan]")
+                else:
+                    console.print(f"[dim]{par_msg}[/dim]")
+            except ValueError as exc:
+                console.print(f"[red]EPW parallel topology refused:[/red]\n{exc}")
+                raise typer.Exit(code=1) from exc
         calc_params = {**calc_params, "dft": dft, "run_config": run_cfg}
         if dft.work_dir is None:
             calc_params.setdefault("work_dir", str(out / "qe_work"))
@@ -624,7 +652,8 @@ def run_cmd(
             f"[bold]Calculator[/bold] {calc_name}  "
             f"(pseudo_dir={dft.pseudo_dir!r}, "
             f"do_relax={dft.do_relax}, do_phonon={dft.do_phonon}, "
-            f"do_epw={dft.do_epw or dft.epw.enabled})"
+            f"do_epw={dft.do_epw or dft.epw.enabled}, "
+            f"nproc={dft.nproc}, epw.npool={dft.epw.npool})"
         )
     else:
         calc_params = {**calc_params, "run_config": run_cfg}

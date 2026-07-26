@@ -271,6 +271,17 @@ _EPW_FAILURE_HINTS: list[tuple[str, str]] = [
         "npool=1, or re-relax; check QE/EPW build vs Wannier90 version.",
     ),
     (
+        "number of processes must be equal",
+        "EPW parallel topology: nproc must equal npool×nimage (fine-grid: nimage=1 "
+        "so set epw.npool=dft.nproc). SiSC-Forge auto-sets this unless "
+        "epw.strict_parallel is true.",
+    ),
+    (
+        "number of pools and number of images",
+        "EPW parallel topology: nproc must equal npool×nimage (fine-grid: nimage=1 "
+        "so set epw.npool=dft.nproc).",
+    ),
+    (
         "%% error",
         "QE fatal error block in output — see tail of epw.out / workdir logs.",
     ),
@@ -339,6 +350,37 @@ def _output_tail(path: Path, n_chars: int = 1600) -> str:
         return ""
 
 
+def resolve_epw_launch_topology(
+    config: DFTConfig,
+) -> tuple[DFTConfig, str]:
+    """Return config with a valid EPW (nproc, npool) topology and a log line.
+
+    Auto-sets ``epw.npool = nproc`` (nimage=1) when needed unless
+    ``epw.strict_parallel`` is True (then raises ``ValueError``).
+    """
+    from siscforge.calculators.qe.epw_parallel import resolve_epw_parallel
+
+    nproc = max(1, int(config.nproc))
+    npool = max(1, int(config.epw.npool))
+    strict = bool(getattr(config.epw, "strict_parallel", False))
+    plan = resolve_epw_parallel(
+        nproc,
+        npool,
+        nimage=1,
+        fine_grid=True,
+        auto_fix=not strict,
+    )
+    if not plan.ok:
+        raise ValueError(plan.message)
+
+    cfg = config
+    if plan.npool != config.epw.npool:
+        cfg = config.model_copy(
+            update={"epw": config.epw.model_copy(update={"npool": plan.npool})}
+        )
+    return cfg, plan.message
+
+
 def run_epw(
     config: DFTConfig,
     work_dir: Path,
@@ -349,11 +391,40 @@ def run_epw(
     outdir: Path | None = None,
     fermi_eV: float | None = None,
 ) -> tuple[QEStepResult, ElectronPhononResult | None]:
-    """Write and run ``epw.x`` in *work_dir*; parse stdout into ElectronPhononResult."""
+    """Write and run ``epw.x`` in *work_dir*; parse stdout into ElectronPhononResult.
+
+    Validates MPI topology before launch: ``nproc`` must equal ``npool`` (nimage=1
+    for fine-grid). Default desktop policy auto-sets ``npool = nproc`` when
+    inconsistent (e.g. nproc=8, npool=1) so epw.x never hits the
+    ``epw_readin`` pools/images abort after multi-hour DFPT.
+    """
+    from siscforge.calculators.qe.epw_parallel import epw_npool_cli_args
     from siscforge.calculators.qe.recipes import _mpi_prefix, _run_cmd
 
     qe_env = qe_env or require_epw()
     assert qe_env.epw is not None
+
+    # --- Parallel topology: never launch with nproc ≠ npool (fine-grid) ---
+    try:
+        config, parallel_msg = resolve_epw_launch_topology(config)
+    except ValueError as exc:
+        work_dir = Path(work_dir).resolve()
+        work_dir.mkdir(parents=True, exist_ok=True)
+        out_path = work_dir / "epw.out"
+        out_path.write_text(
+            f"SiSC-Forge refused to launch epw.x:\n{exc}\n",
+            encoding="utf-8",
+        )
+        step = QEStepResult(
+            name="epw",
+            work_dir=work_dir,
+            returncode=1,
+            stdout_path=out_path,
+            input_path=work_dir / "epw.in",
+            success=False,
+            message=str(exc),
+        )
+        return step, None
 
     work_dir = Path(work_dir).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -385,18 +456,22 @@ def run_epw(
     out_path = work_dir / "epw.out"
     write_epw_input(epw_text, in_path)
 
+    npool = max(1, int(config.epw.npool))
     cmd = [
         *_mpi_prefix(qe_env, config.nproc),
         qe_env.epw,
+        *epw_npool_cli_args(npool),
+        "-in",
+        in_path.name,
     ]
-    if config.epw.npool > 1:
-        cmd.extend(["-npool", str(config.epw.npool)])
-    cmd.extend(["-in", in_path.name])
 
     rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
     ok = rc == 0 and out_path.is_file()
     qtag = config.quality_tag
-    msg = f"epw.x rc={rc}; quality_tag={qtag}"
+    msg = (
+        f"epw.x rc={rc}; quality_tag={qtag}; "
+        f"nproc={config.nproc} npool={npool}; {parallel_msg}"
+    )
     if not ok:
         tail = _output_tail(out_path) if out_path.is_file() else ""
         if tail:

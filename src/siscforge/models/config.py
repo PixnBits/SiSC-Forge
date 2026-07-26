@@ -287,7 +287,17 @@ class EPWConfig(BaseModel):
     """Prefix for wannier90 / EPW data files."""
 
     npool: int = 1
-    """EPW pools (passed to epw.x -npool when > 1)."""
+    """EPW k-point pools (``epw.x -npool``).
+
+    For fine-grid EPW, EPW requires ``nproc == npool × nimage`` with ``nimage=1``,
+    so **npool should equal dft.nproc** on a desktop (e.g. both 8). If left at 1
+    while ``dft.nproc > 1``, SiSC-Forge auto-sets ``npool = nproc`` before launch
+    unless ``strict_parallel`` is True.
+    """
+
+    strict_parallel: bool = False
+    """When True, refuse to auto-fix an inconsistent (nproc, npool) topology
+    and fail before calling epw.x. Default False: auto-set npool=nproc."""
 
 
 class DFTConfig(BaseModel):

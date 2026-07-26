@@ -1,5 +1,41 @@
 # Implementation Notes
 
+## Slice 16 (2026-07-25) — EPW parallel topology (nproc / npool)
+
+**Scope**: Prevent `epw.x` abort after multi-hour DFPT when
+`mpirun -np N` is used with `npool=1` (or `-npool` omitted).
+
+| Item | Location |
+|------|----------|
+| Validation | `calculators/qe/epw_parallel.py` |
+| Auto-fix + launch | `resolve_epw_launch_topology`, `run_epw` |
+| Campaign warning | `cli/main.py` (qe-epw path) |
+| Config | `EPWConfig.npool`, `EPWConfig.strict_parallel` |
+| Tests | `tests/test_epw_parallel.py` |
+
+### Rule (fine-grid / SiSC-Forge path)
+`nproc == npool × nimage` with **nimage = 1** → **`npool` must equal `nproc`**.
+
+### Default auto-fix
+If topology is inconsistent and `strict_parallel` is false:
+
+```text
+EPW parallel: auto-set npool=N to match nproc=N (nimage=1)
+```
+
+Always pass `-npool N` on the `epw.x` command (including N=1).
+
+### Desktop YAML
+```yaml
+dft:
+  nproc: 8
+  epw:
+    npool: 8
+    # strict_parallel: true  # fail instead of auto-set
+```
+
+---
+
 ## Slice 15 (2026-07-25) — Mid-step QE/EPW workdir checkpoint resume
 
 **Scope**: Inside one candidate’s `qe_work/<formula>_<id>/`, reuse successful
