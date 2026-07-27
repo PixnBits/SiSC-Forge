@@ -114,6 +114,25 @@ CLI failure lines now show the reason without opening `epw.out`:
 Evaluation notes include workdir, output tail, and remediation. Production
 still needs hand-tuned Wannier projections.
 
+### Progress heartbeats (long DFPT)
+
+While `ph.x` / `pw.x` / `epw.x` run, the CLI prints a heartbeat every
+**15 minutes** by default (`run.heartbeat_seconds: 900`):
+
+```text
+  [heartbeat] phonon / DFPT (ph.x) +EPW-prep still running — elapsed 1h05m;
+  healthy (log growing); log=4200 KiB; peek: iter #  12 total cpu time :  3800.1 secs
+```
+
+| Config / flag | Meaning |
+|---------------|---------|
+| `run.heartbeat_seconds: 900` | Interval in seconds (default) |
+| `0` | Disable heartbeats |
+| `--heartbeat-seconds 300` | CLI override (e.g. every 5 min) |
+
+Healthy = subprocess alive and log file size/mtime increasing. Stale log with
+a live process is flagged so you can check for a hang.
+
 ### Resume after sleep / reboot / kill
 
 Re-run the **same** command. Finished `status=ok` candidates are **skipped**;

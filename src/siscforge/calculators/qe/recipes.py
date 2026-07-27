@@ -9,7 +9,11 @@ for workstation Phase-0 use.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
+import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,6 +34,20 @@ from siscforge.calculators.qe.parser import (
 )
 from siscforge.models.config import DFTConfig
 from siscforge.models.results import PhononResult, SCFResult
+
+# Interesting log lines for heartbeat peeks (ph.x / pw.x / epw.x)
+_HEARTBEAT_PEEK_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"Representation\s*#\s*\d+", re.I),
+    re.compile(r"iter\s*#\s*\d+", re.I),
+    re.compile(r"mode\s*#\s*\d+", re.I),
+    re.compile(r"Self-consistent", re.I),
+    re.compile(r"Electron-phonon", re.I),
+    re.compile(r"lambda\b", re.I),
+    re.compile(r"Wannier", re.I),
+    re.compile(r"total energy", re.I),
+    re.compile(r"JOB DONE", re.I),
+    re.compile(r"Error", re.I),
+]
 
 
 @dataclass
@@ -59,33 +77,156 @@ class QEWorkflowResult:
     message: str = ""
 
 
+def _heartbeat_seconds_from_config(config: DFTConfig | None) -> int:
+    """Read ``run.heartbeat_seconds`` attached to DFTConfig (default 900)."""
+    if config is None:
+        return 900
+    run = getattr(config, "_run_config", None)
+    if run is None:
+        return 900
+    try:
+        return max(0, int(getattr(run, "heartbeat_seconds", 900) or 0))
+    except (TypeError, ValueError):
+        return 900
+
+
+def _format_elapsed(seconds: float) -> str:
+    s = int(max(0, seconds))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m"
+    if m:
+        return f"{m}m{sec:02d}s"
+    return f"{sec}s"
+
+
+def _log_peek(path: Path, *, max_len: int = 90) -> str:
+    """Best-effort interesting last line from a growing QE log."""
+    if not path.is_file():
+        return "(no log yet)"
+    try:
+        # Read last ~8 KiB only
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 8192))
+            chunk = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return "(log unreadable)"
+    lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
+    if not lines:
+        return "(log empty)"
+    # Prefer last matching interesting pattern
+    for ln in reversed(lines):
+        for pat in _HEARTBEAT_PEEK_PATTERNS:
+            if pat.search(ln):
+                return ln[:max_len] + ("…" if len(ln) > max_len else "")
+    return lines[-1][:max_len] + ("…" if len(lines[-1]) > max_len else "")
+
+
+def _default_heartbeat_print(message: str) -> None:
+    """Print heartbeat to stderr so it is not mixed with redirected stdout."""
+    print(message, file=sys.stderr, flush=True)
+
+
 def _run_cmd(
     cmd: list[str],
     *,
     cwd: Path,
     stdout_path: Path,
     env: dict[str, str] | None = None,
+    heartbeat_seconds: int = 0,
+    step_label: str = "qe",
+    on_heartbeat: Callable[[str], None] | None = None,
 ) -> int:
     """Run *cmd* in *cwd*, tee stdout/stderr to *stdout_path*.
 
     stdin is closed so MPI-linked QE binaries never wait on the TTY.
+
+    When *heartbeat_seconds* > 0, emit a progress line every N seconds while
+    the process is alive (step name, elapsed time, healthy/stale log, peek).
     """
     run_env = os.environ.copy()
     # Avoid OpenMPI fabric probes hanging on desktop installs.
     run_env.setdefault("OMPI_MCA_btl", "^openib")
     if env:
         run_env.update(env)
+
+    emit = on_heartbeat or _default_heartbeat_print
+    interval = max(0, int(heartbeat_seconds or 0))
+    stdout_path = Path(stdout_path)
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Short steps or disabled heartbeats: simple blocking run
+    if interval <= 0:
+        with stdout_path.open("w", encoding="utf-8") as fh:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(cwd),
+                stdin=subprocess.DEVNULL,
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                env=run_env,
+                check=False,
+            )
+        return int(proc.returncode)
+
+    t0 = time.monotonic()
+    last_size = 0
+    last_mtime = 0.0
     with stdout_path.open("w", encoding="utf-8") as fh:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(cwd),
             stdin=subprocess.DEVNULL,
             stdout=fh,
             stderr=subprocess.STDOUT,
             env=run_env,
-            check=False,
         )
-    return int(proc.returncode)
+        while True:
+            try:
+                rc = proc.wait(timeout=interval)
+                elapsed = _format_elapsed(time.monotonic() - t0)
+                emit(
+                    f"  [heartbeat] {step_label} finished after {elapsed} "
+                    f"(rc={rc})"
+                )
+                return int(rc)
+            except subprocess.TimeoutExpired:
+                elapsed_s = time.monotonic() - t0
+                elapsed = _format_elapsed(elapsed_s)
+                alive = proc.poll() is None
+                size = 0
+                mtime = 0.0
+                try:
+                    st = stdout_path.stat()
+                    size = int(st.st_size)
+                    mtime = float(st.st_mtime)
+                except OSError:
+                    pass
+                growing = size > last_size or mtime > last_mtime + 0.5
+                last_size = max(last_size, size)
+                last_mtime = max(last_mtime, mtime)
+                if not alive:
+                    # Process ended between wait timeout and poll
+                    rc = proc.wait()
+                    emit(
+                        f"  [heartbeat] {step_label} finished after {elapsed} "
+                        f"(rc={rc})"
+                    )
+                    return int(rc)
+                if growing:
+                    health = "healthy (log growing)"
+                else:
+                    # Stale for at least one full interval
+                    health = "stale log? (process alive, log not growing)"
+                peek = _log_peek(stdout_path)
+                emit(
+                    f"  [heartbeat] {step_label} still running — "
+                    f"elapsed {elapsed}; {health}; "
+                    f"log={size // 1024} KiB; peek: {peek}"
+                )
 
 
 def _mpi_prefix(qe_env: QEEnvironment, nproc: int) -> list[str]:
@@ -147,7 +288,19 @@ def run_pw(
         "-in",
         in_path.name,
     ]
-    rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
+    step_label = {
+        "vc-relax": "vc-relax (pw.x)",
+        "relax": "relax (pw.x)",
+        "scf": "SCF (pw.x)",
+        "nscf": "NSCF (pw.x)",
+    }.get(calculation, f"pw.x {calculation}")
+    rc = _run_cmd(
+        cmd,
+        cwd=work_dir,
+        stdout_path=out_path,
+        heartbeat_seconds=_heartbeat_seconds_from_config(config),
+        step_label=step_label,
+    )
     ok = rc == 0 and out_path.is_file()
     msg = f"pw.x {calculation} rc={rc}"
     if not ok:
@@ -229,7 +382,13 @@ def run_ph(
         "-in",
         in_path.name,
     ]
-    rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
+    rc = _run_cmd(
+        cmd,
+        cwd=work_dir,
+        stdout_path=out_path,
+        heartbeat_seconds=_heartbeat_seconds_from_config(config),
+        step_label="phonon / DFPT (ph.x)" + (" +EPW-prep" if for_epw else ""),
+    )
     ok = rc == 0 and out_path.is_file()
     msg = f"ph.x rc={rc}"
     # Detect known Ubuntu/distro QE 6.7 fortify crash when reading data-file-schema.xml

@@ -1,5 +1,25 @@
 # Implementation Notes
 
+## Slice 18 (2026-07-27) — QE/EPW progress heartbeats
+
+**Scope**: Desktop visibility during multi-hour `ph.x` / `pw.x` / `epw.x` steps.
+
+| Item | Location |
+|------|----------|
+| Config | `RunConfig.heartbeat_seconds` (default **900**, `0` = off) |
+| CLI | `--heartbeat-seconds N` |
+| Runner | `recipes._run_cmd` (Popen + timed wait + log peek) |
+| Labels | vc-relax / SCF / phonon / nscf / epw.x |
+
+Example line:
+
+```text
+  [heartbeat] phonon / DFPT (ph.x) +EPW-prep still running — elapsed 45m12s;
+  healthy (log growing); log=2100 KiB; peek: Representation #  3 mode #  2
+```
+
+---
+
 ## Slice 17 (2026-07-25) — Screening Wannier defaults + failure UX
 
 **Scope**: Stop predictable Wannier frozen-window aborts on supercells, and

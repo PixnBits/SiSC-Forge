@@ -417,6 +417,7 @@ def _resolve_run_config(
     *,
     force_rerun: bool,
     fail_fast: bool,
+    heartbeat_seconds: int | None = None,
 ) -> RunConfig:
     """Merge CLI overrides into campaign ``run`` block."""
     updates: dict = {}
@@ -424,6 +425,8 @@ def _resolve_run_config(
         updates["force_rerun"] = True
     if fail_fast:
         updates["continue_on_error"] = False
+    if heartbeat_seconds is not None:
+        updates["heartbeat_seconds"] = int(heartbeat_seconds)
     return run.model_copy(update=updates) if updates else run
 
 
@@ -499,6 +502,13 @@ def run_cmd(
         help="Abort the campaign on the first calculator failure "
         "(default is continue-on-error).",
     ),
+    heartbeat_seconds: int | None = typer.Option(
+        None,
+        "--heartbeat-seconds",
+        help="Print QE/EPW progress heartbeats every N seconds during long "
+        "pw.x/ph.x/epw.x steps (default: run.heartbeat_seconds=900). 0 disables.",
+        min=0,
+    ),
 ) -> None:
     """Load a campaign, filter, evaluate candidates, rank, persist, and export.
 
@@ -512,7 +522,10 @@ def run_cmd(
         config = config.model_copy(update={"dry_run": True})
 
     run_cfg = _resolve_run_config(
-        config.run, force_rerun=force_rerun, fail_fast=fail_fast
+        config.run,
+        force_rerun=force_rerun,
+        fail_fast=fail_fast,
+        heartbeat_seconds=heartbeat_seconds,
     )
     config = config.model_copy(update={"run": run_cfg})
 
@@ -715,8 +728,18 @@ def run_cmd(
         f"[dim]Run policy:[/dim] resume={run_cfg.resume} "
         f"continue_on_error={run_cfg.continue_on_error} "
         f"force_rerun={run_cfg.force_rerun} "
-        f"resume_qe_steps={run_cfg.resume_qe_steps}"
+        f"resume_qe_steps={run_cfg.resume_qe_steps} "
+        f"heartbeat={run_cfg.heartbeat_seconds}s"
     )
+    if (
+        calc_name in {"qe", "qe-epw"}
+        and run_cfg.heartbeat_seconds
+        and run_cfg.heartbeat_seconds > 0
+    ):
+        console.print(
+            f"[dim]QE heartbeats every {run_cfg.heartbeat_seconds}s during "
+            f"pw.x / ph.x / epw.x (set run.heartbeat_seconds: 0 to disable)[/dim]"
+        )
 
     # 4. Evaluate expensive path + optional surrogate-only deferred set
     evaluations: list[CandidateEvaluation] = []

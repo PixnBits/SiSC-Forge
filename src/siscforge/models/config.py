@@ -450,6 +450,12 @@ class RunConfig(BaseModel):
     """When True, ignore workdir checkpoints and re-run every QE step.
     Implied by ``force_rerun``."""
 
+    heartbeat_seconds: int = Field(default=900, ge=0)
+    """While pw.x / ph.x / epw.x run, print a progress heartbeat every N seconds
+    (step name, elapsed time, healthy/stale log). Default 900 (15 min).
+    Set to 0 to disable. Desktop shortlists with multi-hour DFPT should keep
+    this on so the CLI is not silent for hours."""
+
 
 class CampaignConfig(BaseModel):
     """Top-level YAML campaign definition.

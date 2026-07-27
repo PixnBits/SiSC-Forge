@@ -148,7 +148,11 @@ def run_nscf_for_epw(
 
     Uses ``outdir='./'``-style flat layout when *outdir* equals *work_dir*.
     """
-    from siscforge.calculators.qe.recipes import _mpi_prefix, _run_cmd
+    from siscforge.calculators.qe.recipes import (
+        _heartbeat_seconds_from_config,
+        _mpi_prefix,
+        _run_cmd,
+    )
 
     qe_env = qe_env or require_epw()
     assert qe_env.pw is not None
@@ -182,7 +186,13 @@ def run_nscf_for_epw(
         "-in",
         in_path.name,
     ]
-    rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
+    rc = _run_cmd(
+        cmd,
+        cwd=work_dir,
+        stdout_path=out_path,
+        heartbeat_seconds=_heartbeat_seconds_from_config(config),
+        step_label="nscf (pw.x, EPW prep)",
+    )
     ok = rc == 0 and out_path.is_file()
     msg = f"pw.x nscf (EPW) rc={rc}"
     if not ok:
@@ -493,7 +503,11 @@ def _run_epw_once(
         epw_material_notes,
     )
     from siscforge.calculators.qe.epw_parallel import epw_npool_cli_args
-    from siscforge.calculators.qe.recipes import _mpi_prefix, _run_cmd
+    from siscforge.calculators.qe.recipes import (
+        _heartbeat_seconds_from_config,
+        _mpi_prefix,
+        _run_cmd,
+    )
 
     assert qe_env.epw is not None
     epw_text = build_epw_input(
@@ -523,7 +537,13 @@ def _run_epw_once(
         in_path.name,
     ]
 
-    rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
+    rc = _run_cmd(
+        cmd,
+        cwd=work_dir,
+        stdout_path=out_path,
+        heartbeat_seconds=_heartbeat_seconds_from_config(config),
+        step_label="epw.x (Wannier + e-ph)",
+    )
     full_text = ""
     if out_path.is_file():
         try:

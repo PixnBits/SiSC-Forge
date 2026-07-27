@@ -118,7 +118,7 @@ def test_run_epw_retry_bumps_nbndsub(tmp_path: Path) -> None:
     )
     calls: list[int] = []
 
-    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None):
+    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None, **kwargs):
         # Count launches; first fails with frozen window, second succeeds
         n = len(calls)
         calls.append(n)
@@ -180,7 +180,7 @@ def test_run_epw_failure_message_is_high_signal(tmp_path: Path) -> None:
         ),
     )
 
-    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None):
+    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None, **kwargs):
         Path(stdout_path).write_text(_FROZEN_OVERFLOW, encoding="utf-8")
         return 1
 

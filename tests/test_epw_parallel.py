@@ -113,7 +113,7 @@ def test_run_epw_command_includes_npool_matching_nproc(tmp_path: Path) -> None:
     )
     captured: dict = {}
 
-    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None):
+    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None, **kwargs):
         captured["cmd"] = list(cmd)
         # Minimal JOB DONE so parse does not explode
         Path(stdout_path).write_text(
