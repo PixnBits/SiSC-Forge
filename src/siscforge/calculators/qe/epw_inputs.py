@@ -374,6 +374,7 @@ def build_epw_input(
             "  proj(1)     = 'random'",
             "",
             "  iverbosity  = 2",
+            # Note for quality layer: screening template uses random projs
             "",
             "  elecselfen  = .false.",
             "  phonselfen  = .true.",

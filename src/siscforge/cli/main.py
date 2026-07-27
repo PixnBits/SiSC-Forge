@@ -1043,6 +1043,7 @@ def _print_rank_table(
     table.add_column("Strain", justify="right")
     table.add_column("E_hull*", justify="right")
     table.add_column("Perf", justify="right")
+    table.add_column("Qual", justify="center")
     table.add_column("Si", justify="right")
     table.add_column("Acq", justify="right")
     table.add_column("Composite", justify="right", style="bold")
@@ -1051,7 +1052,27 @@ def _print_rank_table(
 
     for ev in ranked:
         si = f"{ev.si_feasibility.total:.1f}" if ev.si_feasibility else "—"
-        perf = f"{ev.performance_score:.1f}" if ev.performance_score is not None else "—"
+        rq = getattr(ev, "result_quality", None) or "unknown"
+        if ev.performance_score is not None:
+            perf = f"{ev.performance_score:.1f}"
+            if rq == "screening_suspect":
+                perf = f"{perf}*"
+            elif rq == "unreliable":
+                perf = f"{perf}!!"
+        else:
+            perf = "—"
+        # Short quality label for glanceability
+        qual_map = {
+            "production": "prod",
+            "screening": "scr",
+            "screening_suspect": "susp",
+            "unreliable": "bad",
+            "unknown": "—",
+        }
+        qual = qual_map.get(rq, rq[:4])
+        flags = getattr(ev, "quality_flags", None) or []
+        if "high_lambda" in flags or "extreme_lambda" in flags:
+            qual = f"{qual} λ"
         comp = f"{ev.composite_score:.1f}" if ev.composite_score is not None else "—"
         acq = (
             f"{ev.acquisition_score:.3f}"
@@ -1077,6 +1098,7 @@ def _print_rank_table(
             strain,
             hull_s,
             perf,
+            qual,
             si,
             acq,
             comp,

@@ -112,6 +112,9 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "si_buffer": comps.buffer_availability if comps else None,
         "si_process_maturity": comps.process_maturity if comps else None,
         "composite_score": ev.composite_score,
+        "result_quality": getattr(ev, "result_quality", None) or "unknown",
+        "quality_flags": ";".join(getattr(ev, "quality_flags", None) or []),
+        "quality_notes": getattr(ev, "quality_notes", None) or "",
         "dynamically_stable": phonon.dynamically_stable if phonon else None,
         "min_frequency_cm1": phonon.min_frequency_cm1 if phonon else None,
         "max_frequency_cm1": phonon.max_frequency_cm1 if phonon else None,
@@ -166,6 +169,9 @@ CSV_FIELDNAMES = [
     "si_buffer",
     "si_process_maturity",
     "composite_score",
+    "result_quality",
+    "quality_flags",
+    "quality_notes",
     "dynamically_stable",
     "min_frequency_cm1",
     "max_frequency_cm1",
@@ -251,12 +257,14 @@ def write_candidate_onepagers(
         eph = ev.electron_phonon
         si = ev.si_feasibility
         tc = eph.best_tc_K() if eph is not None else None
+        rq = getattr(ev, "result_quality", "unknown")
         lines.extend(
             [
                 "",
                 "### Desktop handoff summary",
                 f"- **Tc proxy (K)**: {tc if tc is not None else '—'}",
                 f"- **λ**: {eph.lambda_total if eph else '—'}",
+                f"- **result quality**: `{rq}`",
                 f"- **Si-feasibility**: {si.total if si else '—'} "
                 f"(v{si.version if si else '—'})",
                 f"- **status**: {ev.status}",
@@ -264,6 +272,11 @@ def write_candidate_onepagers(
                 f"- **substrate**: {ev.candidate.substrate or '—'}",
             ]
         )
+        if rq in {"screening_suspect", "unreliable"}:
+            lines.append(
+                f"- **do not cite Tc/λ as production** ({rq}; "
+                f"{getattr(ev, 'quality_notes', '') or 'see quality flags'})"
+            )
         if si and si.notes:
             lines.append(f"- **Si notes**: {si.notes}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -290,7 +303,20 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         f"- **composite score**: {ev.composite_score}",
         f"- **performance score**: {ev.performance_score}",
         f"- **performance source**: {getattr(ev, 'performance_score_source', None) or '—'}",
+        f"- **result quality**: `{getattr(ev, 'result_quality', 'unknown')}`",
     ]
+    flags = getattr(ev, "quality_flags", None) or []
+    if flags:
+        lines.append(f"- **quality flags**: {', '.join(flags)}")
+    qnotes = getattr(ev, "quality_notes", None) or ""
+    if qnotes:
+        lines.append(f"- **quality notes**: {qnotes}")
+    rq = getattr(ev, "result_quality", "unknown")
+    if rq in {"screening_suspect", "unreliable"}:
+        lines.append(
+            f"- **⚠ trust**: Tc/λ are **{rq}** — do **not** quote as production "
+            f"predictions; refine with denser grids / tuned Wannier before citing."
+        )
     if c.energy_above_hull_proxy is not None:
         lines.append(f"- **E_hull proxy (eV/atom)**: {c.energy_above_hull_proxy}")
 
@@ -363,9 +389,21 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- Tc Allen–Dynes (K): {eph.Tc_allen_dynes}",
                 f"- Tc Eliashberg (K): {eph.Tc_eliashberg}",
                 f"- converged: {eph.converged}",
-                f"- status / quality: {eph.status} / {eph.quality_tag}",
+                f"- status / engine quality_tag: {eph.status} / {eph.quality_tag}",
+                f"- result_quality (trust): "
+                f"{getattr(eph, 'result_quality', None) or getattr(ev, 'result_quality', 'unknown')}",
             ]
         )
+        if getattr(ev, "result_quality", None) in {
+            "screening_suspect",
+            "unreliable",
+            "screening",
+        }:
+            lines.append(
+                "- **caveat**: screening EPW Tc is order-of-magnitude only; "
+                "high λ often reflects soft modes / coarse grids / random Wannier "
+                "— not production literature values."
+            )
 
     if scf is not None:
         lines.extend(

@@ -104,6 +104,23 @@ class ElectronPhononResult(BaseModel):
 
     status: str = "unknown"
     quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
+    """Engine quality tier (screening grids vs production settings)."""
+
+    result_quality: Literal[
+        "production",
+        "screening",
+        "screening_suspect",
+        "unreliable",
+        "unknown",
+    ] = "unknown"
+    """Trust assessment of these λ/Tc numbers (filled by quality layer)."""
+
+    quality_flags: list[str] = Field(default_factory=list)
+    """Machine-readable trust flags (e.g. high_lambda)."""
+
+    quality_notes: str = ""
+    """Human caveat when quoting Tc/λ."""
+
     raw: dict[str, Any] = Field(default_factory=dict)
     provenance: Provenance = Field(default_factory=Provenance)
 

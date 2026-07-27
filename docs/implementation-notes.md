@@ -1,5 +1,35 @@
 # Implementation Notes
 
+## Slice 19 (2026-07-27) — Result-quality / trust layer
+
+**Scope**: Prevent inflated screening EPW λ/Tc from silently dominating ranking.
+Trust layer only — **not** denser-grid refinement or production Wannier.
+
+| Item | Location |
+|------|----------|
+| Assessment | `siscforge.quality.assess_result_quality` |
+| Config | `QualityConfig` (under `ranking.quality`) |
+| Ranking | penalties in `compute_composite_score` |
+| Fields | `CandidateEvaluation.result_quality`, `quality_flags`, `quality_notes` |
+| Export | CSV/JSON/cards/one-pagers |
+| CLI | `Qual` column; Perf marked `*` (suspect) / `!!` (unreliable) |
+| Tests | `tests/test_quality.py` |
+
+### Defaults
+| Knob | Default | Effect |
+|------|---------|--------|
+| `lambda_suspect_above` | 3.0 | → `high_lambda`, tier `screening_suspect` |
+| `lambda_unreliable_above` | 8.0 | → `extreme_lambda`, tier `unreliable` |
+| `min_frequency_cm1_soft` | 50 | soft modes flag |
+| `imaginary_modes_unreliable` | true | imag modes → `unreliable` |
+| `suspect_performance_penalty` | 0.45 | × composite |
+| `unreliable_performance_penalty` | 0.15 | × composite after zeroing Tc term |
+
+Raw λ/Tc always retained. Next step for citation-quality: refine-from-store
+production-tier campaign (denser grids, tuned Wannier).
+
+---
+
 ## Slice 18 (2026-07-27) — QE/EPW progress heartbeats
 
 **Scope**: Desktop visibility during multi-hour `ph.x` / `pw.x` / `epw.x` steps.

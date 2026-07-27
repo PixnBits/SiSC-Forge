@@ -1,9 +1,10 @@
-"""Simple multi-objective ranking for Phase 0."""
+"""Simple multi-objective ranking with result-quality / trust penalties."""
 
 from __future__ import annotations
 
 from siscforge.models.candidate import CandidateEvaluation
-from siscforge.models.config import RankingConfig
+from siscforge.models.config import QualityConfig, RankingConfig
+from siscforge.quality import apply_quality_assessment, quality_tier_rank
 
 
 def compute_composite_score(
@@ -16,11 +17,19 @@ def compute_composite_score(
       normalized against a 40 K ceiling (tunable later).
     * Missing fields fall back to neutral defaults so ranking never crashes
       on partial evaluations.
+    * Result-quality tiers apply multiplicative penalties so inflated screening
+      λ/Tc cannot dominate (see :class:`QualityConfig`).
     """
     config = config or RankingConfig()
+    qcfg = config.quality or QualityConfig()
 
     perf = evaluation.performance_score
-    if perf is None:
+    tier = evaluation.result_quality or "unknown"
+
+    # Unreliable: drop performance term (Si-only ranking) by default
+    if tier == "unreliable" and qcfg.unreliable_zero_performance:
+        perf_norm = 0.0
+    elif perf is None:
         perf_norm = 50.0
     else:
         perf_norm = max(0.0, min(100.0, (float(perf) / 40.0) * 100.0))
@@ -32,15 +41,27 @@ def compute_composite_score(
 
     w_p = config.performance_weight
     w_s = config.si_feasibility_weight
-    total_w = w_p + w_s
-    if total_w <= 0:
-        composite = 0.5 * perf_norm + 0.5 * si
+    # When performance is zeroed for unreliable, still normalize weights
+    if tier == "unreliable" and qcfg.unreliable_zero_performance:
+        composite = si  # Si-feasibility only
     else:
-        composite = (w_p * perf_norm + w_s * si) / total_w
+        total_w = w_p + w_s
+        if total_w <= 0:
+            composite = 0.5 * perf_norm + 0.5 * si
+        else:
+            composite = (w_p * perf_norm + w_s * si) / total_w
+
+    # Explicit quality penalties (in addition to dynamic stability / hull)
+    if tier == "unreliable":
+        composite *= float(qcfg.unreliable_performance_penalty)
+    elif tier == "screening_suspect":
+        composite *= float(qcfg.suspect_performance_penalty)
 
     if config.prefer_dynamically_stable and evaluation.phonon is not None:
         if evaluation.phonon.has_imaginary_modes or not evaluation.phonon.dynamically_stable:
-            composite *= 0.5
+            # Avoid double-counting if already unreliable from imaginary modes
+            if tier not in {"unreliable"}:
+                composite *= 0.5
 
     if config.prefer_low_hull:
         hull = evaluation.candidate.energy_above_hull_proxy
@@ -59,24 +80,34 @@ def rank_evaluations(
 ) -> list[CandidateEvaluation]:
     """Return a new list of evaluations sorted by composite score (desc).
 
-    Updates ``composite_score`` and 1-based ``rank`` on each object (copies
-    via ``model_copy`` so callers can keep the originals if needed).
+    Applies :func:`apply_quality_assessment` first, then scores and ranks.
+    Updates ``composite_score``, ``rank``, and quality fields on copies.
     """
     config = config or RankingConfig()
-    scored: list[CandidateEvaluation] = []
-    for ev in evaluations:
-        composite = compute_composite_score(ev, config)
-        scored.append(
-            ev.model_copy(update={"composite_score": composite})
-        )
+    qcfg = config.quality or QualityConfig()
 
-    scored.sort(
-        key=lambda e: (
-            e.composite_score if e.composite_score is not None else -1.0,
-            e.performance_score if e.performance_score is not None else -1.0,
-        ),
-        reverse=True,
-    )
+    assessed: list[CandidateEvaluation] = []
+    for ev in evaluations:
+        # Always re-assess so re-rank of store results stays honest
+        assessed.append(apply_quality_assessment(ev, qcfg))
+
+    scored: list[CandidateEvaluation] = []
+    for ev in assessed:
+        composite = compute_composite_score(ev, config)
+        scored.append(ev.model_copy(update={"composite_score": composite}))
+
+    # Sort: composite desc, then quality tier desc, then raw performance desc
+    def sort_key(e: CandidateEvaluation) -> tuple:
+        comp = e.composite_score if e.composite_score is not None else -1.0
+        qrank = (
+            quality_tier_rank(e.result_quality)
+            if qcfg.prefer_higher_quality_tier
+            else 0
+        )
+        perf = e.performance_score if e.performance_score is not None else -1.0
+        return (comp, qrank, perf)
+
+    scored.sort(key=sort_key, reverse=True)
 
     ranked: list[CandidateEvaluation] = []
     for i, ev in enumerate(scored, start=1):

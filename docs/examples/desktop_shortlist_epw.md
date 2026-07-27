@@ -173,10 +173,36 @@ Failed candidates: notes include workdir + `diagnose_epw_failure` hints; see
 | Tc (Allen–Dynes) | order-of-magnitude vs family (NbN ~8–25 K) |
 | Si total (v0.2) | notes credit 45° and/or buffer |
 | status | `ok` with `ElectronPhononResult` |
+| **result_quality** | `screening` OK; `screening_suspect` / `unreliable` if λ inflated or unstable |
 | Artifacts | `evaluations.csv`, `synthesis_cards.md`, ranked JSON |
 
 Soft modes under coarse DFPT are common — treat Tc as **order-of-magnitude**,
 not publication-grade, until denser grids / Wannier (see nbN_epw.md).
+
+### Result quality (trust layer)
+
+Screening runs often produce **λ ≫ 2** and high Allen–Dynes Tc from soft modes
+and random Wannier. SiSC-Forge now **flags and down-weights** these:
+
+| Tier | Typical trigger | Ranking |
+|------|-----------------|---------|
+| `screening` | λ &lt; 3, stable phonon | normal weights |
+| `screening_suspect` | λ ≥ 3 or soft modes | composite × 0.45; Perf shows `*` |
+| `unreliable` | λ ≥ 8 or imaginary modes | Tc term dropped; composite × 0.15; Perf `!!` |
+
+CLI example:
+
+```text
+#  Formula          Perf   Qual    Si   Composite  Stable
+1  NbN              16.2   scr     54   48.1       yes
+2  Nb0.5Ti0.5N      45.0*  susp λ  56   22.3       yes    # high λ, down-weighted
+```
+
+CSV/JSON include `result_quality`, `quality_flags`, `quality_notes`. Synthesis
+cards warn not to cite suspect/unreliable Tc as production predictions.
+
+This is a **trust layer**, not a denser-grid refine path. Next step for
+citation-quality Tc: re-run winners with production grids / tuned Wannier.
 
 ## Walltime (order-of-magnitude)
 

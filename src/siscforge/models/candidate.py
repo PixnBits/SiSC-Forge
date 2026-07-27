@@ -149,6 +149,21 @@ class CandidateEvaluation(BaseModel):
     al_selected_for_expensive: bool | None = None
     """Whether AL selected this candidate for the expensive calculator path."""
 
+    result_quality: Literal[
+        "production",
+        "screening",
+        "screening_suspect",
+        "unreliable",
+        "unknown",
+    ] = "unknown"
+    """Trust tier for phonon / EPW results (see ``siscforge.quality``)."""
+
+    quality_flags: list[str] = Field(default_factory=list)
+    """Machine-readable quality flags (e.g. ``high_lambda``, ``imaginary_modes``)."""
+
+    quality_notes: str = ""
+    """Human-readable quality rationale (not a substitute for denser grids)."""
+
     status: str = "pending"
     """Overall evaluation status: ``pending``, ``ok``, ``failed``, ``mock``,
     ``surrogate_only`` (AL-deferred)."""

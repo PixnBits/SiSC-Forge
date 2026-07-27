@@ -9,6 +9,42 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 
+class QualityConfig(BaseModel):
+    """Thresholds for result-quality / trust assessment (screening honesty).
+
+    Pathological screening λ (often inflated by soft modes / coarse grids /
+    random Wannier) must not be treated as production truth. This is a trust
+    layer — not a substitute for denser-grid refinement.
+    """
+
+    lambda_suspect_above: float = Field(default=3.0, ge=0.0)
+    """λ ≥ this → ``high_lambda`` flag and at least ``screening_suspect``."""
+
+    lambda_unreliable_above: float = Field(default=8.0, ge=0.0)
+    """λ ≥ this → ``extreme_lambda`` / ``unreliable`` tier."""
+
+    min_frequency_cm1_soft: float = Field(default=50.0)
+    """Phonon min frequency below this (but ≥ 0) → ``soft_modes`` flag."""
+
+    imaginary_modes_unreliable: bool = True
+    """If True, imaginary modes force ``unreliable``; else ``screening_suspect``."""
+
+    suspect_performance_penalty: float = Field(default=0.45, ge=0.0, le=1.0)
+    """Multiply composite by this when ``result_quality=screening_suspect``."""
+
+    unreliable_performance_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
+    """Multiply composite by this when ``result_quality=unreliable``
+    (near-zero performance weight effectively)."""
+
+    unreliable_zero_performance: bool = True
+    """If True, set performance term to 0 for ``unreliable`` (Si score only)."""
+
+    prefer_higher_quality_tier: bool = True
+    """When sorting, break ties / near-ties by quality tier before raw Tc."""
+
+    version: str = "0.1"
+
+
 class RankingConfig(BaseModel):
     """Weights and options for multi-objective ranking."""
 
@@ -19,6 +55,9 @@ class RankingConfig(BaseModel):
 
     prefer_low_hull: bool = True
     """If True, lower energy_above_hull_proxy improves ranking slightly."""
+
+    quality: QualityConfig = Field(default_factory=QualityConfig)
+    """Result-quality / trust layer knobs (λ inflation, soft modes, …)."""
 
 
 class FormationFilterConfig(BaseModel):
