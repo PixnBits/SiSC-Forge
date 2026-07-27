@@ -427,6 +427,35 @@ def _resolve_run_config(
     return run.model_copy(update=updates) if updates else run
 
 
+def _primary_failure_hint(result: CandidateEvaluation, *, max_len: int = 110) -> str:
+    """One-line reason for CLI progress from evaluation errors/notes."""
+    from siscforge.calculators.qe.epw_recipes import extract_primary_failure_reason
+
+    # Prefer structured errors (often include diagnose text)
+    blob_parts: list[str] = []
+    if result.errors:
+        blob_parts.extend(result.errors)
+    if result.notes:
+        blob_parts.append(result.notes)
+    eph = result.electron_phonon
+    if eph is not None and eph.alpha2F_summary:
+        primary = eph.alpha2F_summary.get("primary_failure")
+        if primary:
+            blob_parts.insert(0, str(primary))
+        diag = eph.alpha2F_summary.get("failure_diagnostic")
+        if diag:
+            blob_parts.append(str(diag))
+    blob = "\n".join(blob_parts)
+    if not blob.strip():
+        return f"status={result.status}"
+    # Already a high-signal one-liner from run_epw
+    first = blob.splitlines()[0].strip()
+    if first.startswith("EPW ") or first.startswith("QE ") or "Wannier" in first:
+        return first[:max_len] + ("…" if len(first) > max_len else "")
+    reason = extract_primary_failure_reason(blob, step_name="calc", max_len=max_len)
+    return reason
+
+
 @app.command("run")
 def run_cmd(
     campaign: Path = typer.Argument(
@@ -621,6 +650,7 @@ def run_cmd(
         # users see the message before multi-hour DFPT, not only at epw.x launch.
         want_epw = bool(dft.do_epw or dft.epw.enabled or calc_name == "qe-epw")
         if want_epw:
+            from siscforge.calculators.qe.epw_inputs import default_nbndsub_screening
             from siscforge.calculators.qe.epw_recipes import (
                 resolve_epw_launch_topology,
             )
@@ -645,6 +675,28 @@ def run_cmd(
             except ValueError as exc:
                 console.print(f"[red]EPW parallel topology refused:[/red]\n{exc}")
                 raise typer.Exit(code=1) from exc
+
+            # Preflight: warn if nbndsub looks tiny vs nbnd (supercell trap)
+            if dft.epw.nbndsub is not None and dft.nbnd is not None:
+                if (
+                    dft.epw.nbndsub < 16
+                    and dft.nbnd >= 32
+                    and not dft.epw.auto_nbndsub
+                ):
+                    console.print(
+                        f"[yellow]EPW Wannier warning:[/yellow] "
+                        f"epw.nbndsub={dft.epw.nbndsub} looks small vs "
+                        f"dft.nbnd={dft.nbnd} (risk: frozen window > target WFs). "
+                        f"Enable auto_nbndsub or raise nbndsub."
+                    )
+            elif dft.epw.auto_nbndsub:
+                auto_sub = default_nbndsub_screening(
+                    nbnd=dft.nbnd, structure=None, explicit=dft.epw.nbndsub, auto=True
+                )
+                console.print(
+                    f"[dim]EPW Wannier screening nbndsub≈{auto_sub} "
+                    f"(auto from nbnd={dft.nbnd}; structure may raise further)[/dim]"
+                )
         calc_params = {**calc_params, "dft": dft, "run_config": run_cfg}
         if dft.work_dir is None:
             calc_params.setdefault("work_dir", str(out / "qe_work"))
@@ -833,11 +885,7 @@ def run_cmd(
             console.print(f"[green]{prefix}[/green] — ok ({result.status})")
         else:
             stats["failed"] += 1
-            err_hint = (
-                result.errors[0][:80]
-                if result.errors
-                else (result.notes or "see store")[:80]
-            )
+            err_hint = _primary_failure_hint(result)
             console.print(
                 f"[yellow]{prefix}[/yellow] — failed ({err_hint})"
             )

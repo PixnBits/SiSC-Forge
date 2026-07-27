@@ -73,22 +73,78 @@ def _amass_lines(
     return lines
 
 
-def _wannier_window_lines(fermi_eV: float | None) -> list[str]:
+def default_nbndsub_screening(
+    *,
+    nbnd: int | None,
+    structure: Structure | None = None,
+    explicit: int | None = None,
+    auto: bool = True,
+) -> int:
+    """Screening default for EPW ``nbndsub`` (target Wannier functions).
+
+    Policy (documented):
+    - Auto: ``nbndsub = min(nbnd, max(16, 4 * n_atoms, nbnd // 2))``
+    - Floor 16 avoids the classic supercell trap (nbnd=64, nbndsub=10).
+    - Cap at ``nbnd`` so we never request more WFs than KS bands.
+    - When *explicit* is set and *auto* is True, raise it to the auto floor
+      if the explicit value is below the floor (user low values still get a
+      safer screening default). Set auto=False to force the explicit value.
+
+    Production Wannier still needs material-specific projections.
+    """
+    n_at = len(structure) if structure is not None else 2
+    n_bands = int(nbnd) if nbnd is not None and int(nbnd) > 0 else max(24, 8 * n_at)
+    auto_val = min(n_bands, max(16, 4 * n_at, n_bands // 2))
+    auto_val = max(8, auto_val)  # absolute minimum for metals
+
+    if explicit is not None and int(explicit) > 0:
+        exp = int(explicit)
+        if not auto:
+            return min(exp, n_bands)
+        # Raise undersized explicit values to the screening floor
+        return min(n_bands, max(exp, auto_val))
+    return auto_val if auto else 10
+
+
+def _wannier_window_lines(
+    fermi_eV: float | None,
+    *,
+    screening_tight_froz: bool = True,
+) -> list[str]:
     """Disentanglement windows.
 
     Absolute eigenvalue windows must **bracket the Fermi level**. Hard-coded
     ``dis_win_max = 20`` fails for NbN (E_F ≈ 21 eV) and causes EPW
     ``efermig: cannot bracket Ef`` after Wannier interpolation.
+
+    Screening uses a **tighter frozen window** (``screening_tight_froz``) so
+    ``proj=random`` + moderate nbndsub does not trip Wannier90
+    ``More states in the frozen window than target WFs``. Outer dis_win
+    stays wide for disentanglement.
     """
     if fermi_eV is None:
         # Conservative absolute defaults for mid-gap / low-E_F systems only.
+        if screening_tight_froz:
+            return [
+                "  dis_win_min = -10.0",
+                "  dis_win_max = 30.0",
+                "  dis_froz_min= -2.0",
+                "  dis_froz_max= 2.0",
+            ]
         return [
             "  dis_win_min = -10.0",
             "  dis_win_max = 30.0",
             "  dis_froz_min= -5.0",
             "  dis_froz_max= 15.0",
         ]
-    # Metal screening template relative to DFT E_F (eV, absolute eigenvalues).
+    # Outer window wide; frozen window tight for screening random projs.
+    if screening_tight_froz:
+        return [
+            f"  dis_win_min = {fermi_eV - 18.0:.4f}",
+            f"  dis_win_max = {fermi_eV + 12.0:.4f}",
+            f"  dis_froz_min= {fermi_eV - 3.0:.4f}",
+            f"  dis_froz_max= {fermi_eV + 1.0:.4f}",
+        ]
     return [
         f"  dis_win_min = {fermi_eV - 18.0:.4f}",
         f"  dis_win_max = {fermi_eV + 12.0:.4f}",
@@ -264,24 +320,25 @@ def build_epw_input(
     nqf = (list(epw.nqf) + [6, 6, 6])[:3]
     nkc = (list(epw.nkc) + [4, 4, 4])[:3]
     nqc = (list(epw.nqc) + [2, 2, 2])[:3]
-    # Slightly fewer Wannier bands default for light 3-atom cells (MgB2)
-    default_nbndsub = 8
-    if structure is not None:
-        n_at = len(structure)
-        if n_at <= 3:
-            default_nbndsub = 8
-        elif n_at >= 4:
-            default_nbndsub = 10
-    nbndsub = epw.nbndsub if epw.nbndsub is not None else default_nbndsub
     qtag = getattr(config, "quality_tag", "screening") or "screening"
+    auto_nbnd = bool(getattr(epw, "auto_nbndsub", True))
+    # Screening auto policy; production labels still get auto unless disabled
+    nbndsub = default_nbndsub_screening(
+        nbnd=config.nbnd,
+        structure=structure,
+        explicit=epw.nbndsub,
+        auto=auto_nbnd,
+    )
+    screening_tight = qtag == "screening"
 
     header = [
         "!",
         f"! SiSC-Forge EPW input — quality_tag={qtag}",
         f"! Fine k/q (nkf/nqf) = {nkf} / {nqf}",
         f"! Coarse k/q (nkc/nqc) = {nkc} / {nqc}  (nqc should match DFPT q-grid)",
-        "! Screening template: proj=random; denser grids → set quality_tag: production",
-        "! and raise nkf/nqf/qpoints (see recommended_grids / docs/examples/nbN_epw.md).",
+        f"! nbndsub={nbndsub} (auto_nbndsub={auto_nbnd}; dft.nbnd={config.nbnd})",
+        "! Screening: proj=random + tight frozen window; production needs hand projs.",
+        "! Raise nkf/nqf/qpoints for denser grids (recommended_grids / docs).",
         "!",
     ]
 
@@ -309,7 +366,9 @@ def build_epw_input(
             "  num_iter    = 500",
         ]
     )
-    lines.extend(_wannier_window_lines(fermi_eV))
+    lines.extend(
+        _wannier_window_lines(fermi_eV, screening_tight_froz=screening_tight)
+    )
     lines.extend(
         [
             "  proj(1)     = 'random'",

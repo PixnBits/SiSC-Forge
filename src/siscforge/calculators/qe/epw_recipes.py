@@ -215,77 +215,155 @@ def _fermi_from_work_dir(work_dir: Path) -> float | None:
     return None
 
 
-# Common EPW / Wannier failure fingerprints → short remediation hints
-_EPW_FAILURE_HINTS: list[tuple[str, str]] = [
+# Common EPW / Wannier failure fingerprints → (short CLI label, remediation)
+# Order matters: more specific patterns first.
+_EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
+    (
+        "more states in the frozen window than target",
+        "EPW Wannier: frozen window has more states than nbndsub",
+        "Raise epw.nbndsub (e.g. min(nbnd, max(16, nbnd//2))) and/or tighten "
+        "dis_froz_* around E_F. Screening auto_nbndsub + wannier_retry should "
+        "handle this; production needs hand-tuned projections.",
+    ),
+    (
+        "more states in the frozen window than target wfs",
+        "EPW Wannier: frozen window has more states than nbndsub",
+        "Raise epw.nbndsub and/or tighten dis_froz window (dis_windows error).",
+    ),
+    (
+        "dis_windows",
+        "EPW Wannier: dis_windows frozen-window error",
+        "Frozen window inconsistent with nbndsub — increase nbndsub or narrow "
+        "dis_froz_min/max around E_F.",
+    ),
     (
         "cannot bracket",
-        "Fermi bracket failed after Wannier: ensure dis_win_* brackets E_F "
-        "(SiSC-Forge sets windows from nscf/scf E_F) and try efermi_read / denser nkf.",
+        "EPW: cannot bracket Fermi level after Wannier",
+        "Ensure dis_win_* brackets E_F (SiSC-Forge sets windows from nscf/scf) "
+        "and try efermi_read / denser nkf.",
     ),
     (
         "efermig",
-        "Fine-mesh Fermi search failed: pin fermi_energy from DFT (efermi_read) "
-        "or widen fsthick / denser nkf.",
+        "EPW: fine-mesh Fermi search failed (efermig)",
+        "Pin fermi_energy from DFT (efermi_read) or widen fsthick / denser nkf.",
     ),
     (
         "d_matrix",
-        "PAW d_matrix / symmetry crash: re-run vc-relax so the cell matches "
-        "the symmetry used in DFPT; avoid nosym on multi-q paths.",
+        "QE PAW d_matrix / symmetry crash",
+        "Re-run vc-relax so the cell matches DFPT symmetry; avoid nosym on multi-q.",
     ),
     (
         "error in routine dafopen",
-        "Missing phonon/dvscf files: confirm multi-q DFPT wrote dyn* + fildvscf "
-        "and that pp.py created save/ in the same work directory.",
+        "EPW: missing phonon/dvscf files (dafopen)",
+        "Confirm multi-q DFPT wrote dyn* + fildvscf and pp.py created save/.",
     ),
     (
         "error opening",
-        "Missing EPW prerequisite files: check save/, *.save, and nscf wavefunctions "
-        "in the work directory (flat outdir layout).",
-    ),
-    (
-        "wannier",
-        "Wannierization issue: screening uses proj=random — for production, set "
-        "material-specific projections and freeze windows; raise num_iter if needed.",
-    ),
-    (
-        "imaginary",
-        "Imaginary / soft modes present: raise eps_acustic, improve structure "
-        "relaxation, or denser DFPT q-mesh before trusting λ/Tc.",
+        "EPW: missing prerequisite files",
+        "Check save/, *.save, and nscf wavefunctions (flat outdir layout).",
     ),
     (
         "not enough bands",
-        "Insufficient bands for Wannier: increase dft.nbnd and epw.nbndsub.",
+        "EPW/QE: not enough bands",
+        "Increase dft.nbnd and epw.nbndsub for metals + Wannier.",
     ),
     (
         "nbndsub",
-        "nbndsub / Wannier band count mismatch: set epw.nbndsub consistently "
-        "with occupied + empty bands in the window.",
+        "EPW: nbndsub / Wannier band count issue",
+        "Set epw.nbndsub consistently with bands in the Wannier window "
+        "(screening auto: min(nbnd, max(16, 4*n_at, nbnd//2))).",
     ),
     (
-        "k-point",
-        "k-grid inconsistency: nscf crystal mesh must match epw nk1–nk3 (nkc).",
-    ),
-    (
-        "segmentation",
-        "EPW segfault: often symmetry/PAW or MPI pool issues — try nproc=1, "
-        "npool=1, or re-relax; check QE/EPW build vs Wannier90 version.",
+        "proj(1)",
+        "EPW: Wannier projection / random proj issue",
+        "Screening uses proj=random — production needs material-specific projs.",
     ),
     (
         "number of processes must be equal",
-        "EPW parallel topology: nproc must equal npool×nimage (fine-grid: nimage=1 "
-        "so set epw.npool=dft.nproc). SiSC-Forge auto-sets this unless "
-        "epw.strict_parallel is true.",
+        "EPW parallel: nproc ≠ npool×nimage",
+        "Set epw.npool=dft.nproc (nimage=1). SiSC-Forge auto-sets unless "
+        "strict_parallel is true.",
     ),
     (
         "number of pools and number of images",
-        "EPW parallel topology: nproc must equal npool×nimage (fine-grid: nimage=1 "
-        "so set epw.npool=dft.nproc).",
+        "EPW parallel: nproc ≠ npool×nimage",
+        "Set epw.npool=dft.nproc (nimage=1).",
+    ),
+    (
+        "k-point",
+        "EPW: k-grid inconsistency",
+        "nscf crystal mesh must match epw nk1–nk3 (nkc).",
+    ),
+    (
+        "imaginary",
+        "Phonon soft/imaginary modes",
+        "Raise eps_acustic, improve relaxation, or denser DFPT q-mesh.",
+    ),
+    (
+        "segmentation",
+        "EPW segfault",
+        "Try nproc=1/npool=1 or re-relax; check QE/EPW vs Wannier90 versions.",
+    ),
+    (
+        "wannier",
+        "EPW Wannierization issue",
+        "Screening uses proj=random — raise nbndsub / tighten freeze window, "
+        "or set material-specific projections for production.",
     ),
     (
         "%% error",
-        "QE fatal error block in output — see tail of epw.out / workdir logs.",
+        "QE fatal error",
+        "See output tail and workdir logs.",
     ),
 ]
+
+
+def is_frozen_window_overflow(text: str | None) -> bool:
+    """True if Wannier90 reports frozen window has more states than target WFs."""
+    if not text:
+        return False
+    blob = text.lower()
+    return (
+        "more states in the frozen window than target" in blob
+        or ("dis_windows" in blob and "frozen" in blob)
+        or ("frozen window" in blob and "target" in blob and "wf" in blob)
+    )
+
+
+def extract_primary_failure_reason(
+    text: str | None,
+    *,
+    step_name: str = "epw",
+    max_len: int = 120,
+) -> str:
+    """One-line primary reason for CLI progress (no file open required)."""
+    if not text or not str(text).strip():
+        return f"{step_name}: failed (no output text)"
+    blob = text.lower()
+    for needle, short, _hint in _EPW_FAILURE_HINTS:
+        if needle.lower() in blob:
+            msg = short
+            if len(msg) > max_len:
+                msg = msg[: max_len - 1] + "…"
+            return msg
+    # Generic: first Error / %%% line
+    for line in str(text).splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if "error" in low or "abort" in low or "fatal" in low:
+            if len(s) > max_len:
+                s = s[: max_len - 1] + "…"
+            return f"{step_name}: {s}"
+    # Fall back to last non-empty line of a short tail
+    lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+    if lines:
+        s = lines[-1]
+        if len(s) > max_len:
+            s = s[: max_len - 1] + "…"
+        return f"{step_name}: {s}"
+    return f"{step_name}: failed"
 
 
 def diagnose_epw_failure(
@@ -293,6 +371,8 @@ def diagnose_epw_failure(
     *,
     work_dir: Path | str | None = None,
     step_name: str = "epw",
+    include_tail: bool = True,
+    tail_lines: int = 30,
 ) -> str:
     """Return a multi-line diagnostic string for failed Wannier/EPW steps.
 
@@ -300,6 +380,9 @@ def diagnose_epw_failure(
     and appends workdir / quality_tag guidance. Safe for missing files.
     """
     parts: list[str] = [f"[{step_name}] EPW/Wannier diagnostic"]
+    primary = extract_primary_failure_reason(text, step_name=step_name)
+    parts.append(f"  primary: {primary}")
+
     if work_dir is not None:
         wd = Path(work_dir)
         parts.append(f"  work_dir: {wd}")
@@ -321,7 +404,7 @@ def diagnose_epw_failure(
     blob = (text or "").lower()
     hits: list[str] = []
     if blob:
-        for needle, hint in _EPW_FAILURE_HINTS:
+        for needle, _short, hint in _EPW_FAILURE_HINTS:
             if needle.lower() in blob:
                 hits.append(f"  · matched '{needle}': {hint}")
         if not hits:
@@ -334,12 +417,23 @@ def diagnose_epw_failure(
     parts.append("hints:")
     parts.extend(hits)
     parts.append(
-        "  · screening vs denser: raise epw.nkf/nqf and dft.qpoints (nqc must "
-        "match DFPT); set dft.quality_tag: production when using denser grids."
+        "  · screening: enable auto_nbndsub (default) and "
+        "wannier_retry_on_froz_overflow; raise epw.nbndsub if retry fails."
     )
     parts.append(
-        "  · docs: docs/examples/nbN_epw.md (NbN), docs/examples/mgb2_epw.md (MgB2)"
+        "  · denser grids: raise epw.nkf/nqf and dft.qpoints (nqc must match DFPT)."
     )
+    parts.append(
+        "  · docs: docs/examples/nbN_epw.md, docs/examples/desktop_shortlist_epw.md"
+    )
+
+    if include_tail and text:
+        lines = str(text).splitlines()
+        tail = lines[-tail_lines:] if len(lines) > tail_lines else lines
+        if tail:
+            parts.append("  --- output tail ---")
+            parts.extend(f"  {ln}" for ln in tail)
+
     return "\n".join(parts)
 
 
@@ -381,69 +475,27 @@ def resolve_epw_launch_topology(
     return cfg, plan.message
 
 
-def run_epw(
+def _run_epw_once(
     config: DFTConfig,
     work_dir: Path,
     *,
-    prefix: str = "siscforge",
-    qe_env: QEEnvironment | None = None,
-    structure: Structure | None = None,
-    outdir: Path | None = None,
-    fermi_eV: float | None = None,
-) -> tuple[QEStepResult, ElectronPhononResult | None]:
-    """Write and run ``epw.x`` in *work_dir*; parse stdout into ElectronPhononResult.
-
-    Validates MPI topology before launch: ``nproc`` must equal ``npool`` (nimage=1
-    for fine-grid). Default desktop policy auto-sets ``npool = nproc`` when
-    inconsistent (e.g. nproc=8, npool=1) so epw.x never hits the
-    ``epw_readin`` pools/images abort after multi-hour DFPT.
-    """
+    prefix: str,
+    qe_env: Any,
+    structure: Structure | None,
+    outdir_str: str,
+    dvscf_str: str,
+    fermi_eV: float | None,
+    parallel_msg: str,
+) -> tuple[QEStepResult, ElectronPhononResult | None, str]:
+    """Single epw.x launch; returns (step, eph, full_output_text)."""
+    from siscforge.calculators.qe.epw_inputs import (
+        default_nbndsub_screening,
+        epw_material_notes,
+    )
     from siscforge.calculators.qe.epw_parallel import epw_npool_cli_args
     from siscforge.calculators.qe.recipes import _mpi_prefix, _run_cmd
 
-    qe_env = qe_env or require_epw()
     assert qe_env.epw is not None
-
-    # --- Parallel topology: never launch with nproc ≠ npool (fine-grid) ---
-    try:
-        config, parallel_msg = resolve_epw_launch_topology(config)
-    except ValueError as exc:
-        work_dir = Path(work_dir).resolve()
-        work_dir.mkdir(parents=True, exist_ok=True)
-        out_path = work_dir / "epw.out"
-        out_path.write_text(
-            f"SiSC-Forge refused to launch epw.x:\n{exc}\n",
-            encoding="utf-8",
-        )
-        step = QEStepResult(
-            name="epw",
-            work_dir=work_dir,
-            returncode=1,
-            stdout_path=out_path,
-            input_path=work_dir / "epw.in",
-            success=False,
-            message=str(exc),
-        )
-        return step, None
-
-    work_dir = Path(work_dir).resolve()
-    work_dir.mkdir(parents=True, exist_ok=True)
-    # EPW examples use outdir='./' (same as work_dir); keep that layout for save/
-    out = Path(outdir).resolve() if outdir is not None else work_dir
-    out.mkdir(parents=True, exist_ok=True)
-    save_dir = work_dir / "save"
-
-    # Prefer relative paths (official EPW decks); absolute still works.
-    if out.resolve() == work_dir.resolve():
-        outdir_str = "./"
-        dvscf_str = "./save"
-    else:
-        outdir_str = str(out)
-        dvscf_str = str(save_dir.resolve())
-
-    if fermi_eV is None:
-        fermi_eV = _fermi_from_work_dir(work_dir)
-
     epw_text = build_epw_input(
         config,
         prefix=prefix,
@@ -457,6 +509,12 @@ def run_epw(
     write_epw_input(epw_text, in_path)
 
     npool = max(1, int(config.epw.npool))
+    nbndsub = default_nbndsub_screening(
+        nbnd=config.nbnd,
+        structure=structure,
+        explicit=config.epw.nbndsub,
+        auto=bool(getattr(config.epw, "auto_nbndsub", True)),
+    )
     cmd = [
         *_mpi_prefix(qe_env, config.nproc),
         qe_env.epw,
@@ -466,18 +524,28 @@ def run_epw(
     ]
 
     rc = _run_cmd(cmd, cwd=work_dir, stdout_path=out_path)
+    full_text = ""
+    if out_path.is_file():
+        try:
+            full_text = out_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            full_text = ""
+
     ok = rc == 0 and out_path.is_file()
     qtag = config.quality_tag
+    primary = extract_primary_failure_reason(full_text, step_name="epw") if not ok else "ok"
     msg = (
         f"epw.x rc={rc}; quality_tag={qtag}; "
-        f"nproc={config.nproc} npool={npool}; {parallel_msg}"
+        f"nproc={config.nproc} npool={npool} nbndsub={nbndsub}; {parallel_msg}"
     )
     if not ok:
-        tail = _output_tail(out_path) if out_path.is_file() else ""
-        if tail:
-            msg += f"\n--- output tail ---\n{tail}"
+        msg = f"{primary} | {msg}"
         msg += "\n" + diagnose_epw_failure(
-            tail or msg, work_dir=work_dir, step_name="epw"
+            full_text or msg,
+            work_dir=work_dir,
+            step_name="epw",
+            include_tail=True,
+            tail_lines=30,
         )
 
     step = QEStepResult(
@@ -506,27 +574,165 @@ def run_epw(
             tc = allen_dynes_tc(eph.lambda_total, eph.omega_log, config.epw.mu_star)
             eph = eph.model_copy(update={"Tc_allen_dynes": tc})
 
-        # Attach material notes (e.g. MgB2 two-gap → isotropic average)
-        from siscforge.calculators.qe.epw_inputs import epw_material_notes
-
         mat_note = epw_material_notes(structure)
         if mat_note and eph is not None:
             summary = dict(eph.alpha2F_summary or {})
             summary.setdefault("material_notes", mat_note)
             summary.setdefault("tc_model", "isotropic_average")
             summary.setdefault("quality_tag", config.quality_tag)
+            summary.setdefault("nbndsub", nbndsub)
             eph = eph.model_copy(update={"alpha2F_summary": summary})
 
-        # Partial parse after non-zero rc: surface diagnostics on the result
         if eph is not None and not ok and eph.status != "ok":
-            diag = diagnose_epw_failure(
-                _output_tail(out_path) if out_path.is_file() else msg,
-                work_dir=work_dir,
-                step_name="epw",
-            )
             summary = dict(eph.alpha2F_summary or {})
-            summary["failure_diagnostic"] = diag
+            summary["failure_diagnostic"] = diagnose_epw_failure(
+                full_text, work_dir=work_dir, step_name="epw"
+            )
+            summary["primary_failure"] = primary
             eph = eph.model_copy(update={"alpha2F_summary": summary})
+
+    return step, eph, full_text
+
+
+def run_epw(
+    config: DFTConfig,
+    work_dir: Path,
+    *,
+    prefix: str = "siscforge",
+    qe_env: QEEnvironment | None = None,
+    structure: Structure | None = None,
+    outdir: Path | None = None,
+    fermi_eV: float | None = None,
+) -> tuple[QEStepResult, ElectronPhononResult | None]:
+    """Write and run ``epw.x`` in *work_dir*; parse stdout into ElectronPhononResult.
+
+    Validates MPI topology before launch: ``nproc`` must equal ``npool`` (nimage=1
+    for fine-grid). Default desktop policy auto-sets ``npool = nproc`` when
+    inconsistent (e.g. nproc=8, npool=1) so epw.x never hits the
+    ``epw_readin`` pools/images abort after multi-hour DFPT.
+
+    On Wannier frozen-window overflow (screening), optionally retries **once**
+    with a larger nbndsub (reuses save/nscf via same workdir).
+    """
+    from siscforge.calculators.qe.epw_inputs import default_nbndsub_screening
+
+    qe_env = qe_env or require_epw()
+    assert qe_env.epw is not None
+
+    # --- Parallel topology: never launch with nproc ≠ npool (fine-grid) ---
+    try:
+        config, parallel_msg = resolve_epw_launch_topology(config)
+    except ValueError as exc:
+        work_dir = Path(work_dir).resolve()
+        work_dir.mkdir(parents=True, exist_ok=True)
+        out_path = work_dir / "epw.out"
+        out_path.write_text(
+            f"SiSC-Forge refused to launch epw.x:\n{exc}\n",
+            encoding="utf-8",
+        )
+        step = QEStepResult(
+            name="epw",
+            work_dir=work_dir,
+            returncode=1,
+            stdout_path=out_path,
+            input_path=work_dir / "epw.in",
+            success=False,
+            message=str(exc),
+        )
+        return step, None
+
+    work_dir = Path(work_dir).resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out = Path(outdir).resolve() if outdir is not None else work_dir
+    out.mkdir(parents=True, exist_ok=True)
+    save_dir = work_dir / "save"
+
+    if out.resolve() == work_dir.resolve():
+        outdir_str = "./"
+        dvscf_str = "./save"
+    else:
+        outdir_str = str(out)
+        dvscf_str = str(save_dir.resolve())
+
+    if fermi_eV is None:
+        fermi_eV = _fermi_from_work_dir(work_dir)
+
+    # Apply auto nbndsub into config so epw.in and retries stay consistent
+    nbndsub0 = default_nbndsub_screening(
+        nbnd=config.nbnd,
+        structure=structure,
+        explicit=config.epw.nbndsub,
+        auto=bool(getattr(config.epw, "auto_nbndsub", True)),
+    )
+    if config.epw.nbndsub != nbndsub0:
+        config = config.model_copy(
+            update={"epw": config.epw.model_copy(update={"nbndsub": nbndsub0})}
+        )
+
+    step, eph, full_text = _run_epw_once(
+        config,
+        work_dir,
+        prefix=prefix,
+        qe_env=qe_env,
+        structure=structure,
+        outdir_str=outdir_str,
+        dvscf_str=dvscf_str,
+        fermi_eV=fermi_eV,
+        parallel_msg=parallel_msg,
+    )
+
+    # --- One screening retry on frozen-window overflow ---
+    retry = bool(getattr(config.epw, "wannier_retry_on_froz_overflow", True))
+    is_screening = (config.quality_tag or "screening") == "screening"
+    if (
+        not step.success
+        and retry
+        and is_screening
+        and is_frozen_window_overflow(full_text)
+    ):
+        old_sub = int(config.epw.nbndsub or nbndsub0)
+        n_bands = int(config.nbnd) if config.nbnd else max(old_sub * 2, 32)
+        new_sub = min(n_bands, max(old_sub * 2, old_sub + 8))
+        if new_sub > old_sub:
+            retry_note = (
+                f"EPW Wannier retry: frozen-window overflow — "
+                f"nbndsub {old_sub}→{new_sub} (one retry; save/nscf reused)"
+            )
+            config = config.model_copy(
+                update={
+                    "epw": config.epw.model_copy(
+                        update={"nbndsub": new_sub, "auto_nbndsub": False}
+                    )
+                }
+            )
+            # Archive first-attempt log
+            first_out = work_dir / "epw.out"
+            if first_out.is_file():
+                try:
+                    first_out.rename(work_dir / "epw.attempt1.out")
+                except OSError:
+                    pass
+            step2, eph2, full_text2 = _run_epw_once(
+                config,
+                work_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+                structure=structure,
+                outdir_str=outdir_str,
+                dvscf_str=dvscf_str,
+                fermi_eV=fermi_eV,
+                parallel_msg=parallel_msg + f"; {retry_note}",
+            )
+            step2.message = f"{retry_note}\n{step2.message}"
+            if eph2 is not None:
+                summary = dict(eph2.alpha2F_summary or {})
+                summary["wannier_retry"] = {
+                    "reason": "frozen_window_overflow",
+                    "nbndsub_before": old_sub,
+                    "nbndsub_after": new_sub,
+                }
+                eph2 = eph2.model_copy(update={"alpha2F_summary": summary})
+            return step2, eph2
 
     return step, eph
 

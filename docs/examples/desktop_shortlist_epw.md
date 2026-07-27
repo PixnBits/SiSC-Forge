@@ -90,6 +90,30 @@ EPW parallel: auto-set npool=8 to match nproc=8 (nimage=1)
 
 Set `epw.strict_parallel: true` to refuse launch instead of auto-fix.
 
+### Wannier screening defaults (supercells)
+
+For 8-atom Nb–Ti–N with `dft.nbnd: 64`, do **not** leave `epw.nbndsub: 10`
+with a wide frozen window — Wannier90 aborts with:
+
+```text
+dis_windows: More states in the frozen window than target WFs
+```
+
+SiSC-Forge screening defaults (`auto_nbndsub: true`):
+
+- `nbndsub ≈ min(nbnd, max(16, 4×n_atoms, nbnd/2))` → **32** for 8 atoms / nbnd 64
+- Tighter frozen window around E_F for `proj=random`
+- **One automatic retry** if that error still appears (doubles nbndsub, capped by nbnd)
+
+CLI failure lines now show the reason without opening `epw.out`:
+
+```text
+[1/6] Nb0.25Ti0.75N strain=-0.030 — failed (EPW Wannier: frozen window has more states than nbndsub)
+```
+
+Evaluation notes include workdir, output tail, and remediation. Production
+still needs hand-tuned Wannier projections.
+
 ### Resume after sleep / reboot / kill
 
 Re-run the **same** command. Finished `status=ok` candidates are **skipped**;

@@ -143,7 +143,10 @@ def default_screening_dft(
             nqf=[6, 6, 6],
             nkc=[4, 4, 4],
             nqc=[2, 2, 2],
-            nbndsub=10,
+            # None → auto_nbndsub from nbnd/cell (not a tiny fixed 10)
+            nbndsub=None,
+            auto_nbndsub=True,
+            wannier_retry_on_froz_overflow=True,
             mu_star=0.10,
             eliashberg=True,
             allen_dynes_fallback=True,

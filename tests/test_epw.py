@@ -251,7 +251,10 @@ def test_build_epw_input_mgb2_amass() -> None:
     from siscforge.calculators.qe.epw_inputs import build_epw_input, epw_material_notes
 
     s = build_mgb2()
-    cfg = DFTConfig(do_epw=True, epw=EPWConfig(enabled=True, nbndsub=8))
+    cfg = DFTConfig(
+        do_epw=True,
+        epw=EPWConfig(enabled=True, nbndsub=8, auto_nbndsub=False),
+    )
     text = build_epw_input(cfg, prefix="mgb2", outdir="./", dvscf_dir="./save", structure=s)
     # B (Z=5) before Mg (Z=12)
     assert "amass(1)    = 10.811" in text
@@ -266,14 +269,15 @@ def test_build_epw_input_fermi_windows() -> None:
     from siscforge.calculators.qe.parser import parse_fermi_energy_eV
 
     s = build_binary_nitride("Nb")
-    cfg = DFTConfig(do_epw=True, epw=EPWConfig(enabled=True))
+    cfg = DFTConfig(do_epw=True, quality_tag="screening", epw=EPWConfig(enabled=True))
     text = build_epw_input(
         cfg, prefix="t", outdir="./", dvscf_dir="./save", structure=s, fermi_eV=20.739
     )
     assert "efermi_read = .true." in text
     assert "fermi_energy = 20.739000" in text
     assert "dis_win_max = 32.7390" in text
-    assert "dis_froz_max= 22.7390" in text
+    # Screening: tight frozen window (Ef+1), not the old wide Ef+2
+    assert "dis_froz_max= 21.7390" in text
     # Windows must sit above old hard-coded 20 eV for NbN-like E_F
     assert "dis_win_max = 20.0" not in text
 

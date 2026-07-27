@@ -1,5 +1,43 @@
 # Implementation Notes
 
+## Slice 17 (2026-07-25) — Screening Wannier defaults + failure UX
+
+**Scope**: Stop predictable Wannier frozen-window aborts on supercells, and
+surface the real reason in CLI / notes without opening `epw.out`.
+
+| Item | Location |
+|------|----------|
+| `default_nbndsub_screening` | `epw_inputs.py` |
+| Tight frozen window (screening) | `_wannier_window_lines(..., screening_tight_froz=True)` |
+| Primary reason + expanded diagnose | `extract_primary_failure_reason`, `diagnose_epw_failure` |
+| One retry on froz overflow | `run_epw` + `wannier_retry_on_froz_overflow` |
+| CLI one-liner | `_primary_failure_hint` in `cli/main.py` |
+| Tests | `tests/test_wannier_screening.py` |
+
+### nbndsub policy (screening, `auto_nbndsub: true`)
+```
+nbndsub = min(nbnd, max(16, 4 * n_atoms, nbnd // 2))
+```
+Example: 8-atom cell, `nbnd=64` → **32** (not 10).
+
+### Frozen window (screening)
+Outer `dis_win` still wide around E_F; frozen window tightened to roughly
+`[E_F−3, E_F+1]` eV so random projs + moderate nbndsub are viable.
+
+### Retry
+If epw.out matches frozen-window overflow and screening +
+`wannier_retry_on_froz_overflow`: one re-launch with
+`nbndsub → min(nbnd, max(2×old, old+8))`, reusing save/nscf. Log:
+`EPW Wannier retry: frozen-window overflow — nbndsub A→B`.
+
+### Failed CLI example
+```text
+[2/6] Nb0.25Ti0.75N strain=-0.030 — failed (EPW Wannier: frozen window has more states than nbndsub)
+```
+Notes include primary fingerprint, workdir, 30-line tail, remediation.
+
+---
+
 ## Slice 16 (2026-07-25) — EPW parallel topology (nproc / npool)
 
 **Scope**: Prevent `epw.x` abort after multi-hour DFPT when

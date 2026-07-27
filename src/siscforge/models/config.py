@@ -256,7 +256,19 @@ class EPWConfig(BaseModel):
     """Coarse q-grid (**must match DFPT q-mesh** when possible)."""
 
     nbndsub: int | None = None
-    """Number of Wannier bands; None → leave for EPW auto / user .win."""
+    """Number of Wannier bands (target WFs). None → auto from dft.nbnd / cell
+    size when ``auto_nbndsub`` is True (screening default). Explicit values
+    below the auto floor may be raised when auto_nbndsub is True."""
+
+    auto_nbndsub: bool = True
+    """When True and quality is screening, compute a safe nbndsub from nbnd
+    and structure size instead of a tiny fixed default (e.g. 10). Prevents
+    Wannier90 ``More states in the frozen window than target WFs`` on
+    supercells with large nbnd."""
+
+    wannier_retry_on_froz_overflow: bool = True
+    """If EPW fails with frozen-window overflow, retry epw.x once with a
+    larger nbndsub (screening only). Mid-step resume reuses save/nscf."""
 
     bands_skipped: int = 0
     """Bands below the Wannier window to skip."""
