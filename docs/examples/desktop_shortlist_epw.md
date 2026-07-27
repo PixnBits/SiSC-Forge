@@ -201,8 +201,41 @@ CLI example:
 CSV/JSON include `result_quality`, `quality_flags`, `quality_notes`. Synthesis
 cards warn not to cite suspect/unreliable Tc as production predictions.
 
-This is a **trust layer**, not a denser-grid refine path. Next step for
-citation-quality Tc: re-run winners with production grids / tuned Wannier.
+This is a **trust layer**, not denser-grid refinement by itself.
+
+### From unreliable shortlist → refine tier
+
+When the screening shortlist finishes (often all `unreliable` / high λ):
+
+```bash
+# 1) Optionally re-rank the store with trust weights (already applied on run)
+siscforge rank outputs/nbti_n_al_broad_shortlist
+
+# 2) Promote top Si-feasibility winners (desktop: 2 jobs)
+siscforge refine outputs/nbti_n_al_broad_shortlist \
+  -o examples/nbti_n_al_refine.yaml \
+  --mode top_si \
+  --max-jobs 2 \
+  --tier workstation_dense \
+  --nproc 16 \
+  --pseudo-dir pseudos/screening \
+  --name nbti_n_al_refine
+
+# 3) Smoke + real EPW (resume-safe, separate output_dir)
+siscforge run --dry-run examples/nbti_n_al_refine.yaml
+siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
+```
+
+| Mode | Selection |
+|------|-----------|
+| `top_si` | Highest Si score among ok EPW rows (default) |
+| `top_rank` | Trust-weighted rank order |
+| `ids` | Explicit `--id` list |
+
+Refine YAML uses denser k/q/nkf than screening, `quality_tag: production`,
+`epw.npool = nproc`, and exact CIF×strain specs. **Do not cite Tc** until
+`result_quality` improves. Limitation: random Wannier may remain until
+material-specific projections are added; refine improves grids/tags first.
 
 ## Walltime (order-of-magnitude)
 

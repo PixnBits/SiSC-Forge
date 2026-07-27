@@ -84,6 +84,7 @@ Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).
 | `examples/nbti_n_al.yaml` | AL top-k prioritization (small) |
 | `examples/nbti_n_al_broad.yaml` | Broader AL + 45°/buffer Si |
 | `examples/nbti_n_al_broad_shortlist.yaml` | Top-k EPW shortlist (from AL; resume-safe) |
+| `examples/nbti_n_al_refine.yaml` | Refine-tier denser EPW (from shortlist store) |
 | `examples/nbn_si_45deg.yaml` | Si-feasibility v0.2 (45° / buffers) |
 | `examples/nbn_epw.yaml` | NbN EPW golden |
 | `examples/nbn_phonon_qe.yaml` | NbN phonon (real QE) |

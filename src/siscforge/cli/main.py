@@ -5,6 +5,7 @@ Subcommands:
   - ``rank``      — rank evaluations from JSON or a campaign store
   - ``run``       — load campaign, filter, evaluate (mock/QE/EPW), rank, export
   - ``shortlist`` — build a focused EPW campaign from an AL dry-run store
+  - ``refine``    — promote store winners to denser-grid / production-tier EPW
 """
 
 from __future__ import annotations
@@ -382,6 +383,196 @@ def shortlist_cmd(
         "[bold]Next:[/bold]\n"
         f"  siscforge run --dry-run {path}   # mock smoke\n"
         f"  siscforge run --calculator qe-epw {path}   # real EPW (resume-safe)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# refine
+# ---------------------------------------------------------------------------
+
+
+@app.command("refine")
+def refine_cmd(
+    store_dir: Path = typer.Argument(
+        ...,
+        help="Campaign store with evaluations.json (e.g. shortlist EPW output).",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Path for the generated refine campaign YAML.",
+    ),
+    max_jobs: int = typer.Option(
+        2,
+        "--max-jobs",
+        "-n",
+        help="Maximum candidates to refine (desktop default 2).",
+        min=1,
+        max=6,
+    ),
+    mode: str = typer.Option(
+        "top_si",
+        "--mode",
+        "-m",
+        help="Selection: top_si | top_rank | ids",
+    ),
+    tier: str = typer.Option(
+        "workstation_dense",
+        "--tier",
+        "-t",
+        help="Grid tier: workstation_dense | production",
+    ),
+    candidate_id: list[str] | None = typer.Option(
+        None,
+        "--id",
+        help="Candidate ID (or prefix) for mode=ids; repeatable.",
+    ),
+    name: str = typer.Option(
+        "nitride_epw_refine",
+        "--name",
+        help="Campaign name (also default output_dir stem).",
+    ),
+    campaign_output_dir: Path | None = typer.Option(
+        None,
+        "--campaign-output-dir",
+        help="output_dir in the refine YAML (default: outputs/<name>).",
+    ),
+    pseudo_dir: Path | None = typer.Option(
+        None,
+        "--pseudo-dir",
+        help="UPF directory for real EPW.",
+    ),
+    nproc: int = typer.Option(
+        16,
+        "--nproc",
+        help="MPI ranks; epw.npool is set equal to nproc.",
+        min=1,
+    ),
+    calculator: str = typer.Option(
+        "qe-epw",
+        "--calculator",
+        "-C",
+        help="Calculator name embedded in the refine YAML.",
+    ),
+) -> None:
+    """Build a denser-grid refine campaign from an existing store.
+
+    Promotes shortlist winners (exact CIF × strain) to workstation_dense or
+    production EPW without re-enumerating the full grid. Trust layer re-assesses
+    after refine runs — do not cite Tc until quality flags improve.
+
+    Example::
+
+        siscforge refine outputs/nbti_n_al_broad_shortlist \\\\
+          -o examples/nbti_n_al_refine.yaml --mode top_si -n 2
+        siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
+    """
+    from siscforge.refine import (
+        build_refine_campaign,
+        refine_summary_table,
+        write_refine_yaml,
+    )
+    from siscforge.shortlist import load_evaluations_from_store
+
+    mode_norm = mode.strip().lower().replace("-", "_")
+    if mode_norm not in {"top_si", "top_rank", "ids"}:
+        raise typer.BadParameter("mode must be top_si | top_rank | ids")
+    tier_norm = tier.strip().lower().replace("-", "_")
+    if tier_norm not in {"workstation_dense", "production"}:
+        raise typer.BadParameter("tier must be workstation_dense | production")
+    if mode_norm == "ids" and not candidate_id:
+        raise typer.BadParameter("mode=ids requires at least one --id")
+
+    evals = load_evaluations_from_store(store_dir)
+    if not evals:
+        console.print(f"[red]No evaluations found in[/red] {store_dir}")
+        raise typer.Exit(code=1)
+
+    try:
+        cfg, chosen = build_refine_campaign(
+            evals,
+            name=name,
+            source_store=str(store_dir.resolve()),
+            max_jobs=max_jobs,
+            mode=mode_norm,  # type: ignore[arg-type]
+            tier=tier_norm,  # type: ignore[arg-type]
+            candidate_ids=list(candidate_id) if candidate_id else None,
+            output_dir=(
+                str(campaign_output_dir)
+                if campaign_output_dir is not None
+                else f"outputs/{name}"
+            ),
+            pseudo_dir=str(pseudo_dir) if pseudo_dir else None,
+            nproc=nproc,
+            dry_run=False,
+            calculator=calculator,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    path = write_refine_yaml(cfg, output)
+    console.print(
+        f"[bold]Refine[/bold] {len(chosen)} candidates "
+        f"({tier_norm}) → [green]{path}[/green]"
+    )
+    console.print(f"[dim]Campaign output_dir:[/dim] {cfg.output_dir}")
+    console.print(
+        f"[dim]dft:[/dim] quality_tag={cfg.dft.quality_tag} "
+        f"k={cfg.dft.kpoints} q={cfg.dft.qpoints} "
+        f"nkf={cfg.dft.epw.nkf} nqf={cfg.dft.epw.nqf} nqc={cfg.dft.epw.nqc}"
+    )
+    console.print(
+        f"[dim]nproc={cfg.dft.nproc} epw.npool={cfg.dft.epw.npool} "
+        f"pseudo_dir={cfg.dft.pseudo_dir}[/dim]"
+    )
+    console.print(
+        "[yellow]refinement — do not cite Tc until trust flags clear/improve[/yellow]"
+    )
+
+    table = Table(title="Refine selection (from store)")
+    table.add_column("#", justify="right")
+    table.add_column("Formula")
+    table.add_column("Strain", justify="right")
+    table.add_column("Si", justify="right")
+    table.add_column("Prior qual")
+    table.add_column("Prior λ", justify="right")
+    table.add_column("Prior Tc", justify="right")
+    table.add_column("Stable")
+    for row in refine_summary_table(chosen):
+        table.add_row(
+            str(row["#"]),
+            str(row["formula"]),
+            f"{row['strain']:+.3f}" if row["strain"] is not None else "—",
+            f"{row['si']:.1f}" if row["si"] is not None else "—",
+            str(row["prior_qual"]),
+            f"{row['prior_λ']:.2f}" if row["prior_λ"] is not None else "—",
+            f"{row['prior_Tc']:.1f}" if row["prior_Tc"] is not None else "—",
+            str(row["stable"]),
+        )
+    console.print(table)
+    unstable = [
+        e
+        for e in chosen
+        if e.phonon is not None
+        and (e.phonon.has_imaginary_modes or not e.phonon.dynamically_stable)
+    ]
+    if unstable:
+        console.print(
+            f"[yellow]Warning:[/yellow] {len(unstable)} selected candidate(s) had "
+            f"unstable screening phonons — refine re-runs vc-relax+DFPT but may "
+            f"still need different strain if soft modes persist."
+        )
+    console.print(
+        "[bold]Next:[/bold]\n"
+        f"  siscforge run --dry-run {path}\n"
+        f"  siscforge run --calculator qe-epw {path}\n"
+        "  # after runs: rank/export — check result_quality before citing Tc"
     )
 
 

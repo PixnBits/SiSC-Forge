@@ -1,5 +1,29 @@
 # Implementation Notes
 
+## Slice 20 (2026-07-27) — Refine-from-store denser EPW
+
+**Scope**: Promote shortlist winners to denser grids without re-enumerating.
+
+| Item | Location |
+|------|----------|
+| Selection + DFT presets | `siscforge.refine` |
+| CLI | `siscforge refine <store> -o refine.yaml` |
+| Tiers | `workstation_dense` (default), `production` via `recommended_grids` |
+| Specs | same `candidate_specs` as shortlist (CIF × strain) |
+| Tests | `tests/test_refine.py` |
+
+```bash
+siscforge refine outputs/nbti_n_al_broad_shortlist \
+  -o examples/nbti_n_al_refine.yaml --mode top_si -n 2 --tier workstation_dense
+siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
+```
+
+Separate `output_dir`; `quality_tag: production`; denser nkf/nqf/nqc than
+screening shortlist; `npool=nproc`. Trust layer re-assesses after refine —
+random Wannier may remain until a projection library lands.
+
+---
+
 ## Slice 19 (2026-07-27) — Result-quality / trust layer
 
 **Scope**: Prevent inflated screening EPW λ/Tc from silently dominating ranking.

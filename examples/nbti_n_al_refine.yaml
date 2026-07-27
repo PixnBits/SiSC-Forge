@@ -1,0 +1,342 @@
+# Auto-generated REFINE campaign — denser grids than screening shortlist
+# refinement — do not cite Tc until result_quality flags clear/improve
+# Tier notes: workstation_dense: often multi-hour DFPT per candidate on 8–16 cores; plan overnight for 2 jobs
+# Run: siscforge run --calculator qe-epw nbti_n_al_refine.yaml
+# Resume: re-run the same command (campaign + mid-step QE checkpoints)
+# Dry-run: siscforge run --dry-run nbti_n_al_refine.yaml
+# Limitation: material-specific Wannier projs not yet automated
+
+name: nbti_n_al_refine
+description: 'Refine-tier EPW (workstation_dense, 2 candidates); selection=top_si; denser grids than screening shortlist.
+  Do not cite Tc until trust flags improve. workstation_dense: often multi-hour DFPT per candidate on 8–16 cores; plan overnight
+  for 2 jobs Source store: /home/pixnbits/projects/SiSC-Forge/main/outputs/nbti_n_al_broad_shortlist.'
+version: '0.2'
+dry_run: false
+enumeration:
+  material_families:
+  - tm_nitride
+  formulas: []
+  metals: []
+  ternary_metals: []
+  x_values: []
+  candidate_specs:
+  - formula: Nb0.25Ti0.75N
+    in_plane_strain: -0.03
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: cdd61404-21fa-4e3e-8db9-21e746abc60b
+    structure_cif: "# generated using pymatgen\ndata_Ti3NbN4\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   6.06530163\n\
+      _cell_length_b   6.06530363\n_cell_length_c   3.04375808\n_cell_angle_alpha   59.87061995\n_cell_angle_beta   59.87060952\n\
+      _cell_angle_gamma   59.91601302\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   Ti3NbN4\n_chemical_formula_sum\
+      \   'Ti3 Nb1 N4'\n_cell_volume   78.97190987\n_cell_formula_units_Z   1\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.00000000  0.50000000  0.00000000 \
+      \ 1\n  Ti  Ti1  1  0.50000000  -0.00000000  -0.00000000  1\n  Ti  Ti2  1  0.50000000  0.50000000  0.00000000  1\n  Nb\
+      \  Nb3  1  0.00000000  0.00000000  0.00000000  1\n  N  N4  1  0.25460518  0.25460560  0.49077078  1\n  N  N5  1  0.25876552\
+      \  0.74123398  0.50000049  1\n  N  N6  1  0.74123448  0.25876602  0.49999951  1\n  N  N7  1  0.74539482  0.74539440\
+      \  0.50922922  1\n"
+    metadata:
+      formula: Nb0.25Ti0.75N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.25
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.03
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.095
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9134
+        predicted_omega_log: 278.99
+        predicted_Tc: 16.77
+        uncertainty: 0.52
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.25Ti0.75N
+          strain: 0.03
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9928
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: cdd61404-21fa-4e3e-8db9-21e746abc60b
+      source_acquisition_score: 0.443865
+      source_si_total: 58.03
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+      shortlist: true
+      relaxed: true
+      pseudos:
+        N: N.pbe-n-radius_5.UPF
+        Nb: Nb.pbe-spn-kjpaw_psl.0.3.0.UPF
+        Ti: Ti.pbe-sp-van_ak.UPF
+      phonon_method: dfpt
+      do_epw: true
+      refine_source: true
+      prior_result_quality: unreliable
+      prior_quality_flags:
+      - imaginary_modes
+      - dynamically_unstable
+      - high_lambda
+      - wannier_random_proj
+      - quality_tag_screening
+      - coarse_grids
+      prior_lambda: 6.3817373
+      prior_Tc: 28.793632318993087
+      prior_dynamically_stable: false
+      prior_min_frequency_cm1: -286.168156
+      refine_warning: Screening phonon was dynamically unstable / imaginary modes; refine re-runs vc-relax + DFPT — may still
+        need different strain or denser settings if soft modes persist.
+  - formula: Nb0.5Ti0.5N
+    in_plane_strain: -0.03
+    substrate: Si(001)
+    material_family: tm_nitride
+    candidate_id: 9d9d6f11-06dd-4c1d-99ee-1794469f8e52
+    structure_cif: "# generated using pymatgen\ndata_TiNbN2\n_symmetry_space_group_name_H-M   'P 1'\n_cell_length_a   6.09813510\n\
+      _cell_length_b   6.15505281\n_cell_length_c   3.08051090\n_cell_angle_alpha   59.96469908\n_cell_angle_beta   59.65561633\n\
+      _cell_angle_gamma   59.78192308\n_symmetry_Int_Tables_number   1\n_chemical_formula_structural   TiNbN2\n_chemical_formula_sum\
+      \   'Ti2 Nb2 N4'\n_cell_volume   81.38816984\n_cell_formula_units_Z   2\nloop_\n _symmetry_equiv_pos_site_id\n _symmetry_equiv_pos_as_xyz\n\
+      \  1  'x, y, z'\nloop_\n _atom_site_type_symbol\n _atom_site_label\n _atom_site_symmetry_multiplicity\n _atom_site_fract_x\n\
+      \ _atom_site_fract_y\n _atom_site_fract_z\n _atom_site_occupancy\n  Ti  Ti0  1  0.00000000  0.50000000  -0.00000000\
+      \  1\n  Ti  Ti1  1  0.50000000  0.50000000  0.00000000  1\n  Nb  Nb2  1  0.00000000  0.00000000  0.00000000  1\n  Nb\
+      \  Nb3  1  0.50000000  0.00000000  -0.00000000  1\n  N  N4  1  0.24606685  0.26427837  0.48965956  1\n  N  N5  1  0.25393323\
+      \  0.73572159  0.51034041  1\n  N  N6  1  0.74606677  0.26427841  0.48965959  1\n  N  N7  1  0.75393315  0.73572163\
+      \  0.51034044  1\n"
+    metadata:
+      formula: Nb0.5Ti0.5N
+      kind: ternary
+      metals:
+      - Nb
+      - Ti
+      x: 0.5
+      supercell:
+      - 2
+      - 2
+      - 1
+      requested_strain: -0.03
+      epitaxy_orientation: auto
+      use_buffers: true
+      energy_above_hull_proxy: 0.095
+      formation_filter_version: 0.1-heuristic
+      tc_lambda_surrogate:
+        predicted_lambda: 0.9134
+        predicted_omega_log: 278.99
+        predicted_Tc: 16.77
+        uncertainty: 0.52
+        model_version: 0.1-family-heuristic
+        quality_tag: stub
+        method: family_heuristic
+        features:
+          family: tm_nitride
+          formula: Nb0.5Ti0.5N
+          strain: 0.03
+          n_elements: 3
+          n_metals: 2
+          strain_factor: 0.9928
+        notes: Phase-1 family-heuristic stub (not a trained GNN). Use only for pre-filtering; real EPW overrides ranking when
+          present.
+      tc_lambda_surrogate_version: 0.1-family-heuristic
+      source_candidate_id: 9d9d6f11-06dd-4c1d-99ee-1794469f8e52
+      source_acquisition_score: 0.440925
+      source_si_total: 57.05
+      source_si_notes: v0.2 heuristic Si-feasibility; direct on Si with cube_on_cube matching
+      shortlist: true
+      relaxed: true
+      pseudos:
+        N: N.pbe-n-radius_5.UPF
+        Nb: Nb.pbe-spn-kjpaw_psl.0.3.0.UPF
+        Ti: Ti.pbe-sp-van_ak.UPF
+      phonon_method: dfpt
+      do_epw: true
+      refine_source: true
+      prior_result_quality: unreliable
+      prior_quality_flags:
+      - imaginary_modes
+      - dynamically_unstable
+      - high_lambda
+      - wannier_random_proj
+      - quality_tag_screening
+      - coarse_grids
+      prior_lambda: 3.2736627
+      prior_Tc: 26.955709728687523
+      prior_dynamically_stable: false
+      prior_min_frequency_cm1: -275.97406
+      refine_warning: Screening phonon was dynamically unstable / imaginary modes; refine re-runs vc-relax + DFPT — may still
+        need different strain or denser settings if soft modes persist.
+  substrates:
+  - Si(001)
+  strain_values:
+  - 0.0
+  poisson_ratio: 0.25
+  supercell:
+  - 2
+  - 2
+  - 1
+  b_concentrations: []
+  bsi_supercell:
+  - 2
+  - 2
+  - 2
+  seed: 42
+  max_candidates: 2
+  epitaxy_orientation: auto
+  use_buffers: true
+calculators:
+- name: qe-epw
+  parameters: {}
+dft:
+  engine: qe-epw
+  ecutwfc: 60.0
+  ecutrho: 480.0
+  kpoints:
+  - 8
+  - 8
+  - 8
+  conv_thr: 1.0e-08
+  forc_conv_thr: 0.001
+  press_conv_thr: 0.5
+  occupations: smearing
+  smearing: mv
+  degauss: 0.02
+  nbnd: 64
+  pseudo_dir: pseudos/screening
+  pseudopotentials: {}
+  work_dir: null
+  nproc: 16
+  phonon_method: dfpt
+  phonopy_supercell:
+  - 2
+  - 2
+  - 2
+  phonopy_distance: 0.01
+  qpoints:
+  - 4
+  - 4
+  - 4
+  tr2_ph: 1.0e-11
+  ph_alpha_mix: 0.1
+  ph_nmix: 12
+  ph_niter: 150
+  do_relax: true
+  do_phonon: true
+  do_epw: true
+  epw:
+    enabled: true
+    nkf:
+    - 12
+    - 12
+    - 12
+    nqf:
+    - 12
+    - 12
+    - 12
+    nkc:
+    - 6
+    - 6
+    - 6
+    nqc:
+    - 4
+    - 4
+    - 4
+    nbndsub: null
+    auto_nbndsub: true
+    wannier_retry_on_froz_overflow: true
+    bands_skipped: 0
+    mu_star: 0.1
+    fsthick: 0.4
+    degaussw: 0.05
+    degaussq: 0.05
+    eps_acustic: 5.0
+    eliashberg: true
+    allen_dynes_fallback: true
+    wdata_prefix: siscforge
+    npool: 16
+    strict_parallel: false
+  quality_tag: production
+formation_filter:
+  enabled: false
+  max_e_hull_eV_per_atom: 0.25
+  max_strain_magnitude: 0.05
+  prefer_families:
+  - tm_nitride
+  - b_doped_si
+  - mgb2_boride
+  keep_top_n: null
+  version: 0.1-heuristic
+surrogate:
+  tc_lambda:
+    enabled: false
+    mu_star: 0.1
+    min_predicted_tc_K: null
+    max_uncertainty: null
+    keep_top_n: null
+    use_for_ranking_when_no_epw: true
+    version: 0.1-family-heuristic
+active_learning:
+  enabled: false
+  strategy: uncertainty_si_tc
+  max_epw_jobs: 5
+  weights:
+    uncertainty: 0.4
+    predicted_tc: 0.3
+    si_feasibility: 0.3
+    hull_penalty: 0.1
+  tc_ceiling_K: 40.0
+  evaluate_deferred_with_surrogate: true
+  version: 0.1-priority-queue
+ranking:
+  performance_weight: 0.55
+  si_feasibility_weight: 0.45
+  prefer_dynamically_stable: true
+  prefer_low_hull: true
+  quality:
+    lambda_suspect_above: 3.0
+    lambda_unreliable_above: 8.0
+    min_frequency_cm1_soft: 50.0
+    imaginary_modes_unreliable: true
+    suspect_performance_penalty: 0.45
+    unreliable_performance_penalty: 0.15
+    unreliable_zero_performance: true
+    prefer_higher_quality_tier: true
+    version: '0.1'
+josephson:
+  enabled: false
+  shortlist_size: 20
+  model_tier: analytic_AB
+  reference_area_um2: 1.0
+  assume_SIS: true
+  temperature_K: null
+  secondary_ranking: false
+run:
+  resume: true
+  continue_on_error: true
+  force_rerun: false
+  resume_qe_steps: true
+  force_rerun_qe_steps: false
+  heartbeat_seconds: 900
+output_dir: outputs/nbti_n_al_refine
+export_formats:
+- json
+- csv
+- markdown
+extras:
+  refine:
+    source_store: /home/pixnbits/projects/SiSC-Forge/main/outputs/nbti_n_al_broad_shortlist
+    mode: top_si
+    tier: workstation_dense
+    n_selected: 2
+    formulas:
+    - Nb0.25Ti0.75N
+    - Nb0.5Ti0.5N
+    walltime_note: 'workstation_dense: often multi-hour DFPT per candidate on 8–16 cores; plan overnight for 2 jobs'
+    limitation: Random Wannier projections may remain until a projection library lands; refine improves grids/quality_tag
+      first.
