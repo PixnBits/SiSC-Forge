@@ -124,11 +124,15 @@ While `ph.x` / `pw.x` / `epw.x` run, the CLI prints a heartbeat every
   healthy (log growing); log=4200 KiB; peek: iter #  12 total cpu time :  3800.1 secs
 ```
 
+When DFPT progress is parseable (q-point index / total), a rough remaining-time
+band may be appended; see [Walltime](#walltime-order-of-magnitude) below.
+
 | Config / flag | Meaning |
 |---------------|---------|
 | `run.heartbeat_seconds: 900` | Interval in seconds (default) |
 | `0` | Disable heartbeats |
 | `--heartbeat-seconds 300` | CLI override (e.g. every 5 min) |
+| `run.heartbeat_eta: true` | Allow remaining-time when progress is real |
 
 Healthy = subprocess alive and log file size/mtime increasing. Stale log with
 a live process is flagged so you can check for a hang.
@@ -239,15 +243,63 @@ material-specific projections are added; refine improves grids/tags first.
 
 ## Walltime (order-of-magnitude)
 
-| Step | Screening, ~16 cores |
-|------|----------------------|
-| SCF + light relax | minutes |
-| Multi-q DFPT (2³) | tens of minutes – few hours |
-| EPW Wannier + a2F | tens of minutes – few hours |
-| **Per candidate total** | **~1–6 h** (cell-dependent) |
+Before the first long step, real `qe` / `qe-epw` campaigns print a **heuristic
+walltime band** (not a guarantee). Machine load and soft-mode convergence
+dominate; treat bands as planning guidance only.
 
-8-atom ternary supercells are **much slower** than 2-atom bulk NbN — budget
-overnight for a 6-candidate shortlist on a single workstation.
+### How to read the bands
+
+```text
+Estimated walltime (heuristic, not a guarantee):
+  per candidate: DFPT ~47 min – 6.3 h; full candidate (relax→EPW) ~1.6–9.4 h on ~8 cores (order-of-magnitude)
+  this campaign (~6 candidates, sequential): ~9.4 h – 2.4 d
+  Tip: safe to interrupt; re-run the same command to resume finished steps/candidates.
+  tier=screening, n_atoms≈8, q-mesh=8 pts, nproc=8, nkf=216
+```
+
+| Phrase | Meaning |
+|--------|---------|
+| DFPT band | Multi-q `ph.x` only (usually the long pole) |
+| full candidate | relax → SCF → DFPT → EPW (when enabled) |
+| this campaign | Sequential sum on one desktop (`N ×` full band) |
+| order-of-magnitude | Wide by design — not an HPC scheduler ETA |
+
+**Screening shortlist (6 candidates, ~8 cores):** often overnight → weekend.
+
+**workstation_dense refine (2 candidates, 16 cores):** often multi-day. A real
+8-atom Nb–Ti–N refine DFPT has exceeded **37 h** with healthy heartbeats —
+the dense band (~12 h – 2 d DFPT) is intentionally wide enough to cover that.
+
+| Step | Screening, ~16 cores | workstation_dense refine |
+|------|----------------------|--------------------------|
+| SCF + light relax | minutes | tens of minutes |
+| Multi-q DFPT | tens of min – few hours (2³) | many hours – ~2 days (4³) |
+| EPW Wannier + a2F | tens of min – few hours | hours |
+| **Per candidate total** | **~1–6 h** (cell-dependent) | **~1–3 days** |
+
+8-atom ternary supercells are **much slower** than 2-atom bulk NbN.
+
+### Heartbeats with optional remaining-time
+
+When `ph.out` reports real q-point progress, heartbeats may append a rough
+remaining band; otherwise the heartbeat is unchanged (no invented precision).
+
+```text
+  [heartbeat] phonon / DFPT (ph.x) +EPW-prep still running — elapsed 12h05m;
+  healthy (log growing); …; progress q 3/8; ~X–Y remaining (rough)
+```
+
+### Knobs
+
+| Config / flag | Default | Meaning |
+|---------------|---------|---------|
+| `run.estimate_walltime` | true | Print bands at campaign start |
+| `run.walltime_scale` | 1.0 | Stretch/shrink bands |
+| `run.heartbeat_eta` | true | Remaining-time when progress is real |
+| `run.heartbeat_seconds` | 900 | Heartbeat interval (0 = off) |
+
+After a candidate finishes, observed walltime may adjust messaging for later
+candidates **in the same process** (simple in-memory tracker).
 
 ## Pseudos and `nbnd`
 

@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from siscforge import __version__
+from siscforge.active_learning import prioritize_candidates
 from siscforge.calculators import ensure_builtins_loaded, list_calculators
 from siscforge.calculators import get as get_calculator
 from siscforge.export import (
@@ -29,6 +30,7 @@ from siscforge.export import (
 )
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import CampaignConfig, RunConfig
+from siscforge.models.provenance import Provenance
 from siscforge.ranking import rank_evaluations
 from siscforge.resume import (
     find_resumable_evaluation,
@@ -38,8 +40,6 @@ from siscforge.resume import (
 from siscforge.silicon.feasibility import score_si_feasibility
 from siscforge.store import EvaluationStore
 from siscforge.structure.generator import generate_candidates, generate_fake_candidates
-from siscforge.active_learning import prioritize_candidates
-from siscforge.models.provenance import Provenance
 from siscforge.surrogates.formation import FormationEnergyFilter
 from siscforge.surrogates.tc_lambda import TcLambdaSurrogate
 
@@ -855,10 +855,10 @@ def run_cmd(
         want_epw = bool(dft.do_epw or dft.epw.enabled or calc_name == "qe-epw")
         if want_epw:
             from siscforge.calculators.qe.epw_inputs import default_nbndsub_screening
+            from siscforge.calculators.qe.epw_parallel import validate_epw_parallel
             from siscforge.calculators.qe.epw_recipes import (
                 resolve_epw_launch_topology,
             )
-            from siscforge.calculators.qe.epw_parallel import validate_epw_parallel
 
             raw = validate_epw_parallel(
                 max(1, int(dft.nproc)),
@@ -932,6 +932,34 @@ def run_cmd(
             f"pw.x / ph.x / epw.x (set run.heartbeat_seconds: 0 to disable)[/dim]"
         )
 
+    # 3b. Desktop walltime bands (qe / qe-epw only; mock unchanged)
+    walltime_tracker = None
+    walltime_est = None
+    if calc_name in {"qe", "qe-epw"} and getattr(run_cfg, "estimate_walltime", True):
+        from siscforge.walltime import (
+            WalltimeTracker,
+            estimate_campaign_walltime,
+            format_campaign_estimate_lines,
+            should_print_walltime_estimate,
+        )
+
+        if should_print_walltime_estimate(calc_name, run_cfg):
+            dft_for_est = calc_params.get("dft", config.dft)
+            walltime_est = estimate_campaign_walltime(
+                dft_for_est,
+                n_candidates=max(1, len(expensive_candidates)),
+                candidates=expensive_candidates,
+                scale=float(getattr(run_cfg, "walltime_scale", 1.0) or 1.0),
+            )
+            walltime_tracker = WalltimeTracker()
+            for line in format_campaign_estimate_lines(walltime_est):
+                if line.startswith("Estimated"):
+                    console.print(f"[bold cyan]{line}[/bold cyan]")
+                elif line.startswith("  Tip:"):
+                    console.print(f"[dim]{line}[/dim]")
+                else:
+                    console.print(f"[cyan]{line}[/cyan]")
+
     # 4. Evaluate expensive path + optional surrogate-only deferred set
     evaluations: list[CandidateEvaluation] = []
     # Prior successes from this output_dir (for skip-finished).
@@ -943,6 +971,33 @@ def run_cmd(
         else ({}, {})
     )
     stats = {"skipped": 0, "ran": 0, "ok": 0, "failed": 0}
+
+    # If resume will skip some, restate remaining campaign band once
+    if walltime_est is not None and resume_by_id:
+        n_will_skip = 0
+        for cand in expensive_candidates:
+            if (
+                find_resumable_evaluation(
+                    cand,
+                    by_id=resume_by_id,
+                    by_fp=resume_by_fp,
+                    force_rerun=False,
+                )
+                is not None
+            ):
+                n_will_skip += 1
+        n_remaining = len(expensive_candidates) - n_will_skip
+        if 0 < n_remaining < len(expensive_candidates):
+            from siscforge.walltime import format_campaign_estimate_lines
+
+            console.print(
+                f"[dim]Resume: {n_will_skip} already done; "
+                f"~{n_remaining} still to run[/dim]"
+            )
+            for line in format_campaign_estimate_lines(
+                walltime_est, remaining_candidates=n_remaining
+            )[1:3]:
+                console.print(f"[cyan]{line}[/cyan]")
 
     def _finalize_eval(
         result: CandidateEvaluation,
@@ -1040,10 +1095,38 @@ def run_cmd(
         console.print(f"[bold]{prefix}[/bold] — running {calc_name}")
         si = si_by_id[cand.candidate_id]
         params = {**calc_params, "si_feasibility": si}
+        pred_mid_h = None
+        if walltime_est is not None:
+            obs_scale = (
+                walltime_tracker.observed_scale() if walltime_tracker is not None else None
+            )
+            if obs_scale is not None and abs(obs_scale - 1.0) > 0.15:
+                from siscforge.walltime import estimate_candidate_walltime
+
+                adj = estimate_candidate_walltime(
+                    calc_params.get("dft", config.dft),
+                    candidate=cand,
+                    n_candidates=1,
+                    scale=float(getattr(run_cfg, "walltime_scale", 1.0) or 1.0),
+                    observed_scale=obs_scale,
+                )
+                console.print(
+                    f"[dim]  walltime hint (adjusted): {adj.per_candidate_line()}[/dim]"
+                )
+                pred_mid_h = 0.5 * (adj.full_lo_h + adj.full_hi_h)
+            else:
+                pred_mid_h = 0.5 * (walltime_est.full_lo_h + walltime_est.full_hi_h)
+        if walltime_tracker is not None:
+            walltime_tracker.start(cand.candidate_id)
         try:
             result = calc.run(cand, **params)
         except Exception as exc:  # noqa: BLE001
             from siscforge.calculators.qe import QENotAvailableError
+
+            if walltime_tracker is not None:
+                walltime_tracker.finish(
+                    cand.candidate_id, predicted_mid_h=pred_mid_h
+                )
 
             # Missing QE install is environment-wide — always abort.
             if isinstance(exc, QENotAvailableError):
@@ -1075,6 +1158,19 @@ def run_cmd(
             stats["ran"] += 1
             stats["failed"] += 1
             continue
+
+        if walltime_tracker is not None:
+            obs_h = walltime_tracker.finish(
+                cand.candidate_id, predicted_mid_h=pred_mid_h
+            )
+            if obs_h is not None and obs_h >= 1.0 / 60.0:
+                # Only mention when at least ~1 min (avoid noise on mock)
+                from siscforge.walltime import format_duration_band
+
+                console.print(
+                    f"[dim]  observed walltime ~{format_duration_band(obs_h, obs_h)} "
+                    f"(recorded for later candidates in this run)[/dim]"
+                )
 
         if not isinstance(result, CandidateEvaluation):
             if not run_cfg.continue_on_error:
@@ -1124,7 +1220,7 @@ def run_cmd(
             calculator_name="surrogate",
             notes=(
                 "AL deferred expensive calculator; surrogate-only evaluation "
-                f"(acq would re-rank after real EPW)"
+                "(acq would re-rank after real EPW)"
             ),
             provenance=Provenance(
                 source="active_learning_deferred",

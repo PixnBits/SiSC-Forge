@@ -495,6 +495,19 @@ class RunConfig(BaseModel):
     Set to 0 to disable. Desktop shortlists with multi-hour DFPT should keep
     this on so the CLI is not silent for hours."""
 
+    estimate_walltime: bool = True
+    """When True (default), print order-of-magnitude walltime bands at the
+    start of real ``qe`` / ``qe-epw`` campaigns. Guidance only — not a
+    guarantee. Mock / dry-run paths never print estimates."""
+
+    walltime_scale: float = Field(default=1.0, gt=0.0, le=20.0)
+    """Multiply heuristic walltime bands (e.g. 2.0 if your machine is slow)."""
+
+    heartbeat_eta: bool = True
+    """When True, heartbeats may append a rough remaining-time hint if the
+    step log yields a real progress fraction (e.g. q-point i/N in ph.out).
+    No fake precision when progress is not parseable."""
+
 
 class CampaignConfig(BaseModel):
     """Top-level YAML campaign definition.

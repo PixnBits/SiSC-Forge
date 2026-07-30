@@ -149,6 +149,7 @@ def run_nscf_for_epw(
     Uses ``outdir='./'``-style flat layout when *outdir* equals *work_dir*.
     """
     from siscforge.calculators.qe.recipes import (
+        _heartbeat_eta_enabled,
         _heartbeat_seconds_from_config,
         _mpi_prefix,
         _run_cmd,
@@ -192,6 +193,7 @@ def run_nscf_for_epw(
         stdout_path=out_path,
         heartbeat_seconds=_heartbeat_seconds_from_config(config),
         step_label="nscf (pw.x, EPW prep)",
+        heartbeat_eta=_heartbeat_eta_enabled(config),
     )
     ok = rc == 0 and out_path.is_file()
     msg = f"pw.x nscf (EPW) rc={rc}"
@@ -504,6 +506,7 @@ def _run_epw_once(
     )
     from siscforge.calculators.qe.epw_parallel import epw_npool_cli_args
     from siscforge.calculators.qe.recipes import (
+        _heartbeat_eta_enabled,
         _heartbeat_seconds_from_config,
         _mpi_prefix,
         _run_cmd,
@@ -543,6 +546,7 @@ def _run_epw_once(
         stdout_path=out_path,
         heartbeat_seconds=_heartbeat_seconds_from_config(config),
         step_label="epw.x (Wannier + e-ph)",
+        heartbeat_eta=_heartbeat_eta_enabled(config),
     )
     full_text = ""
     if out_path.is_file():
@@ -787,8 +791,6 @@ def run_relax_scf_phonon_epw(
         _should_resume_qe_steps,
         _skipped_step,
         _try_read_relaxed_structure,
-        run_ph,
-        run_pw,
     )
 
     work_dir = Path(work_dir).resolve()

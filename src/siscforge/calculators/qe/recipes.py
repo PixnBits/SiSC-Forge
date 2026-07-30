@@ -90,6 +90,16 @@ def _heartbeat_seconds_from_config(config: DFTConfig | None) -> int:
         return 900
 
 
+def _heartbeat_eta_enabled(config: DFTConfig | None) -> bool:
+    """Whether remaining-time hints are allowed on heartbeats."""
+    if config is None:
+        return True
+    run = getattr(config, "_run_config", None)
+    if run is None:
+        return True
+    return bool(getattr(run, "heartbeat_eta", True))
+
+
 def _format_elapsed(seconds: float) -> str:
     s = int(max(0, seconds))
     h, rem = divmod(s, 3600)
@@ -101,19 +111,27 @@ def _format_elapsed(seconds: float) -> str:
     return f"{sec}s"
 
 
+def _log_text_tail(path: Path, *, max_bytes: int = 16384) -> str:
+    """Read a tail chunk of a growing log (for progress parse + peek)."""
+    if not path.is_file():
+        return ""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - max_bytes))
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _log_peek(path: Path, *, max_len: int = 90) -> str:
     """Best-effort interesting last line from a growing QE log."""
     if not path.is_file():
         return "(no log yet)"
-    try:
-        # Read last ~8 KiB only
-        with path.open("rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            fh.seek(max(0, size - 8192))
-            chunk = fh.read().decode("utf-8", errors="replace")
-    except OSError:
-        return "(log unreadable)"
+    chunk = _log_text_tail(path, max_bytes=8192)
+    if not chunk:
+        return "(log empty)"
     lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
     if not lines:
         return "(log empty)"
@@ -139,6 +157,7 @@ def _run_cmd(
     heartbeat_seconds: int = 0,
     step_label: str = "qe",
     on_heartbeat: Callable[[str], None] | None = None,
+    heartbeat_eta: bool = True,
 ) -> int:
     """Run *cmd* in *cwd*, tee stdout/stderr to *stdout_path*.
 
@@ -146,6 +165,8 @@ def _run_cmd(
 
     When *heartbeat_seconds* > 0, emit a progress line every N seconds while
     the process is alive (step name, elapsed time, healthy/stale log, peek).
+    When progress is parseable (e.g. q-point i/N in ph.out), optionally append
+    a rough remaining-time band (see ``run.heartbeat_eta``).
     """
     run_env = os.environ.copy()
     # Avoid OpenMPI fabric probes hanging on desktop installs.
@@ -221,11 +242,22 @@ def _run_cmd(
                 else:
                     # Stale for at least one full interval
                     health = "stale log? (process alive, log not growing)"
+                log_tail = _log_text_tail(stdout_path)
                 peek = _log_peek(stdout_path)
+                eta_bit = ""
+                if heartbeat_eta:
+                    try:
+                        from siscforge.walltime import heartbeat_eta_suffix
+
+                        eta_bit = heartbeat_eta_suffix(
+                            log_tail, elapsed_s, enabled=True
+                        )
+                    except Exception:  # noqa: BLE001
+                        eta_bit = ""
                 emit(
                     f"  [heartbeat] {step_label} still running — "
                     f"elapsed {elapsed}; {health}; "
-                    f"log={size // 1024} KiB; peek: {peek}"
+                    f"log={size // 1024} KiB; peek: {peek}{eta_bit}"
                 )
 
 
@@ -300,6 +332,7 @@ def run_pw(
         stdout_path=out_path,
         heartbeat_seconds=_heartbeat_seconds_from_config(config),
         step_label=step_label,
+        heartbeat_eta=_heartbeat_eta_enabled(config),
     )
     ok = rc == 0 and out_path.is_file()
     msg = f"pw.x {calculation} rc={rc}"
@@ -388,6 +421,7 @@ def run_ph(
         stdout_path=out_path,
         heartbeat_seconds=_heartbeat_seconds_from_config(config),
         step_label="phonon / DFPT (ph.x)" + (" +EPW-prep" if for_epw else ""),
+        heartbeat_eta=_heartbeat_eta_enabled(config),
     )
     ok = rc == 0 and out_path.is_file()
     msg = f"ph.x rc={rc}"

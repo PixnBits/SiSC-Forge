@@ -1,5 +1,62 @@
 # Implementation Notes
 
+## Slice 21 (2026-07-29) — Desktop walltime expectation UX
+
+**Scope**: Order-of-magnitude walltime bands before expensive QE/EPW work, plus
+optional progress-based remaining-time hints on heartbeats. **Not** a guarantee;
+machine load and convergence dominate. No physics/ranking changes.
+
+| Item | Location |
+|------|----------|
+| Estimator | `siscforge.walltime` |
+| Config | `RunConfig.estimate_walltime` (default true), `walltime_scale`, `heartbeat_eta` |
+| CLI | printed at start of real `qe` / `qe-epw` campaigns (mock unchanged) |
+| Heartbeats | `recipes._run_cmd` appends remaining hint when ph.out progress is real |
+| Tracker | in-memory observed walltimes refine messaging for later candidates |
+| Tests | `tests/test_walltime.py` (no real QE) |
+
+### Estimation inputs
+- quality_tag / inferred tier (`screening` | `workstation_dense` | `production`)
+- n_atoms (from CIF / metadata; default 8 for ternary shortlists)
+- nproc, q-mesh product (`epw.nqc` or `qpoints`), EPW fine grids (`nkf`)
+- number of expensive candidates (sequential desktop total)
+
+### Example startup (screening shortlist, 6 candidates, nproc=8)
+```text
+Estimated walltime (heuristic, not a guarantee):
+  per candidate: DFPT ~47 min – 6.3 h; full candidate (relax→EPW) ~1.6–9.4 h on ~8 cores (order-of-magnitude)
+  this campaign (~6 candidates, sequential): ~9.4 h – 2.4 d
+  Tip: safe to interrupt; re-run the same command to resume finished steps/candidates.
+```
+
+### Example startup (workstation_dense refine, 2 candidates, nproc=16)
+```text
+Estimated walltime (heuristic, not a guarantee):
+  per candidate: DFPT ~12 h – 2 d; full candidate (relax→EPW) ~24 h – 3 d on ~16 cores (order-of-magnitude)
+  this campaign (~2 candidates, sequential): ~2–6 d
+  Tip: safe to interrupt; re-run the same command to resume finished steps/candidates.
+```
+
+### Heartbeat remaining-time (optional)
+When `ph.out` yields a parseable fraction (q-point i/N), heartbeats may show:
+```text
+  [heartbeat] phonon / DFPT (ph.x) +EPW-prep still running — elapsed 12h05m;
+  healthy (log growing); log=8200 KiB; peek: Calculation of q = …;
+  progress q 3/8; ~X–Y remaining (rough)
+```
+If progress is not parseable, the existing heartbeat is unchanged (no fake ETA).
+
+### Knobs
+| Config | Default | Meaning |
+|--------|---------|---------|
+| `run.estimate_walltime` | true | Print bands at campaign start (qe/qe-epw only) |
+| `run.walltime_scale` | 1.0 | Multiply bands (e.g. 2.0 for a slow box) |
+| `run.heartbeat_eta` | true | Allow remaining-time hint when progress is real |
+
+Disable estimates with `run.estimate_walltime: false` in the campaign YAML.
+
+---
+
 ## Slice 20 (2026-07-27) — Refine-from-store denser EPW
 
 **Scope**: Promote shortlist winners to denser grids without re-enumerating.
