@@ -209,7 +209,14 @@ def test_run_relax_scf_phonon_skips_completed_steps(tmp_path: Path) -> None:
         raise AssertionError(f"pw.x {calculation} should have been skipped")
 
     def fake_run_ph(
-        config, work_dir, *, prefix="siscforge", qe_env=None, for_epw=False, outdir=None
+        config,
+        work_dir,
+        *,
+        prefix="siscforge",
+        qe_env=None,
+        for_epw=False,
+        outdir=None,
+        recover=False,
     ):
         calls.append("ph")
         out = work_dir / "ph.out"
@@ -269,7 +276,9 @@ def test_run_force_rerun_qe_steps_no_skip(tmp_path: Path) -> None:
 
     calls: list[str] = []
 
-    def fake_run_pw(structure, config, work_dir, *, calculation, prefix="siscforge", qe_env=None, outdir=None):
+    def fake_run_pw(
+        structure, config, work_dir, *, calculation, prefix="siscforge", qe_env=None, outdir=None
+    ):
         calls.append(f"pw:{calculation}")
         out = Path(work_dir) / f"{calculation}.out"
         if calculation == "vc-relax":
@@ -289,7 +298,16 @@ def test_run_force_rerun_qe_steps_no_skip(tmp_path: Path) -> None:
             message=f"pw.x {calculation} rc=0",
         )
 
-    def fake_run_ph(config, work_dir, *, prefix="siscforge", qe_env=None, for_epw=False, outdir=None):
+    def fake_run_ph(
+        config,
+        work_dir,
+        *,
+        prefix="siscforge",
+        qe_env=None,
+        for_epw=False,
+        outdir=None,
+        recover=False,
+    ):
         calls.append("ph")
         out = Path(work_dir) / "ph.out"
         _write(out, _PH_OK)
@@ -322,28 +340,39 @@ def test_run_force_rerun_qe_steps_no_skip(tmp_path: Path) -> None:
 
 
 def test_run_partial_ph_cleans_and_reruns_phonon(tmp_path: Path) -> None:
-    """Partial ph.out (no JOB DONE) → phonon re-run; relax/SCF skipped."""
+    """Garbage partial ph.out (no dyn/_ph0) → clean + full phonon re-run."""
     work = tmp_path / "cand"
     structure = _nbn()
     _write(work / "01_relax" / "vc-relax.out", _RELAX_OK)
     _write(work / "02_scf" / "scf.out", _SCF_OK)
     (work / "02_scf" / "s00000001.save").mkdir()
     _write(work / "02_scf" / "ph.out", _PH_PARTIAL)
-    _write(work / "02_scf" / "s00000001.dyn1", "partial-dyn")
+    # no dyn / _ph0 → unrecoverable
 
     cfg = DFTConfig(do_relax=True, do_phonon=True, do_epw=False, phonon_method="dfpt")
     cfg.__dict__["_run_config"] = RunConfig(resume_qe_steps=True)
 
     calls: list[str] = []
+    recover_flags: list[bool] = []
 
     def fake_run_pw(*args, **kwargs):
         calls.append(f"pw:{kwargs.get('calculation', '?')}")
         raise AssertionError("pw should be skipped")
 
-    def fake_run_ph(config, work_dir, *, prefix="siscforge", qe_env=None, for_epw=False, outdir=None):
+    def fake_run_ph(
+        config,
+        work_dir,
+        *,
+        prefix="siscforge",
+        qe_env=None,
+        for_epw=False,
+        outdir=None,
+        recover=False,
+    ):
         calls.append("ph")
-        # partial files should have been cleaned
-        assert not (Path(work_dir) / "ph.out").exists() or True
+        recover_flags.append(bool(recover))
+        # partial ph.out should have been cleaned for full restart
+        assert not (Path(work_dir) / "ph.out").exists()
         out = Path(work_dir) / "ph.out"
         _write(out, _PH_OK)
         from siscforge.calculators.qe.recipes import QEStepResult
@@ -372,6 +401,209 @@ def test_run_partial_ph_cleans_and_reruns_phonon(tmp_path: Path) -> None:
         )
 
     assert calls == ["ph"]
+    assert recover_flags == [False]
     assert result.success
     assert any("skip vc-relax" in x for x in step_log)
     assert any("skip SCF" in x for x in step_log)
+    assert any("running DFPT" in x for x in step_log)
+
+
+def test_assess_phonon_recoverable_with_dyn(tmp_path: Path) -> None:
+    from siscforge.calculators.qe.qe_checkpoint import assess_phonon_recoverability
+
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    _write(scf / "ph.out", _PH_PARTIAL)
+    _write(scf / "s.dyn1", "Dynamical matrix file\n partial q-point\n")
+    (scf / "_ph0").mkdir()
+    _write(scf / "_ph0" / "s.phsave", "x")
+    rec = assess_phonon_recoverability(work, prefix="s")
+    assert rec.recoverable
+    assert "dyn" in rec.message or "artifact" in rec.reason.lower()
+
+
+def test_assess_phonon_unrecoverable_garbage(tmp_path: Path) -> None:
+    from siscforge.calculators.qe.qe_checkpoint import assess_phonon_recoverability
+
+    work = tmp_path / "cand"
+    _write(work / "02_scf" / "ph.out", _PH_PARTIAL)
+    rec = assess_phonon_recoverability(work, prefix="s")
+    assert not rec.recoverable
+
+
+def test_assess_phonon_unrecoverable_cannot_recover_marker(tmp_path: Path) -> None:
+    from siscforge.calculators.qe.qe_checkpoint import assess_phonon_recoverability
+
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    _write(scf / "s.dyn1", "partial")
+    _write(scf / "ph.out", _PH_PARTIAL + "\n cannot recover from previous run\n")
+    rec = assess_phonon_recoverability(work, prefix="s")
+    assert not rec.recoverable
+    assert "unsafe" in rec.reason.lower() or "cannot" in rec.reason.lower()
+
+
+def test_run_recoverable_partial_ph_uses_recover_flag(tmp_path: Path) -> None:
+    """Complete SCF + partial phonon with dyn → recover=.true. path."""
+    work = tmp_path / "cand"
+    structure = _nbn()
+    _write(work / "01_relax" / "vc-relax.out", _RELAX_OK)
+    _write(work / "02_scf" / "scf.out", _SCF_OK)
+    (work / "02_scf" / "s00000001.save").mkdir()
+    _write(work / "02_scf" / "ph.out", _PH_PARTIAL)
+    _write(work / "02_scf" / "s00000001.dyn1", "partial-dyn content\n")
+    (work / "02_scf" / "_ph0").mkdir()
+    _write(work / "02_scf" / "_ph0" / "keep", "x")
+
+    cfg = DFTConfig(do_relax=True, do_phonon=True, do_epw=False, phonon_method="dfpt")
+    cfg.__dict__["_run_config"] = RunConfig(resume_qe_steps=True)
+
+    recover_flags: list[bool] = []
+    dyn_kept: list[bool] = []
+
+    def fake_run_pw(*args, **kwargs):
+        raise AssertionError("pw should be skipped")
+
+    def fake_run_ph(
+        config,
+        work_dir,
+        *,
+        prefix="siscforge",
+        qe_env=None,
+        for_epw=False,
+        outdir=None,
+        recover=False,
+    ):
+        recover_flags.append(bool(recover))
+        # On recover path, dyn must not have been wiped
+        dyn_kept.append((Path(work_dir) / f"{prefix}.dyn1").is_file())
+        out = Path(work_dir) / "ph.out"
+        _write(out, _PH_OK)
+        _write(Path(work_dir) / f"{prefix}.dyn1", "freq ( 1) = 5.0 [THz] = 166.78 [cm-1]\n")
+        from siscforge.calculators.qe.recipes import QEStepResult
+
+        return QEStepResult(
+            name="ph",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=out,
+            input_path=Path(work_dir) / "ph.in",
+            success=True,
+            message="ph.x rc=0 recover" if recover else "ph.x rc=0",
+        )
+
+    step_log: list[str] = []
+    with (
+        patch("siscforge.calculators.qe.recipes.run_pw", side_effect=fake_run_pw),
+        patch("siscforge.calculators.qe.recipes.run_ph", side_effect=fake_run_ph),
+        patch(
+            "siscforge.calculators.qe.recipes.require_qe",
+            return_value=type("E", (), {"pw": "pw", "ph": "ph", "mpirun": None})(),
+        ),
+    ):
+        result = run_relax_scf_phonon(
+            structure, cfg, work, prefix="s00000001", step_log=step_log
+        )
+
+    assert result.success
+    assert recover_flags == [True]
+    assert dyn_kept == [True]
+    assert any("resuming DFPT with QE recover=.true." in x for x in step_log)
+    assert any("skip SCF" in x for x in step_log)
+
+
+def test_run_recover_failure_falls_back_to_full_restart(tmp_path: Path) -> None:
+    """recover=.true. hard-fails → clean + full phonon restart."""
+    work = tmp_path / "cand"
+    structure = _nbn()
+    _write(work / "01_relax" / "vc-relax.out", _RELAX_OK)
+    _write(work / "02_scf" / "scf.out", _SCF_OK)
+    (work / "02_scf" / "s00000001.save").mkdir()
+    _write(work / "02_scf" / "ph.out", _PH_PARTIAL)
+    _write(work / "02_scf" / "s00000001.dyn1", "partial-dyn\n")
+
+    cfg = DFTConfig(do_relax=True, do_phonon=True, do_epw=False, phonon_method="dfpt")
+    cfg.__dict__["_run_config"] = RunConfig(resume_qe_steps=True)
+
+    recover_flags: list[bool] = []
+    calls = 0
+
+    def fake_run_pw(*args, **kwargs):
+        raise AssertionError("pw should be skipped")
+
+    def fake_run_ph(
+        config,
+        work_dir,
+        *,
+        prefix="siscforge",
+        qe_env=None,
+        for_epw=False,
+        outdir=None,
+        recover=False,
+    ):
+        nonlocal calls
+        calls += 1
+        recover_flags.append(bool(recover))
+        out = Path(work_dir) / "ph.out"
+        from siscforge.calculators.qe.recipes import QEStepResult
+
+        if recover:
+            # Simulate QE cannot recover
+            err_body = (
+                _PH_PARTIAL
+                + "\n %%%%\n     Error in routine phq_readin (1):\n"
+                + "     cannot recover\n"
+            )
+            _write(out, err_body)
+            return QEStepResult(
+                name="ph",
+                work_dir=Path(work_dir),
+                returncode=1,
+                stdout_path=out,
+                input_path=Path(work_dir) / "ph.in",
+                success=False,
+                message="ph.x rc=1 cannot recover",
+            )
+        # Full restart after clean
+        assert not (Path(work_dir) / f"{prefix}.dyn1").exists()
+        _write(out, _PH_OK)
+        _write(Path(work_dir) / f"{prefix}.dyn1", "freq ( 1) = 5.0 [THz] = 166.78 [cm-1]\n")
+        return QEStepResult(
+            name="ph",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=out,
+            input_path=Path(work_dir) / "ph.in",
+            success=True,
+            message="ph.x rc=0",
+        )
+
+    step_log: list[str] = []
+    with (
+        patch("siscforge.calculators.qe.recipes.run_pw", side_effect=fake_run_pw),
+        patch("siscforge.calculators.qe.recipes.run_ph", side_effect=fake_run_ph),
+        patch(
+            "siscforge.calculators.qe.recipes.require_qe",
+            return_value=type("E", (), {"pw": "pw", "ph": "ph", "mpirun": None})(),
+        ),
+    ):
+        result = run_relax_scf_phonon(
+            structure, cfg, work, prefix="s00000001", step_log=step_log
+        )
+
+    assert calls == 2
+    assert recover_flags == [True, False]
+    assert result.success
+    assert any("resuming DFPT with QE recover=.true." in x for x in step_log)
+    assert any(
+        "DFPT recover failed or unsafe — full phonon step restart" in x for x in step_log
+    )
+
+
+def test_build_ph_input_recover_flag() -> None:
+    from siscforge.calculators.qe.inputs import build_ph_input
+
+    text = build_ph_input(recover=True, prefix="s")
+    assert "recover = .true." in text
+    text_off = build_ph_input(recover=False, prefix="s")
+    assert "recover" not in text_off

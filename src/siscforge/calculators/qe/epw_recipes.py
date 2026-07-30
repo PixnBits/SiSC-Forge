@@ -24,7 +24,6 @@ from siscforge.calculators.qe.parser import parse_ph_output, parse_pw_output
 from siscforge.calculators.qe.recipes import (
     QEStepResult,
     QEWorkflowResult,
-    run_ph,
     run_pw,
 )
 from siscforge.models.config import DFTConfig
@@ -779,8 +778,9 @@ def run_relax_scf_phonon_epw(
 
     Mid-step resume: when enabled (default), successful upstream outputs in the
     candidate workdir are re-used. A kill during ``ph.x`` therefore skips
-    vc-relax/SCF and restarts phonon from the beginning of that step only.
-    Incomplete step outputs are cleaned before re-running that step.
+    vc-relax/SCF; incomplete DFPT that looks recoverable is re-launched with
+    QE ``recover=.true.``, otherwise phonon restarts from a clean step.
+    Incomplete EPW / pp / nscf steps still clean + re-run (no fragile recover).
     """
     from siscforge.calculators.qe.qe_checkpoint import (
         clean_step_outputs,
@@ -788,6 +788,7 @@ def run_relax_scf_phonon_epw(
     )
     from siscforge.calculators.qe.recipes import (
         _force_qe_steps,
+        _run_ph_with_optional_recover,
         _should_resume_qe_steps,
         _skipped_step,
         _try_read_relaxed_structure,
@@ -909,16 +910,15 @@ def run_relax_scf_phonon_epw(
         )
         log.append("skip phonon (checkpoint)")
     else:
-        if (scf_dir / "ph.out").exists() or list(scf_dir.glob(f"{prefix}.dyn*")):
-            clean_step_outputs(work_dir, "phonon", prefix=prefix)
-        log.append("running DFPT / phonon")
-        step = run_ph(
+        step = _run_ph_with_optional_recover(
             config,
-            scf_dir,
+            work_dir=work_dir,
+            scf_dir=scf_dir,
             prefix=prefix,
             qe_env=qe_env,
             for_epw=want_epw,
             outdir=scf_dir if want_epw else None,
+            log=log,
         )
         result.steps.append(step)
         if step.stdout_path.is_file():

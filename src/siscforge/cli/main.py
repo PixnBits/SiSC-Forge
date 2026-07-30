@@ -707,6 +707,11 @@ def run_cmd(
     candidates that already have a successful evaluation (status ok/mock with
     result fields). Failures are recorded and the shortlist continues unless
     ``--fail-fast`` or ``run.continue_on_error: false``.
+
+    Interrupt (Ctrl+C / sleep / power loss) is safe at the process level:
+    re-issue the same ``siscforge run ...`` command. Finished candidates and
+    completed QE steps are skipped; incomplete DFPT may resume with QE
+    ``recover=.true.`` when on-disk state looks recoverable.
     """
     config = CampaignConfig.from_yaml(campaign)
     if dry_run:
@@ -1120,6 +1125,18 @@ def run_cmd(
             walltime_tracker.start(cand.candidate_id)
         try:
             result = calc.run(cand, **params)
+        except KeyboardInterrupt:
+            if walltime_tracker is not None:
+                walltime_tracker.finish(
+                    cand.candidate_id, predicted_mid_h=pred_mid_h
+                )
+            console.print(
+                "\n[yellow]Interrupted.[/yellow] Re-run the same command to resume "
+                "from the last safe checkpoint "
+                "(finished candidates + completed QE steps; "
+                "incomplete DFPT may use QE recover=.true.)."
+            )
+            raise typer.Exit(code=130) from None
         except Exception as exc:  # noqa: BLE001
             from siscforge.calculators.qe import QENotAvailableError
 

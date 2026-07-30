@@ -5,12 +5,36 @@ already has valid upstream artifacts (relaxed geometry, SCF charge density,
 dyn files). These helpers **conservatively** detect completed steps by
 parsing outputs — missing or unparseable files mean the step is incomplete.
 
+Phonon / DFPT interrupt recovery
+--------------------------------
+Incomplete ``ph.x`` is **not** always wiped. When on-disk state looks
+recoverable (partial dyn mesh, ``_ph0/``, dvscf files, DFPT progress in
+``ph.out`` without hard recover errors), recipes re-launch ``ph.x`` with
+QE ``recover=.true.`` instead of discarding multi-hour progress.
+
+Conservative recoverable criteria (prefer full restart when unsure)
+-------------------------------------------------------------------
+All of the following:
+
+1. Phonon step incomplete (no ``JOB DONE`` in ``ph.out``, or no parseable finish).
+2. At least one **promising** DFPT artifact under ``02_scf/``:
+
+   - non-empty ``{prefix}.dyn*`` file(s), or
+   - non-empty ``_ph0/`` tree, or
+   - non-empty ``{prefix}.dvscf*`` / ``dvscf*`` file(s)
+
+3. No **hard recover-unsafe** markers in ``ph.out`` (e.g. ``cannot recover``,
+   ``error reading recover``).
+
+Otherwise → clean partial phonon outputs and full step restart.
+
 Limitations
 -----------
-- We restart an incomplete *step* from the beginning of that step (e.g. full
-  ``ph.x``), not mid-iteration QE recovery.
-- Partial ``ph.out`` without JOB DONE ⇒ re-run phonon.
-- ``force_rerun`` / ``force_rerun_qe_steps`` disables all step skips.
+- Not Folding@home-style mid-iteration pause; granularity is **QE step** +
+  QE-native ``recover`` for DFPT only.
+- Partial ``ph.out`` with **no** dyn/_ph0/dvscf ⇒ full phonon restart.
+- ``force_rerun`` / ``force_rerun_qe_steps`` disables all step skips and recover.
+- EPW (``epw.x``) incomplete steps still clean + re-run (no fragile recover path).
 """
 
 from __future__ import annotations
@@ -48,6 +72,14 @@ PIPELINE_EPW: tuple[StepName, ...] = (
     "epw_pp",
     "nscf",
     "epw",
+)
+
+# Hard evidence that QE restart state is corrupt — prefer full restart.
+_RECOVER_UNSAFE_MARKERS: tuple[str, ...] = (
+    "cannot recover",
+    "error reading recover",
+    "error in routine  read_file_ph",
+    "problems reading recover",
 )
 
 
@@ -98,6 +130,20 @@ class WorkdirCheckpoint:
         return None
 
 
+@dataclass(frozen=True)
+class PhononRecoverability:
+    """Whether an incomplete DFPT/phonon step should try QE ``recover=.true.``."""
+
+    recoverable: bool
+    reason: str
+    artifacts: tuple[str, ...] = ()
+
+    @property
+    def message(self) -> str:
+        art = f" [{', '.join(self.artifacts)}]" if self.artifacts else ""
+        return f"{self.reason}{art}"
+
+
 def _job_done(text: str) -> bool:
     return "JOB DONE" in text.upper()
 
@@ -109,6 +155,95 @@ def _read_text(path: Path) -> str | None:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+
+
+def _nonempty_files(paths: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    for p in paths:
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                out.append(p)
+        except OSError:
+            continue
+    return out
+
+
+def _dir_has_files(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    try:
+        return any(p.is_file() for p in path.rglob("*"))
+    except OSError:
+        return False
+
+
+def _ph_out_has_unsafe_recover_markers(text: str) -> bool:
+    low = text.lower()
+    return any(m in low for m in _RECOVER_UNSAFE_MARKERS)
+
+
+def assess_phonon_recoverability(
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+) -> PhononRecoverability:
+    """Conservative probe: incomplete DFPT that QE may resume with ``recover=.true.``.
+
+    Prefer **false** (full restart) over trusting a thin or corrupt dyn mesh.
+    See module docstring for criteria.
+    """
+    work_dir = Path(work_dir)
+    scf_dir = work_dir / "02_scf"
+    if not scf_dir.is_dir():
+        return PhononRecoverability(
+            recoverable=False,
+            reason="no 02_scf workdir — full phonon restart",
+        )
+
+    out_path = scf_dir / "ph.out"
+    text = _read_text(out_path)
+
+    if text is not None and _job_done(text):
+        return PhononRecoverability(
+            recoverable=False,
+            reason="ph.out already JOB DONE (use step skip, not recover)",
+        )
+
+    if text is not None and _ph_out_has_unsafe_recover_markers(text):
+        return PhononRecoverability(
+            recoverable=False,
+            reason="ph.out has recover-unsafe markers — full phonon restart",
+        )
+
+    dyn_files = _nonempty_files(sorted(scf_dir.glob(f"{prefix}.dyn*")))
+    dvscf_files = _nonempty_files(
+        sorted(scf_dir.glob(f"{prefix}.dvscf*")) + sorted(scf_dir.glob("dvscf*"))
+    )
+    ph0 = scf_dir / "_ph0"
+    has_ph0 = _dir_has_files(ph0)
+
+    artifacts: list[str] = []
+    if dyn_files:
+        artifacts.append(f"dyn×{len(dyn_files)}")
+    if has_ph0:
+        artifacts.append("_ph0/")
+    if dvscf_files:
+        artifacts.append(f"dvscf×{len(dvscf_files)}")
+
+    if not artifacts:
+        return PhononRecoverability(
+            recoverable=False,
+            reason=(
+                "incomplete phonon without dyn/_ph0/dvscf artifacts "
+                "— full phonon restart"
+            ),
+        )
+
+    return PhononRecoverability(
+        recoverable=True,
+        reason="incomplete DFPT with promising on-disk artifacts",
+        artifacts=tuple(artifacts),
+    )
 
 
 def probe_vc_relax(
@@ -271,10 +406,16 @@ def probe_phonon(
 
     # Conservative: require JOB DONE for a completed ph.x run
     if not _job_done(text):
+        rec = assess_phonon_recoverability(work_dir, prefix=prefix)
+        msg = "ph.out incomplete (no JOB DONE)"
+        if rec.recoverable:
+            msg = f"{msg} — recoverable DFPT ({rec.message})"
+        else:
+            msg = f"{msg} — {rec.reason}"
         return StepProbe(
             name="phonon",
             complete=False,
-            message="ph.out incomplete (no JOB DONE) — will re-run phonon step",
+            message=msg,
             stdout_path=out_path,
         )
 
@@ -545,6 +686,27 @@ def probe_workdir(
 
     ckpt.log = log_lines
     return ckpt
+
+
+def ph_recover_hard_failure(stdout_path: Path | None, *, returncode: int) -> bool:
+    """True when a recover=.true. ph.x run should fall back to clean + full restart.
+
+    Incomplete-but-interrupted (no JOB DONE, no hard error) is **not** a hard
+    failure — leave artifacts so the next re-run can try recover again.
+    """
+    text = _read_text(stdout_path) if stdout_path is not None else None
+    if text is not None and _ph_out_has_unsafe_recover_markers(text):
+        return True
+    if text is not None and _job_done(text):
+        return False
+    # Non-zero without JOB DONE: only hard-fail if QE reported an error-like exit
+    # and there is no remaining promising state (caller also re-checks recoverability).
+    if int(returncode) != 0 and text is not None:
+        low = text.lower()
+        if "error" in low or "abort" in low or "stopped" in low:
+            # Still prefer re-probe; hard only when clearly not recoverable next time
+            return True
+    return False
 
 
 def clean_step_outputs(

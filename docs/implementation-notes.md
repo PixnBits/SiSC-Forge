@@ -1,5 +1,78 @@
 # Implementation Notes
 
+## Slice 22 (2026-07-29) — Desktop pause/resume + QE DFPT recover
+
+**Scope**: When multi-hour DFPT (`ph.x`) is interrupted, prefer QE-native
+`recover=.true.` over wiping partial phonon outputs — with a **safe fallback**
+to the previous clean + full-step restart. Clarifies product pause/resume vs
+Folding@home-style mid-iteration checkpoints. Time estimation remains Slice 21.
+
+| Item | Location |
+|------|----------|
+| Recoverability probe | `qe_checkpoint.assess_phonon_recoverability` |
+| ph.x recover flag | `inputs.build_ph_input(recover=…)`, `recipes.run_ph(recover=…)` |
+| Resume wiring | `recipes._run_ph_with_optional_recover` (phonon + EPW DFPT) |
+| CLI interrupt UX | `cli/main.py` Ctrl+C → re-run same command message |
+| Tests | `tests/test_qe_checkpoint.py` (fixture workdirs, no real QE) |
+| Walkthrough | `docs/examples/desktop_shortlist_epw.md` |
+
+### Product model (honest)
+
+| Layer | What resume does |
+|-------|------------------|
+| Campaign | Skip candidates with successful store evaluations (Slice 13) |
+| Mid-step | Skip completed vc-relax / SCF / finished phonon / EPW steps (Slice 15) |
+| **DFPT recover (this slice)** | Incomplete phonon with promising dyn/`_ph0`/dvscf → `ph.x` + `recover=.true.` |
+| Fallback | Unrecoverable or hard recover failure → clean phonon outputs + full `ph.x` |
+
+**Not** Folding@home: we do **not** checkpoint arbitrary mid-iteration SCF/DFPT
+state outside what QE itself writes. Pause = kill/sleep/power loss is safe at
+the **process** level; resume = re-issue the same
+`siscforge run --calculator qe-epw <yaml>` command.
+
+### Conservative recoverable criteria
+
+Incomplete phonon (`ph.out` lacks `JOB DONE`) **and** at least one of:
+
+- non-empty `{prefix}.dyn*`
+- non-empty `_ph0/`
+- non-empty `{prefix}.dvscf*` / `dvscf*`
+
+**and** no hard recover-unsafe markers in `ph.out` (`cannot recover`,
+`error reading recover`, …). Prefer false full restart over trusting a corrupt
+mesh.
+
+### Log lines
+
+```text
+resuming DFPT with QE recover=.true. (incomplete DFPT with promising on-disk artifacts [dyn×3, _ph0/])
+DFPT recover failed or unsafe — full phonon step restart
+running DFPT / phonon
+```
+
+Never mark a candidate `JOB DONE` / success unless QE output still parses as
+complete after recover.
+
+### Kill-during-ph.x (after this slice)
+
+1. Campaign store: no success → candidate still selected.
+2. Workdir: skip vc-relax, skip SCF, incomplete phonon.
+3. If dyn/`_ph0`/dvscf look good → **recover path** (artifacts kept).
+4. Else or recover hard-fails → clean + full phonon restart (prior behavior).
+5. Incomplete EPW (`epw.x`) still full step restart (no fragile EPW recover).
+
+### Limitations
+
+- Mid-SCF-iteration / mid-Broyden pause still not supported (pw.x restart is a
+  separate problem; incomplete SCF re-runs that step).
+- phonopy_fd path unchanged (band.yaml completeness only).
+- EPW incomplete: clean + re-run step only.
+- QE built with interrupted runs under `reduce_io=.true.` cannot recover (we do
+  not set `reduce_io`).
+
+---
+
+
 ## Slice 21 (2026-07-29) — Desktop walltime expectation UX
 
 **Scope**: Order-of-magnitude walltime bands before expensive QE/EPW work, plus
@@ -233,18 +306,20 @@ upstream steps after a kill during DFPT/EPW. Complements campaign-level resume
 | nscf | `nscf.out` JOB DONE + parseable energy |
 | epw | `epw.out` JOB DONE + parseable λ or Tc |
 
-Incomplete step: clean that step’s partial outputs only, then re-run **from the
-start of that step** (not mid-iteration `ph.x` recover).
+Incomplete non-phonon steps: clean that step’s partial outputs only, then re-run
+from the start of that step. **Incomplete DFPT** may use QE `recover=.true.`
+when artifacts look safe — see **Slice 22**.
 
 ### Kill-during-ph.x scenario
 1. Campaign store has no successful evaluation → candidate is selected to run.
 2. Workdir probe: skip vc-relax, skip SCF, incomplete phonon.
-3. Logs: `skip vc-relax (checkpoint)`, `skip SCF (checkpoint)`, `running DFPT / phonon`.
-4. Partial `ph.out` / dyn* removed; `ph.x` restarts; charge density `*.save` kept.
-5. `--force-rerun` / `force_rerun_qe_steps`: no step skips.
+3. Logs: `skip vc-relax (checkpoint)`, `skip SCF (checkpoint)`, then either
+   `resuming DFPT with QE recover=.true.` or `running DFPT / phonon` (full restart).
+4. Charge density `*.save` kept; dyn/`_ph0` kept on recover path only.
+5. `--force-rerun` / `force_rerun_qe_steps`: no step skips / no recover.
 
 ### Limitations
-- Cannot attach to a live mid-iteration `ph.x` recoverably; we restart the step.
+- Not arbitrary mid-iteration pause (see Slice 22 vs Folding@home).
 - Phonopy FD mid-step only checks `band.yaml` completeness.
 - Campaign-level skip still wins when the evaluation is already successful.
 

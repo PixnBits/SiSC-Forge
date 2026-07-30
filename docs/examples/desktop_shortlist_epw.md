@@ -152,13 +152,25 @@ Checkpoint summary (expensive path): skipped=1, ran=5, ok=3, failed=2
 
 **Kill during DFPT / EPW (mid-candidate):** re-issue the same command. Campaign
 resume does not skip that candidate (no successful evaluation yet), but
-**mid-step QE resume** reuses valid `qe_work/` artifacts:
+**mid-step QE resume** reuses valid `qe_work/` artifacts. Incomplete DFPT with
+promising dyn / `_ph0` / dvscf files is re-launched with QE **`recover=.true.`**
+instead of discarding multi-hour progress; if recover is unsafe or hard-fails,
+SiSC-Forge falls back to a clean full phonon step.
 
 ```text
 skip vc-relax (checkpoint)
 skip SCF (checkpoint)
-running DFPT / phonon    # restarts ph.x from step start, not mid-iteration
+resuming DFPT with QE recover=.true.   # preferred when dyn/_ph0 look good
+# or:
+# DFPT recover failed or unsafe — full phonon step restart
+# running DFPT / phonon
 ```
+
+**Pause/resume model:** interrupt is safe at the process level (Ctrl+C, sleep,
+power loss). Resume = same `siscforge run` command. Granularity is **campaign
+candidate + QE step + QE-native DFPT recover** — not Folding@home-style
+arbitrary mid-iteration checkpoints. Incomplete `epw.x` still restarts that
+step from its beginning (no fragile EPW recover).
 
 | Flag | Use |
 |------|-----|

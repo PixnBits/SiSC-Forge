@@ -362,11 +362,16 @@ def run_ph(
     qe_env: QEEnvironment | None = None,
     for_epw: bool = False,
     outdir: Path | None = None,
+    recover: bool = False,
 ) -> QEStepResult:
     """Write and run ``ph.x`` in *work_dir* (expects prior pw.x outdir).
 
     When *for_epw* is True, force multi-q ``ldisp`` with ``fildvscf='dvscf'``
     (required for EPW's ``save/`` preparation via ``pp.py``).
+
+    When *recover* is True, launch with QE ``recover=.true.`` so interrupted
+    DFPT can continue from on-disk dyn / ``_ph0`` state (do not clean those
+    first). Caller is responsible for recoverability checks.
     """
     qe_env = qe_env or require_qe(need_phonon=True)
     assert qe_env.ph is not None
@@ -404,6 +409,7 @@ def run_ph(
         alpha_mix=alpha_mix,
         nmix_ph=config.ph_nmix,
         niter_ph=config.ph_niter,
+        recover=recover,
     )
     in_path = work_dir / "ph.in"
     out_path = work_dir / "ph.out"
@@ -522,6 +528,81 @@ def _force_qe_steps(config: DFTConfig, *, force_qe_steps: bool | None) -> bool:
     return False
 
 
+
+def _run_ph_with_optional_recover(
+    config: DFTConfig,
+    *,
+    work_dir: Path,
+    scf_dir: Path,
+    prefix: str,
+    qe_env: QEEnvironment | None,
+    for_epw: bool,
+    outdir: Path | None,
+    log: list[str],
+) -> QEStepResult:
+    """Run ``ph.x`` with QE-native recover when partial DFPT looks safe.
+
+    Log lines (product-facing):
+    - ``resuming DFPT with QE recover=.true.``
+    - ``DFPT recover failed or unsafe — full phonon step restart``
+    - ``running DFPT / phonon`` (clean full step)
+    """
+    from siscforge.calculators.qe.qe_checkpoint import (
+        assess_phonon_recoverability,
+        clean_step_outputs,
+        ph_recover_hard_failure,
+    )
+
+    rec = assess_phonon_recoverability(work_dir, prefix=prefix)
+    if rec.recoverable:
+        log.append(f"resuming DFPT with QE recover=.true. ({rec.message})")
+        step = run_ph(
+            config,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            for_epw=for_epw,
+            outdir=outdir,
+            recover=True,
+        )
+        hard_fail = ph_recover_hard_failure(
+            step.stdout_path, returncode=step.returncode
+        )
+        # Also fall back when recover left no useful state and failed.
+        if hard_fail or (
+            not step.success
+            and not assess_phonon_recoverability(work_dir, prefix=prefix).recoverable
+        ):
+            log.append(
+                "DFPT recover failed or unsafe — full phonon step restart"
+            )
+            clean_step_outputs(work_dir, "phonon", prefix=prefix)
+            step = run_ph(
+                config,
+                scf_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+                for_epw=for_epw,
+                outdir=outdir,
+                recover=False,
+            )
+        return step
+
+    # Unrecoverable / no promising artifacts: clean partials if present, full run
+    if (scf_dir / "ph.out").exists() or list(scf_dir.glob(f"{prefix}.dyn*")):
+        clean_step_outputs(work_dir, "phonon", prefix=prefix)
+    log.append("running DFPT / phonon")
+    return run_ph(
+        config,
+        scf_dir,
+        prefix=prefix,
+        qe_env=qe_env,
+        for_epw=for_epw,
+        outdir=outdir,
+        recover=False,
+    )
+
+
 def run_relax_scf_phonon(
     structure: Structure,
     config: DFTConfig,
@@ -542,8 +623,9 @@ def run_relax_scf_phonon(
 
     Mid-step resume: when enabled (default), successful upstream outputs in
     *work_dir* are re-used so a kill during phonon does not re-run relax/SCF.
-    Incomplete step outputs are cleaned and that step is re-run from its start
-    (not mid-iteration recovery).
+    Incomplete DFPT that looks recoverable is re-launched with QE
+    ``recover=.true.``; otherwise partial phonon outputs are cleaned and the
+    step restarts from scratch (safe fallback).
     """
     from siscforge.calculators.qe.qe_checkpoint import (
         clean_step_outputs,
@@ -704,10 +786,16 @@ def run_relax_scf_phonon(
                 result.success = False
                 return result
         else:
-            if (scf_dir / "ph.out").exists():
-                clean_step_outputs(work_dir, "phonon", prefix=prefix)
-            log.append("running DFPT / phonon")
-            step = run_ph(config, scf_dir, prefix=prefix, qe_env=qe_env)
+            step = _run_ph_with_optional_recover(
+                config,
+                work_dir=work_dir,
+                scf_dir=scf_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+                for_epw=False,
+                outdir=None,
+                log=log,
+            )
             result.steps.append(step)
             texts: list[str] = []
             if step.stdout_path.is_file():

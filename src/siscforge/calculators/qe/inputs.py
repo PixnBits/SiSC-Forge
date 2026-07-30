@@ -213,11 +213,16 @@ def build_ph_input(
     alpha_mix: float = 0.3,
     nmix_ph: int = 8,
     niter_ph: int = 100,
+    recover: bool = False,
 ) -> str:
     """Return a minimal ``ph.x`` input deck as a string.
 
     Gamma-only: set ``ldisp=False`` and use a single q = (0,0,0) block.
     For EPW, set ``ldisp=True`` and ``fildvscf='dvscf'``.
+
+    When *recover* is True, set QE ``recover=.true.`` so ``ph.x`` resumes an
+    interrupted DFPT run from on-disk restart files (dyn / ``_ph0`` / outdir).
+    Do not combine with ``reduce_io=.true.`` (not set in this builder).
 
     Soft metals often need reduced ``alpha_mix`` and extra empty bands on the
     prior SCF (see ``DFTConfig.nbnd``); otherwise Broyden can diverge
@@ -236,6 +241,8 @@ def build_ph_input(
         f"  nmix_ph = {int(nmix_ph)}",
         f"  niter_ph = {int(niter_ph)}",
     ]
+    if recover:
+        lines.append("  recover = .true.")
     if fildvscf:
         lines.append(f"  fildvscf = '{fildvscf}'")
     if ldisp:
