@@ -1,5 +1,53 @@
 # Implementation Notes
 
+## Slice 23 (2026-08-02) — Phonon-first / stability-gated discovery
+
+**Scope**: Second-workstation path to map dynamical stability before any EPW.
+Addresses poor ROI when screening EPW shortlists return only
+`result_quality=unreliable` (imaginary modes + high/extreme λ). No DMFT, JJ,
+trained GNN, or full SQS.
+
+| Item | Location |
+|------|----------|
+| Stability filter + shortlist modes | `siscforge.shortlist` (`stable_only`, `stable_or_soft`) |
+| CLI | `siscforge shortlist --mode stable_only`, `--soft-min-cm1`, `--stable-sort` |
+| Phonon-only run path | `cli/main.py` — skip EPW npool/Wannier preflight when `do_epw=false` |
+| Rank | `--stable-first`; auto stable-first on phonon-only `run` |
+| Example | `examples/nbti_n_phonon_map.yaml` |
+| Walkthrough | `docs/examples/nbti_n_phonon_map.md` |
+| Tests | `tests/test_shortlist.py` (stable_only / none-stable / config load) |
+
+### Two-machine loop
+
+```bash
+# Machine 2 — broad phonon map (screening 2³ q, not refine 4³)
+siscforge run --dry-run examples/nbti_n_phonon_map.yaml
+siscforge run --calculator qe examples/nbti_n_phonon_map.yaml
+
+# Stable survivors → EPW shortlist (fails clearly if none stable)
+siscforge shortlist outputs/nbti_n_phonon_map \
+  -o examples/nbti_n_phonon_map_epw.yaml --mode stable_only -n 6
+
+# Machine 1/2 — EPW on survivors only
+siscforge run --calculator qe-epw examples/nbti_n_phonon_map_epw.yaml
+```
+
+### Modes
+
+| Mode | Behavior |
+|------|----------|
+| `stable_only` | `phonon.dynamically_stable` + no imag modes + status ok/mock; sort by Si |
+| `stable_or_soft` | `min_frequency_cm1 >= soft_min_cm1` (default 0); no silent unstable fallback |
+| existing | `al_selected` / `top_acquisition` / `top_rank` unchanged |
+
+### Limitations
+
+- Coarse phonon grids can still mis-label stability
+- Does not replace denser-grid refine for production claims
+- Mock dry-run invents ~15% imaginary modes for realism
+
+---
+
 ## Slice 22 (2026-07-29) — Desktop pause/resume + QE DFPT recover
 
 **Scope**: When multi-hour DFPT (`ph.x`) is interrupted, prefer QE-native

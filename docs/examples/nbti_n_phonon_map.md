@@ -1,0 +1,111 @@
+# Phonon-first stability map → stable-only EPW shortlist
+
+**Two-machine discovery loop** for Nb–Ti–(Zr)–N when screening EPW shortlists
+return only `result_quality=unreliable` (imaginary modes + inflated λ).
+
+Dense refine (e.g. 4³ q-mesh) on top-Si **unstable** cells is multi-day DFPT
+with poor ROI. Instead:
+
+| Machine | Job | Cost |
+|---------|-----|------|
+| **2** (this example) | Broad composition × strain **phonon map** (`do_epw: false`) | Screening DFPT 2³ q — cheaper than EPW |
+| **1 or 2** | `shortlist --mode stable_only` → **EPW only on survivors** | Screening EPW on a handful of cells |
+
+## Prerequisites
+
+- `pip install -e ".[dev]"`
+- Real map: QE with `pw.x` / `ph.x` (EPW **not** required for the map), UPF dir
+- See [docs/SETUP.md](../SETUP.md)
+
+## Step 1 — Dry-run the phonon map
+
+```bash
+siscforge run --dry-run examples/nbti_n_phonon_map.yaml
+```
+
+Expect:
+
+- Broad Nb/Ti/Zr binaries + Nb–Ti ternaries × fine strain (−4% … +2%)
+- Formation filter on; **AL off** (every kept candidate gets phonon)
+- Mock phonon fills `dynamically_stable` / `min_frequency_cm1`
+- Rank table **Stable** / **min ω** columns; store under `outputs/nbti_n_phonon_map/`
+- Console line: **Phonon-only campaign** (no EPW npool / Wannier preflight)
+
+## Step 2 — Real phonon map (machine 2)
+
+```bash
+# edit dft.pseudo_dir / dft.nproc in the YAML for your box
+siscforge run --calculator qe examples/nbti_n_phonon_map.yaml
+```
+
+Resume-safe: re-run the same command after sleep/kill. Mid-step DFPT may use
+QE `recover=.true.` (see [desktop_shortlist_epw.md](desktop_shortlist_epw.md)).
+
+**Grids stay screening** (`qpoints: [2,2,2]`). Do **not** turn this YAML into
+a refine-tier 4³ campaign — densify only on stable EPW survivors later.
+
+## Step 3 — Inspect stability
+
+```bash
+siscforge rank outputs/nbti_n_phonon_map --stable-first
+# or open outputs/nbti_n_phonon_map/evaluations.csv
+# columns: dynamically_stable, has_imaginary_modes, min_frequency_cm1, result_quality
+```
+
+- Imaginary modes → trust layer `unreliable` even without EPW
+- Soft modes (low positive min ω) → often `soft_modes` / screening flags
+
+## Step 4 — Stable-only EPW shortlist
+
+```bash
+siscforge shortlist outputs/nbti_n_phonon_map \
+  -o examples/nbti_n_phonon_map_epw.yaml \
+  --name nbti_n_phonon_map_epw \
+  --mode stable_only \
+  --max-jobs 6 \
+  --nproc 8 \
+  --pseudo-dir /usr/share/espresso/pseudo
+```
+
+- **Only** `status=ok|mock` rows with `phonon.dynamically_stable` (no imag modes)
+- Sorted by **highest Si-feasibility** among survivors (`--stable-sort si`)
+- If **none** stable: CLI exits with a clear error — **no** silent fall-back to unstable top-k
+
+Nearly stable (soft but non-imaginary, or tiny numeric imag):
+
+```bash
+siscforge shortlist outputs/nbti_n_phonon_map \
+  -o examples/nbti_n_phonon_map_epw.yaml \
+  --mode stable_or_soft --soft-min-cm1 0
+# optional: --soft-min-cm1 -5 for mild acoustic noise only
+```
+
+## Step 5 — EPW on survivors (machine 1/2)
+
+```bash
+siscforge run --dry-run examples/nbti_n_phonon_map_epw.yaml   # mock smoke
+siscforge run --calculator qe-epw examples/nbti_n_phonon_map_epw.yaml
+```
+
+Then rank/export and check `result_quality` before citing Tc. Unreliable
+screening λ on *stable* cells may still need `siscforge refine` (denser grids).
+
+## Why not AL → EPW first?
+
+The prior 6-candidate Nb–Ti–N screening EPW shortlist finished with **all**
+`result_quality=unreliable` (imaginary modes + high/extreme λ). Trust layer
+correctly down-ranked them. Phonon-first spends desktop hours on stability
+coverage; EPW budget goes only to cells that can host meaningful e-ph.
+
+## Limitations
+
+- Coarse 2³ DFPT can **mis-label** stability (false stable / false imag)
+- No SQS disorder, no DMFT, no JJ metrics in this path
+- Mock dry-run still invents phonon stability (~15% imag) — real QE is the map
+- Production dynamical stability still needs denser q and careful analysis
+
+## Related
+
+- [desktop_shortlist_epw.md](desktop_shortlist_epw.md) — AL shortlist → EPW → refine
+- [nbti_n_al_broad.md](nbti_n_al_broad.md) — broader AL dry-run (EPW-oriented)
+- Example YAML: `examples/nbti_n_phonon_map.yaml`

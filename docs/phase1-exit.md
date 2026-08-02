@@ -50,6 +50,7 @@ siscforge run --dry-run examples/nbti_n_al_broad.yaml
 siscforge run --dry-run examples/nbn_epw.yaml
 siscforge run --dry-run examples/mgb2_epw.yaml
 siscforge run --dry-run examples/nbn_si_45deg.yaml
+siscforge run --dry-run examples/nbti_n_phonon_map.yaml
 ```
 
 Validation record: [validation-phase1.md](validation-phase1.md).

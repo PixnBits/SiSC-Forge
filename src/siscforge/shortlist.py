@@ -1,11 +1,19 @@
-"""Build desktop EPW shortlist campaigns from an AL / dry-run store.
+"""Build desktop EPW shortlist campaigns from an AL / phonon / dry-run store.
 
-Workflow
---------
-1. ``siscforge run --dry-run examples/nbti_n_al_broad.yaml``
-2. ``siscforge shortlist outputs/nbti_n_al_broad -o examples/…_shortlist.yaml``
-3. ``siscforge run --calculator qe-epw examples/…_shortlist.yaml``
-   (resume/skip finished ok; continue on failure)
+Workflows
+---------
+1. AL dry-run → shortlist EPW::
+
+       siscforge run --dry-run examples/nbti_n_al_broad.yaml
+       siscforge shortlist outputs/nbti_n_al_broad -o examples/…_shortlist.yaml
+       siscforge run --calculator qe-epw examples/…_shortlist.yaml
+
+2. Phonon-first stability map → EPW only on survivors (two-machine loop)::
+
+       siscforge run --calculator qe examples/nbti_n_phonon_map.yaml
+       siscforge shortlist outputs/nbti_n_phonon_map -o examples/…_epw.yaml \\
+         --mode stable_only
+       siscforge run --calculator qe-epw examples/…_epw.yaml
 """
 
 from __future__ import annotations
@@ -21,11 +29,20 @@ from siscforge.models.config import (
     CandidateSpec,
     DFTConfig,
     EPWConfig,
+    QualityConfig,
     RunConfig,
 )
 from siscforge.store import EvaluationStore
 
-SelectMode = Literal["al_selected", "top_acquisition", "top_rank"]
+SelectMode = Literal[
+    "al_selected",
+    "top_acquisition",
+    "top_rank",
+    "stable_only",
+    "stable_or_soft",
+]
+
+_OK_STATUS = frozenset({"ok", "mock"})
 
 
 def load_evaluations_from_store(store_dir: str | Path) -> list[CandidateEvaluation]:
@@ -37,11 +54,116 @@ def load_evaluations_from_store(store_dir: str | Path) -> list[CandidateEvaluati
     return evals
 
 
+def _has_ok_status(ev: CandidateEvaluation) -> bool:
+    return (ev.status or "").lower() in _OK_STATUS
+
+
+def _phonon_min_freq(ev: CandidateEvaluation) -> float | None:
+    if ev.phonon is None:
+        return None
+    return ev.phonon.min_frequency_cm1
+
+
+def is_dynamically_stable(ev: CandidateEvaluation) -> bool:
+    """True when phonon reports dynamical stability (no imaginary modes)."""
+    ph = ev.phonon
+    if ph is None:
+        return False
+    if ph.has_imaginary_modes:
+        return False
+    if ph.dynamically_stable is False:
+        return False
+    return True
+
+
+def is_stable_or_soft(
+    ev: CandidateEvaluation,
+    *,
+    soft_min_cm1: float = 0.0,
+) -> bool:
+    """Nearly stable: no hard imaginary modes below *soft_min_cm1*.
+
+    Allows soft (low but non-imaginary) modes. When ``min_frequency_cm1`` is
+    missing, falls back to :func:`is_dynamically_stable`.
+    """
+    ph = ev.phonon
+    if ph is None:
+        return False
+    min_f = ph.min_frequency_cm1
+    if min_f is not None:
+        return float(min_f) >= float(soft_min_cm1)
+    # No frequency number — require clean stability flags
+    return is_dynamically_stable(ev)
+
+
+def filter_stable_evaluations(
+    evaluations: list[CandidateEvaluation],
+    *,
+    mode: Literal["stable_only", "stable_or_soft"] = "stable_only",
+    soft_min_cm1: float = 0.0,
+    require_ok: bool = True,
+) -> list[CandidateEvaluation]:
+    """Filter evaluations by dynamical stability.
+
+    Parameters
+    ----------
+    mode
+        ``stable_only`` — ``phonon.dynamically_stable`` and no imaginary modes.
+        ``stable_or_soft`` — min frequency ≥ *soft_min_cm1* (default 0 cm⁻¹).
+    soft_min_cm1
+        Floor on min phonon frequency for ``stable_or_soft`` (cm⁻¹). Slightly
+        negative values tolerate acoustic numerical noise.
+    require_ok
+        Require evaluation status in {ok, mock}.
+    """
+    out: list[CandidateEvaluation] = []
+    for ev in evaluations:
+        if require_ok and not _has_ok_status(ev):
+            continue
+        if mode == "stable_only":
+            if is_dynamically_stable(ev):
+                out.append(ev)
+        elif mode == "stable_or_soft":
+            if is_stable_or_soft(ev, soft_min_cm1=soft_min_cm1):
+                out.append(ev)
+        else:
+            raise ValueError(f"Unknown stability filter mode: {mode!r}")
+    return out
+
+
+def _sort_stable_pool(
+    pool: list[CandidateEvaluation],
+    *,
+    sort_by: Literal["si", "rank"] = "si",
+) -> list[CandidateEvaluation]:
+    """Prefer highest Si-feasibility among stable survivors (default)."""
+    if sort_by == "rank":
+        return sorted(
+            pool,
+            key=lambda e: (
+                e.rank if e.rank is not None else 10**9,
+                -(e.si_feasibility.total if e.si_feasibility else -1.0),
+                e.candidate.formula,
+            ),
+        )
+    # si (default)
+    return sorted(
+        pool,
+        key=lambda e: (
+            -(e.si_feasibility.total if e.si_feasibility else -1.0),
+            e.rank if e.rank is not None else 10**9,
+            e.candidate.formula,
+        ),
+    )
+
+
 def select_shortlist_evaluations(
     evaluations: list[CandidateEvaluation],
     *,
     mode: SelectMode = "al_selected",
     max_jobs: int = 6,
+    soft_min_cm1: float = 0.0,
+    stable_sort: Literal["si", "rank"] = "si",
 ) -> list[CandidateEvaluation]:
     """Pick evaluations for the expensive EPW shortlist.
 
@@ -53,9 +175,53 @@ def select_shortlist_evaluations(
         Highest ``acquisition_score`` first.
     top_rank
         Lowest rank number (1 = best) first; unranked last.
+    stable_only
+        Only evaluations with ``phonon.dynamically_stable`` (and status ok/mock).
+        Sorted by Si-feasibility (or rank if ``stable_sort=rank``).
+        **Raises** if none qualify — does not fall back to unstable top-k.
+    stable_or_soft
+        Like stable_only but allows soft modes with
+        ``min_frequency_cm1 >= soft_min_cm1`` (default 0). Still fails clearly
+        if the pool is empty.
     """
     if max_jobs < 1:
         raise ValueError("max_jobs must be >= 1")
+
+    if mode in {"stable_only", "stable_or_soft"}:
+        pool = filter_stable_evaluations(
+            evaluations,
+            mode=mode,  # type: ignore[arg-type]
+            soft_min_cm1=soft_min_cm1,
+            require_ok=True,
+        )
+        if not pool:
+            n_total = len(evaluations)
+            n_with_ph = sum(1 for e in evaluations if e.phonon is not None)
+            n_imag = sum(
+                1
+                for e in evaluations
+                if e.phonon is not None
+                and (e.phonon.has_imaginary_modes or not e.phonon.dynamically_stable)
+            )
+            if mode == "stable_only":
+                raise ValueError(
+                    f"No dynamically stable evaluations for shortlist "
+                    f"(mode=stable_only). Store has {n_total} evaluations, "
+                    f"{n_with_ph} with phonon data, {n_imag} with imaginary/"
+                    f"unstable modes. Expand the phonon map, relax strain, or "
+                    f"try --mode stable_or_soft (soft_min_cm1={soft_min_cm1:g}). "
+                    f"Refusing to fall back to unstable top-k."
+                )
+            raise ValueError(
+                f"No stable/soft evaluations for shortlist "
+                f"(mode=stable_or_soft, soft_min_cm1={soft_min_cm1:g}). "
+                f"Store has {n_total} evaluations, {n_with_ph} with phonon, "
+                f"{n_imag} imag/unstable. Lower soft_min_cm1 only for numeric "
+                f"noise; do not shortlist hard imaginary cells for EPW. "
+                f"Refusing to fall back to unstable top-k."
+            )
+        ranked = _sort_stable_pool(pool, sort_by=stable_sort)
+        return ranked[:max_jobs]
 
     if mode == "al_selected":
         selected = [e for e in evaluations if e.al_selected_for_expensive is True]
@@ -77,15 +243,20 @@ def select_shortlist_evaluations(
         )
         return ranked[:max_jobs]
 
-    # top_rank
-    ranked = sorted(
-        evaluations,
-        key=lambda e: (
-            e.rank if e.rank is not None else 10**9,
-            e.candidate.formula,
-        ),
+    if mode == "top_rank":
+        ranked = sorted(
+            evaluations,
+            key=lambda e: (
+                e.rank if e.rank is not None else 10**9,
+                e.candidate.formula,
+            ),
+        )
+        return ranked[:max_jobs]
+
+    raise ValueError(
+        f"Unknown shortlist mode: {mode!r}. "
+        f"Use al_selected | top_acquisition | top_rank | stable_only | stable_or_soft"
     )
-    return ranked[:max_jobs]
 
 
 def evaluation_to_spec(ev: CandidateEvaluation) -> CandidateSpec:
@@ -98,6 +269,12 @@ def evaluation_to_spec(ev: CandidateEvaluation) -> CandidateSpec:
     if ev.si_feasibility is not None:
         meta["source_si_total"] = ev.si_feasibility.total
         meta["source_si_notes"] = ev.si_feasibility.notes
+    if ev.phonon is not None:
+        meta["source_dynamically_stable"] = ev.phonon.dynamically_stable
+        meta["source_min_frequency_cm1"] = ev.phonon.min_frequency_cm1
+        meta["source_has_imaginary_modes"] = ev.phonon.has_imaginary_modes
+    if ev.result_quality is not None:
+        meta["source_result_quality"] = ev.result_quality
     return CandidateSpec(
         formula=c.formula,
         in_plane_strain=float(c.in_plane_strain or 0.0),
@@ -167,6 +344,8 @@ def build_shortlist_campaign(
     source_store: str | None = None,
     max_jobs: int = 6,
     mode: SelectMode = "al_selected",
+    soft_min_cm1: float = 0.0,
+    stable_sort: Literal["si", "rank"] = "si",
     output_dir: str | None = None,
     pseudo_dir: str | None = None,
     nproc: int = 4,
@@ -174,7 +353,13 @@ def build_shortlist_campaign(
     calculator: str = "qe-epw",
 ) -> tuple[CampaignConfig, list[CandidateEvaluation]]:
     """Build a focused campaign for real (or mock) EPW on the shortlist only."""
-    chosen = select_shortlist_evaluations(evaluations, mode=mode, max_jobs=max_jobs)
+    chosen = select_shortlist_evaluations(
+        evaluations,
+        mode=mode,
+        max_jobs=max_jobs,
+        soft_min_cm1=soft_min_cm1,
+        stable_sort=stable_sort,
+    )
     if not chosen:
         raise ValueError("No evaluations available to shortlist")
 
@@ -186,6 +371,10 @@ def build_shortlist_campaign(
         f"Desktop EPW shortlist ({len(specs)} candidates)",
         f"selection={mode}",
     ]
+    if mode in {"stable_only", "stable_or_soft"}:
+        desc_parts.append(
+            f"stability-gated (soft_min_cm1={soft_min_cm1:g}, sort={stable_sort})"
+        )
     if source_store:
         desc_parts.append(f"from {source_store}")
 
@@ -223,6 +412,8 @@ def build_shortlist_campaign(
                 "mode": mode,
                 "n_selected": len(specs),
                 "formulas": [s.formula for s in specs],
+                "soft_min_cm1": soft_min_cm1 if mode in {"stable_only", "stable_or_soft"} else None,
+                "stable_sort": stable_sort if mode in {"stable_only", "stable_or_soft"} else None,
             }
         },
     )
@@ -258,16 +449,35 @@ def shortlist_summary_table(chosen: list[CandidateEvaluation]) -> list[dict[str,
     for i, ev in enumerate(chosen, start=1):
         c = ev.candidate
         si = ev.si_feasibility
+        ph = ev.phonon
+        if ph is None:
+            stable_s = "—"
+        elif ph.dynamically_stable and not ph.has_imaginary_modes:
+            stable_s = "yes"
+        else:
+            stable_s = "NO"
+        min_f = ph.min_frequency_cm1 if ph is not None else None
         rows.append(
             {
                 "#": i,
                 "formula": c.formula,
                 "strain": c.in_plane_strain,
                 "si": si.total if si else None,
-                "si_notes": (si.notes[:80] + "…") if si and si.notes and len(si.notes) > 80 else (si.notes if si else None),
+                "si_notes": (
+                    (si.notes[:80] + "…")
+                    if si and si.notes and len(si.notes) > 80
+                    else (si.notes if si else None)
+                ),
                 "acq": ev.acquisition_score,
+                "stable": stable_s,
+                "min_freq": min_f,
                 "status": ev.status,
                 "candidate_id": c.candidate_id[:8],
             }
         )
     return rows
+
+
+# Re-export for callers that want soft-mode defaults
+DEFAULT_SOFT_MIN_CM1 = 0.0
+DEFAULT_QUALITY_SOFT_CM1 = QualityConfig().min_frequency_cm1_soft

@@ -7,6 +7,15 @@ from siscforge.models.config import QualityConfig, RankingConfig
 from siscforge.quality import apply_quality_assessment, quality_tier_rank
 
 
+def _is_stable(evaluation: CandidateEvaluation) -> bool:
+    ph = evaluation.phonon
+    if ph is None:
+        return False
+    if ph.has_imaginary_modes:
+        return False
+    return bool(ph.dynamically_stable)
+
+
 def compute_composite_score(
     evaluation: CandidateEvaluation,
     config: RankingConfig | None = None,
@@ -77,11 +86,20 @@ def compute_composite_score(
 def rank_evaluations(
     evaluations: list[CandidateEvaluation],
     config: RankingConfig | None = None,
+    *,
+    stable_first: bool = False,
 ) -> list[CandidateEvaluation]:
     """Return a new list of evaluations sorted by composite score (desc).
 
     Applies :func:`apply_quality_assessment` first, then scores and ranks.
     Updates ``composite_score``, ``rank``, and quality fields on copies.
+
+    Parameters
+    ----------
+    stable_first
+        When True, all dynamically stable rows sort above unstable ones
+        (useful for phonon-only stores where Si/composite ties are common).
+        Unstable rows keep relative composite order among themselves.
     """
     config = config or RankingConfig()
     qcfg = config.quality or QualityConfig()
@@ -96,7 +114,7 @@ def rank_evaluations(
         composite = compute_composite_score(ev, config)
         scored.append(ev.model_copy(update={"composite_score": composite}))
 
-    # Sort: composite desc, then quality tier desc, then raw performance desc
+    # Sort: optional stable-first, then composite desc, quality tier, performance
     def sort_key(e: CandidateEvaluation) -> tuple:
         comp = e.composite_score if e.composite_score is not None else -1.0
         qrank = (
@@ -105,6 +123,9 @@ def rank_evaluations(
             else 0
         )
         perf = e.performance_score if e.performance_score is not None else -1.0
+        stable_rank = 1 if _is_stable(e) else 0
+        if stable_first:
+            return (stable_rank, comp, qrank, perf)
         return (comp, qrank, perf)
 
     scored.sort(key=sort_key, reverse=True)

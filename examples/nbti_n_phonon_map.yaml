@@ -1,0 +1,136 @@
+# Machine-2 style phonon-first stability map (Nb–Ti–(Zr)–N × fine strain)
+#
+# Goal: map dynamical stability cheaply BEFORE any EPW. Only stable (or nearly
+# stable) survivors should become an EPW shortlist on machine 1/2.
+#
+# Two-machine loop:
+#   1) This map (do_phonon true, do_epw false) on the second desktop
+#   2) siscforge shortlist <store> --mode stable_only → EPW YAML
+#   3) siscforge run --calculator qe-epw <epw shortlist>
+#
+# Dry-run (mock — no QE):
+#   siscforge run --dry-run examples/nbti_n_phonon_map.yaml
+#
+# Real phonon map (screening DFPT, not dense refine 4³):
+#   # edit dft.pseudo_dir / nproc for your box
+#   siscforge run --calculator qe examples/nbti_n_phonon_map.yaml
+#
+# After the map finishes:
+#   siscforge rank outputs/nbti_n_phonon_map --stable-first
+#   siscforge shortlist outputs/nbti_n_phonon_map \
+#     -o examples/nbti_n_phonon_map_epw.yaml \
+#     --mode stable_only --max-jobs 6 --nproc 8 \
+#     --pseudo-dir /usr/share/espresso/pseudo
+#   siscforge run --calculator qe-epw examples/nbti_n_phonon_map_epw.yaml
+#
+# See docs/examples/nbti_n_phonon_map.md
+#
+# Limitations: coarse q-grids (2³) can mis-label soft modes; treat stability as
+# a discovery gate, not a production dynamical-stability proof. Do not densify
+# to refine-tier 4³ on this map — that is multi-day ROI for survivors only.
+
+name: nbti_n_phonon_map
+description: >
+  Broad Nb–Ti–(Zr)–N composition × fine strain phonon stability map for a
+  second desktop. Phonon-only (no EPW). Survivors feed shortlist --mode
+  stable_only → screening EPW on machine 1/2.
+version: "0.2"
+dry_run: false
+
+enumeration:
+  material_families:
+    - tm_nitride
+  metals:
+    - Nb
+    - Ti
+    - Zr
+  ternary_metals:
+    - Nb
+    - Ti
+  x_values:
+    - 0.25
+    - 0.5
+    - 0.75
+  supercell: [2, 2, 1]
+  substrates:
+    - Si(001)
+  # Fine strain grid for stability pockets (desktop-practical)
+  strain_values:
+    - -0.04
+    - -0.03
+    - -0.02
+    - -0.01
+    - 0.0
+    - 0.01
+    - 0.02
+  poisson_ratio: 0.25
+  seed: 42
+  max_candidates: 80
+  epitaxy_orientation: auto
+  use_buffers: true
+
+calculators:
+  - name: qe
+
+formation_filter:
+  enabled: true
+  max_e_hull_eV_per_atom: 0.30
+  max_strain_magnitude: 0.06
+
+# No λ/Tc surrogate gate — we want phonon on the full filtered pool
+surrogate:
+  tc_lambda:
+    enabled: false
+
+# Evaluate every kept candidate with phonon (not AL top-k EPW)
+active_learning:
+  enabled: false
+
+dft:
+  engine: qe
+  # REQUIRED for real runs — directory of *.upf files
+  pseudo_dir: /usr/share/espresso/pseudo
+  ecutwfc: 50.0
+  ecutrho: 400.0
+  kpoints: [4, 4, 4]
+  # Screening-quality q-mesh (NOT refine 4³ — keep map cheaper than dense EPW)
+  qpoints: [2, 2, 2]
+  conv_thr: 1.0e-8
+  occupations: smearing
+  smearing: mv
+  degauss: 0.02
+  # Ternary supercells need empty bands for DFPT
+  nbnd: 48
+  do_relax: true
+  do_phonon: true
+  do_epw: false
+  epw:
+    enabled: false
+  phonon_method: dfpt
+  tr2_ph: 1.0e-10
+  ph_alpha_mix: 0.1
+  ph_nmix: 12
+  ph_niter: 150
+  quality_tag: screening
+  # Desktop MPI ranks for pw.x / ph.x (no EPW npool preflight when do_epw false)
+  nproc: 8
+
+ranking:
+  performance_weight: 0.35
+  si_feasibility_weight: 0.65
+  prefer_dynamically_stable: true
+  prefer_low_hull: true
+
+run:
+  resume: true
+  continue_on_error: true
+  force_rerun: false
+  resume_qe_steps: true
+  heartbeat_seconds: 900
+  estimate_walltime: true
+
+output_dir: outputs/nbti_n_phonon_map
+export_formats:
+  - json
+  - csv
+  - markdown

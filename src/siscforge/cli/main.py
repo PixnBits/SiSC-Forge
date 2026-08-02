@@ -210,6 +210,11 @@ def rank_cmd(
         "--md",
         help="Optional Markdown synthesis cards path.",
     ),
+    stable_first: bool = typer.Option(
+        False,
+        "--stable-first",
+        help="Sort dynamically stable rows above unstable (phonon-map stores).",
+    ),
 ) -> None:
     """Rank evaluation records from a JSON file or campaign store directory."""
     if input_json.is_dir():
@@ -224,7 +229,7 @@ def rank_cmd(
             raise typer.BadParameter("Input JSON must be a list of evaluations")
         evaluations = [CandidateEvaluation.model_validate(item) for item in raw]
 
-    ranked = rank_evaluations(evaluations)
+    ranked = rank_evaluations(evaluations, stable_first=stable_first)
     _print_rank_table(ranked)
 
     if output is not None:
@@ -251,7 +256,7 @@ def rank_cmd(
 def shortlist_cmd(
     store_dir: Path = typer.Argument(
         ...,
-        help="Campaign output directory from an AL dry-run "
+        help="Campaign output directory from an AL dry-run or phonon map "
         "(contains evaluations.json).",
         exists=True,
         file_okay=False,
@@ -276,7 +281,23 @@ def shortlist_cmd(
         "al_selected",
         "--mode",
         "-m",
-        help="Selection: al_selected | top_acquisition | top_rank",
+        help=(
+            "Selection: al_selected | top_acquisition | top_rank | "
+            "stable_only | stable_or_soft"
+        ),
+    ),
+    soft_min_cm1: float = typer.Option(
+        0.0,
+        "--soft-min-cm1",
+        help=(
+            "For stable_or_soft: require min phonon frequency ≥ this (cm⁻¹). "
+            "Default 0 (no imaginary). Slightly negative tolerates numeric noise."
+        ),
+    ),
+    stable_sort: str = typer.Option(
+        "si",
+        "--stable-sort",
+        help="Among stable survivors: si (highest Si-feasibility) | rank.",
     ),
     name: str = typer.Option(
         "nitride_epw_shortlist",
@@ -307,13 +328,17 @@ def shortlist_cmd(
         help="Calculator name embedded in the shortlist YAML.",
     ),
 ) -> None:
-    """Build a focused EPW shortlist campaign from an AL / dry-run store.
+    """Build a focused EPW shortlist campaign from an AL / phonon store.
 
-    Selects top-k candidates (AL-selected by default), writes a campaign YAML
-    with exact ``candidate_specs`` (formula × strain × CIF) and screening EPW
-    grids. Then run::
+    Selects top-k candidates (AL-selected by default, or stability-gated),
+    writes a campaign YAML with exact ``candidate_specs`` (formula × strain ×
+    CIF) and screening EPW grids. Then run::
 
         siscforge run --calculator qe-epw <shortlist.yaml>
+
+    Phonon-first (machine-2 stability map)::
+
+        siscforge shortlist outputs/nbti_n_phonon_map -o epw.yaml --mode stable_only
     """
     from siscforge.shortlist import (
         build_shortlist_campaign,
@@ -323,10 +348,21 @@ def shortlist_cmd(
     )
 
     mode_norm = mode.strip().lower().replace("-", "_")
-    if mode_norm not in {"al_selected", "top_acquisition", "top_rank"}:
+    allowed = {
+        "al_selected",
+        "top_acquisition",
+        "top_rank",
+        "stable_only",
+        "stable_or_soft",
+    }
+    if mode_norm not in allowed:
         raise typer.BadParameter(
-            "mode must be al_selected | top_acquisition | top_rank"
+            "mode must be al_selected | top_acquisition | top_rank | "
+            "stable_only | stable_or_soft"
         )
+    sort_norm = stable_sort.strip().lower()
+    if sort_norm not in {"si", "rank"}:
+        raise typer.BadParameter("stable-sort must be si | rank")
 
     evals = load_evaluations_from_store(store_dir)
     if not evals:
@@ -340,6 +376,8 @@ def shortlist_cmd(
             source_store=str(store_dir.resolve()),
             max_jobs=max_jobs,
             mode=mode_norm,  # type: ignore[arg-type]
+            soft_min_cm1=soft_min_cm1,
+            stable_sort=sort_norm,  # type: ignore[arg-type]
             output_dir=(
                 str(campaign_output_dir)
                 if campaign_output_dir is not None
@@ -360,21 +398,33 @@ def shortlist_cmd(
     )
     console.print(f"[dim]Campaign output_dir:[/dim] {cfg.output_dir}")
     console.print(f"[dim]dft.pseudo_dir:[/dim] {cfg.dft.pseudo_dir}")
-    console.print(f"[dim]calculator:[/dim] {calculator}  nproc={nproc}")
+    console.print(
+        f"[dim]calculator:[/dim] {calculator}  nproc={nproc}  mode={mode_norm}"
+    )
+    if mode_norm in {"stable_only", "stable_or_soft"}:
+        console.print(
+            f"[dim]stability filter:[/dim] {mode_norm}  "
+            f"soft_min_cm1={soft_min_cm1:g}  sort={sort_norm}"
+        )
 
     table = Table(title="Shortlist for expensive path")
     table.add_column("#", justify="right")
     table.add_column("Formula")
     table.add_column("Strain", justify="right")
     table.add_column("Si", justify="right")
+    table.add_column("Stable", justify="center")
+    table.add_column("min ω", justify="right")
     table.add_column("Acq", justify="right")
     table.add_column("Prior status")
     for row in shortlist_summary_table(chosen):
+        min_f = row.get("min_freq")
         table.add_row(
             str(row["#"]),
             str(row["formula"]),
             f"{row['strain']:+.3f}" if row["strain"] is not None else "—",
             f"{row['si']:.1f}" if row["si"] is not None else "—",
+            str(row.get("stable") or "—"),
+            f"{min_f:.1f}" if min_f is not None else "—",
             f"{row['acq']:.3f}" if row["acq"] is not None else "—",
             str(row["status"]),
         )
@@ -857,7 +907,8 @@ def run_cmd(
             )
         # EPW fine-grid: nproc must equal npool (nimage=1). Auto-fix early so
         # users see the message before multi-hour DFPT, not only at epw.x launch.
-        want_epw = bool(dft.do_epw or dft.epw.enabled or calc_name == "qe-epw")
+        # Phonon-only (do_epw false + calculator qe): skip all EPW preflight noise.
+        want_epw = bool(calc_name == "qe-epw" or dft.do_epw or dft.epw.enabled)
         if want_epw:
             from siscforge.calculators.qe.epw_inputs import default_nbndsub_screening
             from siscforge.calculators.qe.epw_parallel import validate_epw_parallel
@@ -906,15 +957,36 @@ def run_cmd(
                     f"[dim]EPW Wannier screening nbndsub≈{auto_sub} "
                     f"(auto from nbnd={dft.nbnd}; structure may raise further)[/dim]"
                 )
+        else:
+            # Explicit phonon-only path: keep epw disabled so recipes never
+            # branch into EPW, and avoid npool / Wannier preflight noise.
+            dft = dft.model_copy(
+                update={
+                    "do_epw": False,
+                    "epw": dft.epw.model_copy(update={"enabled": False}),
+                }
+            )
+            console.print(
+                "[bold cyan]Phonon-only campaign[/bold cyan] "
+                "(do_epw=false — no EPW launch, no npool preflight)"
+            )
         calc_params = {**calc_params, "dft": dft, "run_config": run_cfg}
         if dft.work_dir is None:
             calc_params.setdefault("work_dir", str(out / "qe_work"))
+        mode_bits = [
+            f"pseudo_dir={dft.pseudo_dir!r}",
+            f"do_relax={dft.do_relax}",
+            f"do_phonon={dft.do_phonon}",
+            f"do_epw={want_epw}",
+            f"nproc={dft.nproc}",
+        ]
+        if want_epw:
+            mode_bits.append(f"epw.npool={dft.epw.npool}")
+        else:
+            mode_bits.append(f"phonon_method={dft.phonon_method}")
+            mode_bits.append(f"qpoints={list(dft.qpoints)}")
         console.print(
-            f"[bold]Calculator[/bold] {calc_name}  "
-            f"(pseudo_dir={dft.pseudo_dir!r}, "
-            f"do_relax={dft.do_relax}, do_phonon={dft.do_phonon}, "
-            f"do_epw={dft.do_epw or dft.epw.enabled}, "
-            f"nproc={dft.nproc}, epw.npool={dft.epw.npool})"
+            f"[bold]Calculator[/bold] {calc_name}  ({', '.join(mode_bits)})"
         )
     else:
         calc_params = {**calc_params, "run_config": run_cfg}
@@ -1261,7 +1333,17 @@ def run_cmd(
     )
 
     # 5. Rank + persist ranked (real/mock EPW Tc dominates when present)
-    ranked = rank_evaluations(evaluations, config.ranking)
+    # Phonon-only maps: stable_first makes dynamical stability glanceable.
+    phonon_only = False
+    if calc_name == "qe":
+        dft_used = calc_params.get("dft", config.dft)
+        phonon_only = not bool(
+            getattr(dft_used, "do_epw", False)
+            or getattr(getattr(dft_used, "epw", None), "enabled", False)
+        )
+    ranked = rank_evaluations(
+        evaluations, config.ranking, stable_first=phonon_only
+    )
     store.save_evaluations(ranked, ranked=True)
     store.save_evaluations(ranked, ranked=False)  # canonical evaluations.json
     store.save_campaign(config)
@@ -1352,6 +1434,7 @@ def _print_rank_table(
     table.add_column("Acq", justify="right")
     table.add_column("Composite", justify="right", style="bold")
     table.add_column("Stable")
+    table.add_column("min ω", justify="right")
     table.add_column("Status")
 
     for ev in ranked:
@@ -1377,6 +1460,8 @@ def _print_rank_table(
         flags = getattr(ev, "quality_flags", None) or []
         if "high_lambda" in flags or "extreme_lambda" in flags:
             qual = f"{qual} λ"
+        if "imaginary_modes" in flags:
+            qual = f"{qual} imag"
         comp = f"{ev.composite_score:.1f}" if ev.composite_score is not None else "—"
         acq = (
             f"{ev.acquisition_score:.3f}"
@@ -1384,8 +1469,11 @@ def _print_rank_table(
             else "—"
         )
         stable = "—"
+        min_w = "—"
         if ev.phonon is not None:
             stable = "yes" if ev.phonon.dynamically_stable else "NO"
+            if ev.phonon.min_frequency_cm1 is not None:
+                min_w = f"{ev.phonon.min_frequency_cm1:.1f}"
         strain = "—"
         if ev.candidate.in_plane_strain is not None:
             strain = f"{ev.candidate.in_plane_strain:+.3f}"
@@ -1407,6 +1495,7 @@ def _print_rank_table(
             acq,
             comp,
             stable,
+            min_w,
             status,
         )
     console.print(table)

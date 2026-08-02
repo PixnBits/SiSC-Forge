@@ -4,6 +4,28 @@ Workstation-first path to **actionable nitride candidates**: pick top-k with
 AL, then run real `qe-epw` only on those structures — with **resume** after
 interrupt and **continue-on-error** so one crash does not kill the shortlist.
 
+## Alternative: phonon-first two-machine loop
+
+When screening EPW shortlists return only unstable / unreliable cells, map
+stability first (no EPW), then shortlist survivors:
+
+```bash
+# Machine 2 — broad phonon map (do_epw: false)
+siscforge run --dry-run examples/nbti_n_phonon_map.yaml
+siscforge run --calculator qe examples/nbti_n_phonon_map.yaml
+
+# Build EPW campaign only from dynamically stable cells
+siscforge shortlist outputs/nbti_n_phonon_map \
+  -o examples/nbti_n_phonon_map_epw.yaml \
+  --mode stable_only --max-jobs 6 --nproc 8
+
+# Machine 1/2 — EPW on survivors
+siscforge run --calculator qe-epw examples/nbti_n_phonon_map_epw.yaml
+```
+
+Full walkthrough: [nbti_n_phonon_map.md](nbti_n_phonon_map.md). Modes:
+`stable_only` | `stable_or_soft` (see `siscforge shortlist --help`).
+
 ## Prerequisites
 
 - Python env: `pip install -e ".[dev]"`
