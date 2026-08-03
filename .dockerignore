@@ -1,0 +1,39 @@
+# Git / IDE / local env
+.git
+.gitignore
+.venv
+venv
+.env
+.idea
+.vscode
+*.swp
+*~
+
+# Caches and test artifacts
+.pytest_cache
+.ruff_cache
+.mypy_cache
+__pycache__
+*.py[cod]
+*.egg-info
+.coverage
+htmlcov
+dist
+build
+
+# Large local run outputs (never needed in the image)
+outputs
+**/qe_work
+**/qe_tmp
+
+# Local pseudo copies (image uses apt SSSP)
+pseudos/**/*.UPF
+pseudos/**/*.upf
+
+# Misc
+ready-up.sh
+*.log
+*.tar
+*.tar.*
+*.bz2
+*.gz
