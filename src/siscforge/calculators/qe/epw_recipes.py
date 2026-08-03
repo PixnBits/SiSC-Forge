@@ -259,9 +259,28 @@ _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
         "Pin fermi_energy from DFT (efermi_read) or widen fsthick / denser nkf.",
     ),
     (
+        "error in routine d_matrix",
+        "QE phonon: d_matrix — D_S (l=2) symmetry not orthogonal",
+        "PAW + crystal symmetry mismatch after strain/relax. Auto-retry may re-SCF "
+        "with nosym/noinv (dft.phonon_retry_on_d_matrix). Else: tighten vc-relax, "
+        "try nearby strain, or check lattice noise in CIF.",
+    ),
+    (
         "d_matrix",
-        "QE PAW d_matrix / symmetry crash",
-        "Re-run vc-relax so the cell matches DFPT symmetry; avoid nosym on multi-q.",
+        "QE phonon: d_matrix — D_S symmetry not orthogonal",
+        "PAW symmetry representation failed (often D_S l=2 not orthogonal). "
+        "Enable dft.phonon_retry_on_d_matrix (default) for one nosym SCF+ph retry; "
+        "or re-relax / shift strain slightly.",
+    ),
+    (
+        "not orthogonal",
+        "QE phonon: symmetry representation not orthogonal",
+        "Usually d_matrix/D_S after strained DFPT. See phonon_retry_on_d_matrix.",
+    ),
+    (
+        "d_s (l=",
+        "QE phonon: D_S(l) symmetry matrix not orthogonal",
+        "PAW d_matrix failure class — retry with nosym SCF or cleaner geometry.",
     ),
     (
         "error in routine dafopen",
@@ -339,6 +358,104 @@ def is_frozen_window_overflow(text: str | None) -> bool:
         or ("dis_windows" in blob and "frozen" in blob)
         or ("frozen window" in blob and "target" in blob and "wf" in blob)
     )
+
+
+def is_d_matrix_failure(text: str | None) -> bool:
+    """True if ph.x / QE failed with PAW d_matrix / non-orthogonal D_S."""
+    if not text:
+        return False
+    blob = text.lower()
+    if "d_matrix" in blob:
+        return True
+    if "not orthogonal" in blob and ("d_s" in blob or "symmetry" in blob):
+        return True
+    if "error in routine d_matrix" in blob:
+        return True
+    return False
+
+
+def truncate_for_notes(text: str | None, *, max_chars: int = 1200) -> str:
+    """Cap log/exception blobs for evaluation.notes and errors (never path-sized)."""
+    if not text:
+        return ""
+    s = str(text)
+    if len(s) <= max_chars:
+        return s
+    # Prefer keeping the tail (error usually at end)
+    head = 200
+    tail = max_chars - head - 40
+    return s[:head] + "\n…[truncated]…\n" + s[-tail:]
+
+
+def log_tail_lines(text: str | None, *, n_lines: int = 40) -> str:
+    """Return last *n_lines* of a log as a short string."""
+    if not text:
+        return ""
+    lines = str(text).splitlines()
+    tail = lines[-n_lines:] if len(lines) > n_lines else lines
+    return "\n".join(tail)
+
+
+def diagnose_qe_step_failure(
+    text: str | None,
+    *,
+    work_dir: Path | str | None = None,
+    step_name: str = "phonon",
+    include_tail: bool = True,
+    tail_lines: int = 40,
+) -> str:
+    """Diagnostic block for failed pw.x / ph.x / epw.x steps (path-safe)."""
+    parts: list[str] = [f"[{step_name}] QE diagnostic"]
+    primary = extract_primary_failure_reason(text, step_name=step_name)
+    parts.append(f"  primary: {primary}")
+    if work_dir is not None:
+        wd = Path(work_dir)
+        parts.append(f"  work_dir: {wd}")
+        for name in (
+            "ph.out",
+            "ph.in",
+            "scf.out",
+            "vc-relax.out",
+            "epw.out",
+            "nscf.out",
+        ):
+            # Prefer files under work_dir or 02_scf
+            candidates = [wd / name, wd / "02_scf" / name, wd / "01_relax" / name]
+            for p in candidates:
+                if p.is_file():
+                    try:
+                        size = p.stat().st_size
+                    except OSError:
+                        size = -1
+                    parts.append(f"  present: {p.name} ({size} bytes) @ {p.parent.name}/")
+                    break
+    blob = (text or "").lower()
+    hits: list[str] = []
+    if blob:
+        for needle, _short, hint in _EPW_FAILURE_HINTS:
+            if needle.lower() in blob:
+                hits.append(f"  · matched '{needle}': {hint}")
+        if not hits:
+            hits.append(
+                "  · no known fingerprint — inspect ph.out / scf.out tail in work_dir."
+            )
+    else:
+        hits.append("  · no output text available to scan.")
+    parts.append("hints:")
+    parts.extend(hits)
+    if is_d_matrix_failure(text):
+        parts.append(
+            "  · d_matrix remediation: dft.phonon_retry_on_d_matrix (auto nosym SCF+ph); "
+            "or tighten relax / change strain / clean lattice noise."
+        )
+    if include_tail and text:
+        lines = str(text).splitlines()
+        tail = lines[-tail_lines:] if len(lines) > tail_lines else lines
+        if tail:
+            parts.append("  --- output tail ---")
+            parts.extend(f"  {ln}" for ln in tail[:tail_lines])
+    return "\n".join(parts)
+
 
 
 def extract_primary_failure_reason(
@@ -921,18 +1038,55 @@ def run_relax_scf_phonon_epw(
             log=log,
         )
         result.steps.append(step)
-        if step.stdout_path.is_file():
-            texts = [step.stdout_path.read_text(encoding="utf-8", errors="replace")]
-            for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
-                try:
-                    texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
-                except OSError:
-                    continue
+        from siscforge.calculators.qe.recipes import _maybe_retry_phonon_d_matrix
+
+        step, ph_body = _maybe_retry_phonon_d_matrix(
+            config,
+            structure=current,
+            work_dir=work_dir,
+            scf_dir=scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            for_epw=want_epw,
+            outdir=scf_dir if want_epw else None,
+            log=log,
+            step=step,
+            result=result,
+        )
+        texts: list[str] = []
+        if ph_body:
+            texts.append(ph_body)
+        elif step.stdout_path is not None and step.stdout_path.is_file():
+            try:
+                texts.append(
+                    step.stdout_path.read_text(encoding="utf-8", errors="replace")
+                )
+            except OSError:
+                pass
+        for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
+            try:
+                texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+        combined = "\n".join(texts) if texts else ""
+        if combined:
             result.phonon = parse_ph_output(
-                "\n".join(texts), quality_tag=config.quality_tag
+                combined, quality_tag=config.quality_tag
             )
         if not step.success:
-            result.message = f"Phonon failed: {step.message}"
+            primary = extract_primary_failure_reason(
+                combined or step.message, step_name="phonon"
+            )
+            diag = diagnose_qe_step_failure(
+                combined or step.message,
+                work_dir=work_dir,
+                step_name="phonon",
+            )
+            result.message = (
+                f"Phonon failed (ph.x): {primary}\n"
+                f"work_dir={work_dir}\n{diag}\n"
+                f"step_message={truncate_for_notes(step.message, max_chars=600)}"
+            )
             result.success = False
             return result
 

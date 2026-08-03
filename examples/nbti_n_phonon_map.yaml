@@ -103,6 +103,8 @@ dft:
   nbnd: 48
   do_relax: true
   do_phonon: true
+  # One nosym SCF+ph retry if ph.x hits PAW d_matrix / non-orthogonal D_S
+  phonon_retry_on_d_matrix: true
   do_epw: false
   epw:
     enabled: false

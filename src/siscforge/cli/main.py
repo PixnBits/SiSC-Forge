@@ -692,10 +692,22 @@ def _primary_failure_hint(result: CandidateEvaluation, *, max_len: int = 110) ->
     blob = "\n".join(blob_parts)
     if not blob.strip():
         return f"status={result.status}"
-    # Already a high-signal one-liner from run_epw
+    # Already a high-signal one-liner from run_epw / phonon diagnostics
     first = blob.splitlines()[0].strip()
-    if first.startswith("EPW ") or first.startswith("QE ") or "Wannier" in first:
-        return first[:max_len] + ("…" if len(first) > max_len else "")
+    if (
+        first.startswith("EPW ")
+        or first.startswith("QE ")
+        or first.startswith("Phonon failed")
+        or "Wannier" in first
+        or "d_matrix" in first.lower()
+    ):
+        # Prefer classified fingerprint over raw "Phonon failed (ph.x): …"
+        reason = extract_primary_failure_reason(blob, step_name="calc", max_len=max_len)
+        if "d_matrix" in reason.lower() or "orthogonal" in reason.lower():
+            return reason[:max_len] + ("…" if len(reason) > max_len else "")
+        if first.startswith("QE ") or first.startswith("EPW "):
+            return first[:max_len] + ("…" if len(first) > max_len else "")
+        return reason[:max_len] + ("…" if len(reason) > max_len else "")
     reason = extract_primary_failure_reason(blob, step_name="calc", max_len=max_len)
     return reason
 
@@ -1224,16 +1236,23 @@ def run_cmd(
             if not run_cfg.continue_on_error:
                 console.print(f"[red]Calculator error for {cand.formula}:[/red] {exc}")
                 raise typer.Exit(code=1) from exc
+            from siscforge.calculators.qe.epw_recipes import (
+                extract_primary_failure_reason,
+                truncate_for_notes,
+            )
+
+            exc_text = truncate_for_notes(str(exc), max_chars=800)
+            hint = extract_primary_failure_reason(str(exc), step_name="calc", max_len=110)
             console.print(
-                f"[yellow]{prefix}[/yellow] — failed ({exc}); continuing"
+                f"[yellow]{prefix}[/yellow] — failed ({hint}); continuing"
             )
             result = CandidateEvaluation(
                 candidate=cand,
                 si_feasibility=si,
                 status="failed",
                 calculator_name=calc_name,
-                errors=[str(exc)],
-                notes=f"Calculator raised: {exc}",
+                errors=[hint, exc_text],
+                notes=f"Calculator raised: {hint}; {exc_text}",
                 provenance=Provenance(
                     source="run_continue_on_error",
                     software={"siscforge": __version__},

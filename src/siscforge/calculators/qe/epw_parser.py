@@ -272,15 +272,10 @@ def parse_epw_output(
     quality_tag: str = "screening",
 ) -> ElectronPhononResult:
     """Parse an EPW output file or raw text."""
-    if isinstance(path_or_text, Path) or (
-        isinstance(path_or_text, str) and Path(path_or_text).is_file()
-    ):
-        path = Path(path_or_text)
-        text = path.read_text(encoding="utf-8", errors="replace")
-        extra = {"source": str(path)}
-    else:
-        text = str(path_or_text)
-        extra = {"source": "<string>"}
+    from siscforge.calculators.qe.parser import resolve_text_or_path
+
+    text, source = resolve_text_or_path(path_or_text)
+    extra = {"source": source}
     return parse_epw_text(
         text, mu_star=mu_star, quality_tag=quality_tag, extra_raw=extra
     )

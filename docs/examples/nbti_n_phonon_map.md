@@ -97,6 +97,45 @@ The prior 6-candidate Nb–Ti–N screening EPW shortlist finished with **all**
 correctly down-ranked them. Phonon-first spends desktop hours on stability
 coverage; EPW budget goes only to cells that can host meaningful e-ph.
 
+
+## Phonon failures (d_matrix / Errno 36)
+
+If `ph.x` aborts with:
+
+```text
+Error in routine d_matrix (2):
+  D_S (l=2) for this symmetry operation is not orthogonal
+```
+
+SiSC-Forge classifies this as:
+
+```text
+… — failed (QE phonon: d_matrix — D_S (l=2) symmetry not orthogonal)
+```
+
+**Not** `[Errno 36] File name too long` (that was a parser bug fixed in Slice 24).
+
+### Automatic retry (default)
+
+`dft.phonon_retry_on_d_matrix: true` (default) re-runs **one** SCF with
+`nosym=.true.` / `noinv=.true.` and retries phonon once. If that still fails,
+the candidate is recorded failed and the campaign continues
+(`run.continue_on_error: true`).
+
+Disable retry in the map YAML:
+
+```yaml
+dft:
+  phonon_retry_on_d_matrix: false
+```
+
+### Manual remediation if retry fails
+
+- Tighten vc-relax (forces / pressure) before DFPT
+- Try a nearby strain step (soft modes / PAW symmetry can be strain-sensitive)
+- Inspect lattice noise in the relaxed CIF (near-zero components)
+- Coarse 2³ maps can still mis-label stability — survivors need denser checks later
+
 ## Limitations
 
 - Coarse 2³ DFPT can **mis-label** stability (false stable / false imag)

@@ -21,6 +21,62 @@ _RY_TO_EV = 13.605693122994
 # Bohr → Å
 _BOHR_TO_ANG = 0.529177210903
 
+# Paths longer than this are never passed to ``Path(...).is_file()`` — multi-KB
+# QE log blobs used to raise ``OSError: [Errno 36] File name too long``.
+_MAX_SAFE_PATH_LEN = 1024
+
+
+def resolve_text_or_path(path_or_text: Path | str) -> tuple[str, str]:
+    """Load QE output from a file path **or** treat the argument as raw text.
+
+    Returns ``(text, source_name)`` where *source_name* is the path string or
+    ``"<string>"``.
+
+    **Never** calls ``Path(log_blob).is_file()`` on multi-line / long strings:
+    that produced Errno 36 when phonon failure paths passed full ``ph.out``
+    contents into :func:`parse_ph_output`.
+    """
+    if isinstance(path_or_text, Path):
+        p = path_or_text
+        try:
+            return p.read_text(encoding="utf-8", errors="replace"), str(p)
+        except OSError as exc:
+            return "", f"<unreadable:{p}: {exc}>"
+
+    s = str(path_or_text)
+    # Log bodies always have newlines / are huge — treat as text, never as path.
+    if not s:
+        return "", "<string>"
+    if "\n" in s or "\r" in s or "\x00" in s:
+        return s, "<string>"
+    if len(s) > _MAX_SAFE_PATH_LEN:
+        return s, "<string>"
+    stripped = s.strip()
+    if not stripped:
+        return s, "<string>"
+    # Prefer path only for short path-like strings
+    looks_path = (
+        stripped.startswith("/")
+        or stripped.startswith("./")
+        or stripped.startswith("../")
+        or (
+            len(stripped) < 256
+            and (
+                "/" in stripped
+                or stripped.endswith((".out", ".in", ".xml", ".log"))
+            )
+        )
+    )
+    if not looks_path:
+        return s, "<string>"
+    try:
+        p = Path(stripped)
+        if p.is_file():
+            return p.read_text(encoding="utf-8", errors="replace"), str(p)
+    except OSError:
+        pass
+    return s, "<string>"
+
 
 def summarize_frequencies(
     frequencies_cm1: list[float],
@@ -154,12 +210,7 @@ def parse_relaxed_structure(
     fallback: Structure | None = None,
 ) -> Structure | None:
     """Load pw.x output and parse the final relaxed geometry."""
-    if isinstance(path_or_text, Path) or (
-        isinstance(path_or_text, str) and Path(path_or_text).is_file()
-    ):
-        text = Path(path_or_text).read_text(encoding="utf-8", errors="replace")
-    else:
-        text = str(path_or_text)
+    text, _src = resolve_text_or_path(path_or_text)
     return parse_relaxed_structure_from_text(text, fallback=fallback)
 
 
@@ -190,12 +241,7 @@ def parse_fermi_energy_eV(path_or_text: Path | str) -> float | None:
 
     Matches lines like ``the Fermi energy is    20.7390 ev``.
     """
-    if isinstance(path_or_text, Path) or (
-        isinstance(path_or_text, str) and Path(path_or_text).is_file()
-    ):
-        text = Path(path_or_text).read_text(encoding="utf-8", errors="replace")
-    else:
-        text = str(path_or_text)
+    text, _src = resolve_text_or_path(path_or_text)
     matches = re.findall(
         r"the Fermi energy is\s+([-\d.Ee+]+)\s*ev",
         text,
@@ -213,15 +259,7 @@ def parse_pw_output(
     extra_raw: dict[str, Any] | None = None,
 ) -> SCFResult:
     """Parse a pw.x output file (or raw text) into :class:`SCFResult`."""
-    if isinstance(path_or_text, Path) or (
-        isinstance(path_or_text, str) and Path(path_or_text).is_file()
-    ):
-        path = Path(path_or_text)
-        text = path.read_text(encoding="utf-8", errors="replace")
-        source_name = str(path)
-    else:
-        text = str(path_or_text)
-        source_name = "<string>"
+    text, source_name = resolve_text_or_path(path_or_text)
 
     energy = parse_pw_energy_from_text(text)
     job_done = "JOB DONE" in text.upper() or "job done" in text.lower()
@@ -237,18 +275,20 @@ def parse_pw_output(
     if extra_raw:
         raw.update(extra_raw)
 
-    # Attempt pymatgen PWOutput if file path
+    # Attempt pymatgen PWOutput if file path (never Path(log).is_file)
     try:
-        if source_name != "<string>" and Path(source_name).is_file():
-            from pymatgen.io.pwscf import PWOutput
+        if source_name != "<string>" and len(source_name) <= _MAX_SAFE_PATH_LEN:
+            p_src = Path(source_name)
+            if p_src.is_file():
+                from pymatgen.io.pwscf import PWOutput
 
-            pwo = PWOutput(source_name)
-            if energy is None and getattr(pwo, "final_energy", None) is not None:
-                # pymatgen may return Ry or eV depending on version — store raw too
-                raw["pymatgen_final_energy"] = pwo.final_energy
-                energy = float(pwo.final_energy)
-                # Heuristic: if |E| < 50, likely already eV for tiny cells; NbN ~ hundreds Ry
-                # Leave as-is; user can inspect raw.
+                pwo = PWOutput(source_name)
+                if energy is None and getattr(pwo, "final_energy", None) is not None:
+                    # pymatgen may return Ry or eV depending on version — store raw too
+                    raw["pymatgen_final_energy"] = pwo.final_energy
+                    energy = float(pwo.final_energy)
+                    # Heuristic: if |E| < 50, likely already eV for tiny cells; NbN ~ hundreds Ry
+                    # Leave as-is; user can inspect raw.
     except Exception as exc:  # noqa: BLE001
         raw["pymatgen_parse_error"] = str(exc)
 
@@ -364,16 +404,12 @@ def parse_ph_output(
     imag_threshold_cm1: float = DEFAULT_IMAG_THRESHOLD_CM1,
     extra_raw: dict[str, Any] | None = None,
 ) -> PhononResult:
-    """Parse ph.x / matdyn / phonopy text into :class:`PhononResult`."""
-    if isinstance(path_or_text, Path) or (
-        isinstance(path_or_text, str) and Path(path_or_text).is_file()
-    ):
-        path = Path(path_or_text)
-        text = path.read_text(encoding="utf-8", errors="replace")
-        source_name = str(path)
-    else:
-        text = str(path_or_text)
-        source_name = "<string>"
+    """Parse ph.x / matdyn / phonopy text into :class:`PhononResult`.
+
+    Accepts a path **or** raw log text. Log blobs must never be treated as
+    paths (see :func:`resolve_text_or_path`).
+    """
+    text, source_name = resolve_text_or_path(path_or_text)
 
     freqs = parse_frequencies_from_text(text)
     summary = summarize_frequencies(freqs, imag_threshold_cm1=imag_threshold_cm1)

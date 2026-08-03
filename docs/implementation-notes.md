@@ -1,5 +1,50 @@
 # Implementation Notes
 
+## Slice 24 (2026-08-03) — Phonon failure UX: Errno 36 + d_matrix
+
+**Scope**: Fix the machine-2 phonon-map failure mode where `ph.x` dies with
+PAW ``d_matrix`` / non-orthogonal ``D_S``, but SiSC-Forge reported
+``[Errno 36] File name too long`` with the entire PHONON log pasted as a
+"path". Optional one-shot recovery for d_matrix. No grid / EPW / DMFT changes.
+
+| Item | Location |
+|------|----------|
+| Safe path-or-text loader | `parser.resolve_text_or_path` (all `parse_*_output`) |
+| Fingerprints | `epw_recipes._EPW_FAILURE_HINTS` (`d_matrix`, `not orthogonal`, …) |
+| Diagnose | `diagnose_qe_step_failure`, `is_d_matrix_failure`, `truncate_for_notes` |
+| Optional retry | `recipes._maybe_retry_phonon_d_matrix` + `DFTConfig.phonon_retry_on_d_matrix` |
+| CLI | `_primary_failure_hint` + truncated exception path |
+| Fixture / tests | `tests/fixtures/qe/ph_d_matrix_error.out`, `tests/test_phonon_failure.py` |
+
+### Root cause (Errno 36)
+
+`run_relax_scf_phonon` passed the full `ph.out` body into `parse_ph_output`,
+which called `Path(log_blob).is_file()`. On Linux, multi-KB pathnames raise
+``OSError: [Errno 36] File name too long``, burying the real QE error.
+
+### d_matrix retry policy (default **on**)
+
+When `ph.x` fails and the log matches d_matrix / non-orthogonal D_S:
+
+1. Log: `phonon d_matrix / D_S not orthogonal — one retry: re-SCF with nosym…`
+2. Clean phonon partials; re-run **SCF once** with `nosym=.true.` + `noinv=.true.`
+3. Re-run **phonon once** (no recover from the broken DFPT)
+4. Still fail → `status=failed` with primary reason + workdir + short tail
+5. **Never** mark success without JOB DONE + parseable phonon result
+
+Disable: `dft.phonon_retry_on_d_matrix: false`.
+
+### Example CLI line (NbN strain=0)
+
+```text
+[3/42] NbN strain=+0.000 — failed (QE phonon: d_matrix — D_S (l=2) symmetry not orthogonal)
+```
+
+Notes include `work_dir=…`, fingerprint hints, and a truncated `ph.out` tail —
+not Errno 36.
+
+---
+
 ## Slice 23 (2026-08-02) — Phonon-first / stability-gated discovery
 
 **Scope**: Second-workstation path to map dynamical stability before any EPW.

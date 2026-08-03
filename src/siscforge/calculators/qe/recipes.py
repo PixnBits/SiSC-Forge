@@ -284,11 +284,16 @@ def run_pw(
     prefix: str = "siscforge",
     qe_env: QEEnvironment | None = None,
     outdir: Path | None = None,
+    extra_system: dict | None = None,
+    extra_control: dict | None = None,
 ) -> QEStepResult:
     """Write and run a ``pw.x`` calculation (scf / relax / vc-relax).
 
     *outdir* defaults to ``work_dir/out``. For EPW prep, pass ``outdir=work_dir``
     so ``_ph0/``, ``*.save``, and ``*.dyn*`` share one directory (as EPW examples).
+
+    *extra_system* / *extra_control* are merged into the pw.x namelists (e.g.
+    ``nosym=.true.`` for a conservative d_matrix recovery SCF).
     """
     qe_env = qe_env or require_qe(need_phonon=False)
     assert qe_env.pw is not None
@@ -309,6 +314,8 @@ def run_pw(
         calculation=calculation,
         prefix=prefix,
         outdir=str(outdir),
+        extra_system=extra_system,
+        extra_control=extra_control,
     )
     in_path = work_dir / f"{calculation}.in"
     out_path = work_dir / f"{calculation}.out"
@@ -450,10 +457,23 @@ def run_ph(
         )
     elif not ok:
         try:
-            tail = body[-800:]
-            msg += f"\n--- output tail ---\n{tail}"
+            from siscforge.calculators.qe.epw_recipes import (
+                extract_primary_failure_reason,
+                log_tail_lines,
+            )
+
+            primary = extract_primary_failure_reason(body, step_name="phonon")
+            msg = f"ph.x rc={rc}; {primary}"
+            tail = log_tail_lines(body, n_lines=40)
+            if tail:
+                msg += f"\n--- ph.out tail ---\n{tail}"
+            msg += f"\nph.out: {out_path}"
         except Exception:  # noqa: BLE001
-            pass
+            try:
+                tail = body[-800:]
+                msg += f"\n--- output tail ---\n{tail}"
+            except Exception:  # noqa: BLE001
+                pass
     return QEStepResult(
         name="ph",
         work_dir=work_dir,
@@ -601,6 +621,114 @@ def _run_ph_with_optional_recover(
         outdir=outdir,
         recover=False,
     )
+
+
+
+def _read_step_log(stdout_path: Path | None) -> str:
+    if stdout_path is None or not stdout_path.is_file():
+        return ""
+    try:
+        return stdout_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _maybe_retry_phonon_d_matrix(
+    config: DFTConfig,
+    *,
+    structure: Structure,
+    work_dir: Path,
+    scf_dir: Path,
+    prefix: str,
+    qe_env: QEEnvironment | None,
+    for_epw: bool,
+    outdir: Path | None,
+    log: list[str],
+    step: QEStepResult,
+    result: QEWorkflowResult,
+) -> tuple[QEStepResult, str]:
+    """One guarded SCF(nosym)+ph retry on PAW d_matrix failures.
+
+    Policy (``dft.phonon_retry_on_d_matrix``, default True):
+    1. Classify failure from ph.out (must match d_matrix / non-orthogonal D_S).
+    2. Clean phonon partials; re-run SCF with ``nosym=.true.`` + ``noinv=.true.``.
+    3. Re-run phonon once (no recover from the broken DFPT).
+    4. Never invent geometry hacks; never mark success without JOB DONE.
+
+    Returns ``(final_step, ph_out_text)``.
+    """
+    from siscforge.calculators.qe.epw_recipes import is_d_matrix_failure
+    from siscforge.calculators.qe.qe_checkpoint import clean_step_outputs
+
+    body = _read_step_log(step.stdout_path)
+    if step.success or not is_d_matrix_failure(body):
+        return step, body
+    if not getattr(config, "phonon_retry_on_d_matrix", True):
+        log.append(
+            "phonon d_matrix failure — retry disabled "
+            "(dft.phonon_retry_on_d_matrix=false)"
+        )
+        return step, body
+
+    log.append(
+        "phonon d_matrix / D_S not orthogonal — one retry: "
+        "re-SCF with nosym=.true. noinv=.true. then ph.x"
+    )
+    # Drop broken DFPT artifacts
+    clean_step_outputs(work_dir, "phonon", prefix=prefix)
+    # Re-SCF with reduced symmetry (overwrites scf.out + charge density)
+    if (scf_dir / "scf.out").is_file():
+        clean_step_outputs(work_dir, "scf", prefix=prefix)
+    scf_step = run_pw(
+        structure,
+        config,
+        scf_dir,
+        calculation="scf",
+        prefix=prefix,
+        qe_env=qe_env,
+        outdir=outdir if for_epw else None,
+        extra_system={"nosym": True, "noinv": True},
+    )
+    result.steps.append(scf_step)
+    if scf_step.stdout_path.is_file():
+        result.scf = parse_pw_output(
+            scf_step.stdout_path, quality_tag=config.quality_tag
+        )
+    if not scf_step.success:
+        log.append("d_matrix retry: nosym SCF failed — giving up")
+        # Synthesize a failed ph step carrying SCF message (not a path)
+        fail = QEStepResult(
+            name="ph",
+            work_dir=scf_dir,
+            returncode=scf_step.returncode,
+            stdout_path=scf_step.stdout_path,
+            input_path=scf_step.input_path,
+            success=False,
+            message=(
+                "d_matrix recovery SCF (nosym) failed; "
+                + (scf_step.message or "")[:400]
+            ),
+        )
+        result.steps.append(fail)
+        return fail, _read_step_log(scf_step.stdout_path)
+
+    log.append("d_matrix retry: running DFPT / phonon after nosym SCF")
+    step2 = run_ph(
+        config,
+        scf_dir,
+        prefix=prefix,
+        qe_env=qe_env,
+        for_epw=for_epw,
+        outdir=outdir,
+        recover=False,
+    )
+    result.steps.append(step2)
+    body2 = _read_step_log(step2.stdout_path)
+    if step2.success:
+        log.append("d_matrix retry: phonon succeeded after nosym SCF")
+    else:
+        log.append("d_matrix retry: phonon still failed after nosym SCF")
+    return step2, body2
 
 
 def run_relax_scf_phonon(
@@ -797,11 +925,31 @@ def run_relax_scf_phonon(
                 log=log,
             )
             result.steps.append(step)
+            step, ph_body = _maybe_retry_phonon_d_matrix(
+                config,
+                structure=current,
+                work_dir=work_dir,
+                scf_dir=scf_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+                for_epw=False,
+                outdir=None,
+                log=log,
+                step=step,
+                result=result,
+            )
             texts: list[str] = []
-            if step.stdout_path.is_file():
-                texts.append(
-                    step.stdout_path.read_text(encoding="utf-8", errors="replace")
-                )
+            if ph_body:
+                texts.append(ph_body)
+            elif step.stdout_path is not None and step.stdout_path.is_file():
+                try:
+                    texts.append(
+                        step.stdout_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                    )
+                except OSError:
+                    pass
             for dyn in sorted(scf_dir.glob(f"{prefix}.dyn*")):
                 try:
                     texts.append(dyn.read_text(encoding="utf-8", errors="replace"))
@@ -809,13 +957,34 @@ def run_relax_scf_phonon(
                     continue
             combined = "\n".join(texts) if texts else ""
             if combined:
+                # Pass as raw text (never as a path) — multi-KB logs used to
+                # raise Errno 36 via Path(log).is_file() inside parse_ph_output.
                 result.phonon = parse_ph_output(
                     combined, quality_tag=config.quality_tag
                 )
-            if not step.success and result.phonon is None:
+            if not step.success:
+                from siscforge.calculators.qe.epw_recipes import (
+                    diagnose_qe_step_failure,
+                    extract_primary_failure_reason,
+                    log_tail_lines,
+                    truncate_for_notes,
+                )
+
+                primary = extract_primary_failure_reason(
+                    combined or step.message, step_name="phonon"
+                )
+                diag = diagnose_qe_step_failure(
+                    combined or step.message,
+                    work_dir=work_dir,
+                    step_name="phonon",
+                    include_tail=True,
+                    tail_lines=40,
+                )
                 result.message = (
-                    f"Phonon failed (ph.x).\n{step.message}\n"
-                    f"Ensure ph.x is installed and SCF finished cleanly in {scf_dir}."
+                    f"Phonon failed (ph.x): {primary}\n"
+                    f"work_dir={work_dir}\n"
+                    f"{diag}\n"
+                    f"step_message={truncate_for_notes(step.message, max_chars=600)}"
                 )
                 result.success = False
                 return result

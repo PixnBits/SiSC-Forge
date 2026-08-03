@@ -225,33 +225,49 @@ class QECalculator(BaseCalculator):
             )
 
         status = "ok" if wf.success else "failed"
-        notes_parts = [wf.message]
-        if not wf.success:
-            notes_parts.append(
-                "QE workflow did not fully succeed; see step logs under " + str(cand_dir)
-            )
-            # Attach EPW/Wannier diagnostic block for shortlist continue-on-error
-            try:
-                from siscforge.calculators.qe.epw_recipes import diagnose_epw_failure
+        from siscforge.calculators.qe.epw_recipes import (
+            diagnose_qe_step_failure,
+            extract_primary_failure_reason,
+            truncate_for_notes,
+        )
 
+        notes_parts: list[str] = []
+        if not wf.success:
+            # Short primary first so CLI / notes never bury QE errors under Errno 36
+            primary = extract_primary_failure_reason(
+                wf.message or "", step_name="qe"
+            )
+            notes_parts.append(primary)
+            notes_parts.append(
+                "QE workflow did not fully succeed; see step logs under "
+                + str(cand_dir)
+            )
+            try:
                 diag_src = wf.message or ""
                 for step in reversed(list(wf.steps)):
-                    if step.stdout_path and Path(step.stdout_path).is_file():
+                    sp = getattr(step, "stdout_path", None)
+                    if sp is not None and Path(sp).is_file():
                         try:
-                            diag_src = (
-                                Path(step.stdout_path)
-                                .read_text(encoding="utf-8", errors="replace")[-2000:]
+                            # Fixed path only — never open a log blob as a path
+                            diag_src = Path(sp).read_text(
+                                encoding="utf-8", errors="replace"
                             )
+                            # Prefer last 8 KiB for classification, not the full multi-MB log
+                            if len(diag_src) > 8192:
+                                diag_src = diag_src[-8192:]
                             break
                         except OSError:
                             continue
                 notes_parts.append(
-                    diagnose_epw_failure(
+                    diagnose_qe_step_failure(
                         diag_src, work_dir=cand_dir, step_name="qe_workflow"
                     )
                 )
             except Exception:  # noqa: BLE001
                 pass
+            notes_parts.append(truncate_for_notes(wf.message, max_chars=800))
+        else:
+            notes_parts.append(wf.message or "ok")
         notes_parts.append(f"quality_tag={dft.quality_tag}")
         notes_parts.append(f"phonon_method={dft.phonon_method}")
         notes_parts.append(f"do_epw={want_epw}")
@@ -275,8 +291,11 @@ class QECalculator(BaseCalculator):
 
         err_list: list[str] = []
         if not wf.success:
-            err_list.append(wf.message)
+            err_list.append(
+                extract_primary_failure_reason(wf.message or "", step_name="qe")
+            )
             err_list.append(f"work_dir={cand_dir}")
+            err_list.append(truncate_for_notes(wf.message, max_chars=600))
 
         return CandidateEvaluation(
             candidate=out_candidate,

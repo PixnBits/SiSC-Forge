@@ -431,6 +431,13 @@ class DFTConfig(BaseModel):
     do_phonon: bool = True
     """Run phonon step after SCF."""
 
+    phonon_retry_on_d_matrix: bool = True
+    """If True (default), when ``ph.x`` fails with PAW ``d_matrix`` /
+    non-orthogonal ``D_S`` after a successful SCF, re-run SCF once with
+    ``nosym=.true.`` + ``noinv=.true.`` and retry phonon **once**.
+    Conservative discovery recovery — never marks success without JOB DONE.
+    Set False to fail immediately with diagnostic notes only."""
+
     do_epw: bool = False
     """Run EPW + isotropic Tc after phonon (requires epw.x). Also set via EPWConfig.enabled."""
 
