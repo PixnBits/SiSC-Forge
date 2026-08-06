@@ -922,7 +922,10 @@ def run_cmd(
         # Phonon-only (do_epw false + calculator qe): skip all EPW preflight noise.
         want_epw = bool(calc_name == "qe-epw" or dft.do_epw or dft.epw.enabled)
         if want_epw:
-            from siscforge.calculators.qe.epw_inputs import default_nbndsub_screening
+            from siscforge.calculators.qe.epw_inputs import (
+                default_nbndsub_screening,
+                preflight_epw_grids,
+            )
             from siscforge.calculators.qe.epw_parallel import validate_epw_parallel
             from siscforge.calculators.qe.epw_recipes import (
                 resolve_epw_launch_topology,
@@ -947,6 +950,46 @@ def run_cmd(
             except ValueError as exc:
                 console.print(f"[red]EPW parallel topology refused:[/red]\n{exc}")
                 raise typer.Exit(code=1) from exc
+
+            # Pre-DFPT EPW preflight: Wannier-safe coarse k + nq ↔ DFPT qpoints
+            tier_hint = None
+            extras = getattr(config, "extras", None) or {}
+            if isinstance(extras, dict):
+                refine = extras.get("refine") or {}
+                if isinstance(refine, dict):
+                    tier_hint = refine.get("tier")
+            # Prefer real cell size from shortlist/refine CIF so 8-atom floor applies
+            n_atoms_hint: int | None = None
+            try:
+                specs = list(config.enumeration.candidate_specs or [])
+                for sp in specs:
+                    cif = getattr(sp, "structure_cif", None)
+                    if cif:
+                        from pymatgen.core import Structure as _S
+
+                        n_atoms_hint = max(n_atoms_hint or 0, len(_S.from_str(cif, fmt="cif")))
+                if n_atoms_hint is None and specs:
+                    # Ternary 2×2×1 nitride supercell is the desktop default
+                    n_atoms_hint = 8
+            except Exception:  # noqa: BLE001
+                n_atoms_hint = 8 if (dft.quality_tag or "") == "production" else None
+            pre = preflight_epw_grids(
+                dft, structure=None, n_atoms=n_atoms_hint, tier=tier_hint
+            )
+            for line in pre.summary_lines:
+                if "raised" in line.lower() or "aligned" in line.lower():
+                    console.print(f"[cyan]{line}[/cyan]")
+                elif line.startswith("STRICT") or not pre.ok:
+                    console.print(f"[red]{line}[/red]")
+                else:
+                    console.print(f"[dim]{line}[/dim]")
+            if not pre.ok:
+                console.print(
+                    "[red]EPW preflight refused launch "
+                    "(strict_coarse_k or invalid grids).[/red]"
+                )
+                raise typer.Exit(code=1)
+            dft = pre.config
 
             # Preflight: warn if nbndsub looks tiny vs nbnd (supercell trap)
             if dft.epw.nbndsub is not None and dft.nbnd is not None:

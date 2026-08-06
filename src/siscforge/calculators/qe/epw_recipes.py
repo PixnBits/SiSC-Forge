@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pymatgen.core import Structure
 
@@ -17,7 +18,13 @@ from siscforge.calculators.qe.eliashberg import (
     performance_score_from_epw,
 )
 from siscforge.calculators.qe.env import QEEnvironment, require_epw
-from siscforge.calculators.qe.epw_inputs import build_epw_input, write_epw_input
+from siscforge.calculators.qe.epw_inputs import (
+    apply_coarse_k_to_config,
+    build_epw_input,
+    next_coarse_k_after_bvector_failure,
+    preflight_epw_grids,
+    write_epw_input,
+)
 from siscforge.calculators.qe.epw_parser import parse_epw_output
 from siscforge.calculators.qe.inputs import build_nscf_epw_input
 from siscforge.calculators.qe.parser import parse_ph_output, parse_pw_output
@@ -28,6 +35,22 @@ from siscforge.calculators.qe.recipes import (
 )
 from siscforge.models.config import DFTConfig
 from siscforge.models.results import ElectronPhononResult
+
+# Workdir sidecar: track EPW k-mesh remediation so resume does not infinite-loop.
+_EPW_REMEDIATION_JSON = "siscforge_epw_remediation.json"
+
+EPWFailureClass = Literal[
+    "kmesh_bvector",
+    "kgrid_inconsistency",
+    "frozen_window",
+    "nbndsub",
+    "parallel",
+    "missing_files",
+    "fermi",
+    "d_matrix",
+    "soft_modes",
+    "other",
+]
 
 
 @dataclass
@@ -230,6 +253,18 @@ def _fermi_from_work_dir(work_dir: Path) -> float | None:
 # Order matters: more specific patterns first.
 _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
     (
+        "kmesh_get_bvector",
+        "EPW Wannier: kmesh_get_bvector — not enough bvectors (coarse k too sparse)",
+        "Raise epw.nkc (6→8→12) and re-run NSCF+epw only — do NOT redo DFPT. "
+        "SiSC-Forge auto-retries EPW-only when auto_retry_kmesh is true.",
+    ),
+    (
+        "not enough bvectors",
+        "EPW Wannier: not enough bvectors on coarse k-mesh",
+        "Coarse electronic k (nk1–3 / nkc) is too sparse for Wannier90. "
+        "Raise nkc to ≥8³ on ≥8-atom cells; re-NSCF + epw only (keep phonon).",
+    ),
+    (
         "more states in the frozen window than target",
         "EPW Wannier: frozen window has more states than nbndsub",
         "Raise epw.nbndsub (e.g. min(nbnd, max(16, nbnd//2))) and/or tighten "
@@ -360,6 +395,32 @@ def is_frozen_window_overflow(text: str | None) -> bool:
     )
 
 
+def is_kmesh_bvector_failure(text: str | None) -> bool:
+    """True if Wannier90 failed with kmesh_get_bvector / not enough bvectors."""
+    if not text:
+        return False
+    blob = text.lower()
+    return (
+        "kmesh_get_bvector" in blob
+        or "not enough bvectors" in blob
+        or ("bvector" in blob and "not enough" in blob)
+    )
+
+
+def is_kgrid_inconsistency(text: str | None) -> bool:
+    """True if EPW reports nscf / epw nk mesh mismatch."""
+    if not text:
+        return False
+    blob = text.lower()
+    if "k-point" in blob and (
+        "inconsist" in blob or "does not match" in blob or "must match" in blob
+    ):
+        return True
+    if "number of k" in blob and "nscf" in blob:
+        return True
+    return False
+
+
 def is_d_matrix_failure(text: str | None) -> bool:
     """True if ph.x / QE failed with PAW d_matrix / non-orthogonal D_S."""
     if not text:
@@ -372,6 +433,36 @@ def is_d_matrix_failure(text: str | None) -> bool:
     if "error in routine d_matrix" in blob:
         return True
     return False
+
+
+def classify_epw_failure(text: str | None) -> EPWFailureClass:
+    """Map failure text to a remediable / non-remediable class."""
+    if is_kmesh_bvector_failure(text):
+        return "kmesh_bvector"
+    if is_kgrid_inconsistency(text):
+        return "kgrid_inconsistency"
+    if is_frozen_window_overflow(text):
+        return "frozen_window"
+    if is_d_matrix_failure(text):
+        return "d_matrix"
+    blob = (text or "").lower()
+    if "nbndsub" in blob or "not enough bands" in blob:
+        return "nbndsub"
+    if "number of processes must be equal" in blob or "number of pools" in blob:
+        return "parallel"
+    if "dafopen" in blob or "error opening" in blob:
+        return "missing_files"
+    if "cannot bracket" in blob or "efermig" in blob:
+        return "fermi"
+    if "imaginary" in blob:
+        return "soft_modes"
+    return "other"
+
+
+def is_remediable_kmesh_failure(text: str | None) -> bool:
+    """Failures that justify EPW-only coarse-k retry after DFPT."""
+    cls = classify_epw_failure(text)
+    return cls in {"kmesh_bvector", "kgrid_inconsistency"}
 
 
 def truncate_for_notes(text: str | None, *, max_chars: int = 1200) -> str:
@@ -510,6 +601,8 @@ def diagnose_epw_failure(
     parts: list[str] = [f"[{step_name}] EPW/Wannier diagnostic"]
     primary = extract_primary_failure_reason(text, step_name=step_name)
     parts.append(f"  primary: {primary}")
+    cls = classify_epw_failure(text)
+    parts.append(f"  class: {cls}")
 
     if work_dir is not None:
         wd = Path(work_dir)
@@ -544,6 +637,11 @@ def diagnose_epw_failure(
         hits.append("  · no output text available to scan.")
     parts.append("hints:")
     parts.extend(hits)
+    if cls == "kmesh_bvector":
+        parts.append(
+            "  · remediation: EPW-only retry with denser nkc (6→8→12); DFPT reused. "
+            "Do not --force-rerun just for this error."
+        )
     parts.append(
         "  · screening: enable auto_nbndsub (default) and "
         "wannier_retry_on_froz_overflow; raise epw.nbndsub if retry fails."
@@ -601,6 +699,145 @@ def resolve_epw_launch_topology(
             update={"epw": config.epw.model_copy(update={"npool": plan.npool})}
         )
     return cfg, plan.message
+
+
+# ---------------------------------------------------------------------------
+# EPW remediation persistence (resume-safe; never touches phonon artifacts)
+# ---------------------------------------------------------------------------
+
+
+def load_epw_remediation_state(work_dir: Path) -> dict[str, Any]:
+    """Load attempt notes from workdir sidecar (empty if missing)."""
+    path = Path(work_dir) / _EPW_REMEDIATION_JSON
+    if not path.is_file():
+        return {"attempts": [], "version": 1}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {"attempts": [], "version": 1}
+        data.setdefault("attempts", [])
+        return data
+    except (OSError, json.JSONDecodeError):
+        return {"attempts": [], "version": 1}
+
+
+def save_epw_remediation_state(work_dir: Path, state: dict[str, Any]) -> Path:
+    """Persist remediation attempts (for resume / anti-loop)."""
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    path = work_dir / _EPW_REMEDIATION_JSON
+    path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def record_epw_remediation_attempt(
+    work_dir: Path,
+    *,
+    reason: str,
+    nkc_before: list[int],
+    nkc_after: list[int],
+    note: str = "",
+) -> dict[str, Any]:
+    state = load_epw_remediation_state(work_dir)
+    attempts = list(state.get("attempts") or [])
+    attempts.append(
+        {
+            "reason": reason,
+            "nkc_before": list(nkc_before),
+            "nkc_after": list(nkc_after),
+            "note": note,
+        }
+    )
+    state["attempts"] = attempts
+    save_epw_remediation_state(work_dir, state)
+    return state
+
+
+def _archive_epw_attempt(work_dir: Path, attempt_idx: int) -> None:
+    """Rename epw.out → epw.attemptN.out so the next launch is clean."""
+    work_dir = Path(work_dir)
+    first_out = work_dir / "epw.out"
+    if first_out.is_file():
+        dest = work_dir / f"epw.attempt{attempt_idx}.out"
+        try:
+            if dest.is_file():
+                dest.unlink()
+            first_out.rename(dest)
+        except OSError:
+            pass
+
+
+def _clean_nscf_and_epw_only(work_dir: Path, prefix: str = "siscforge") -> None:
+    """Remove NSCF + EPW outputs only — **never** phonon / dyn / _ph0 / save prep
+    that depends on DFPT. save/ is kept (from pp.py after DFPT).
+
+    When coarse k changes, nscf wavefunctions must be regenerated; epw.out is
+    archived separately. Phonon artifacts are sacred.
+    """
+    from siscforge.calculators.qe.qe_checkpoint import clean_step_outputs
+
+    # work_dir here is scf_dir (flat EPW layout) or campaign work_dir root
+    root = Path(work_dir)
+    # Prefer candidate root if we are inside 02_scf
+    cand_root = root.parent if root.name == "02_scf" else root
+    if (cand_root / "02_scf").is_dir():
+        clean_step_outputs(cand_root, "nscf", prefix=prefix)
+        clean_step_outputs(cand_root, "epw", prefix=prefix)
+    else:
+        # Flat layout (scf_dir == work_dir for EPW path)
+        for name in ("nscf.out", "nscf.in", "epw.out", "epw.in"):
+            p = root / name
+            if p.is_file():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+
+
+def plan_kmesh_remediation(
+    config: DFTConfig,
+    failure_text: str | None,
+    *,
+    work_dir: Path | str | None = None,
+) -> tuple[DFTConfig, str] | None:
+    """If failure is remediable, return (new_config, cli_log_line) else None.
+
+    Caps retries via ``epw.max_kmesh_retries`` and workdir attempt log.
+    Does **not** change nqc / qpoints.
+    """
+    if not bool(getattr(config.epw, "auto_retry_kmesh", True)):
+        return None
+    if not is_remediable_kmesh_failure(failure_text):
+        return None
+
+    max_retries = int(getattr(config.epw, "max_kmesh_retries", 2) or 2)
+    attempts_done = 0
+    if work_dir is not None:
+        state = load_epw_remediation_state(Path(work_dir))
+        attempts_done = len(state.get("attempts") or [])
+    if attempts_done >= max_retries:
+        return None
+
+    nkc_now = list(config.epw.nkc or [6, 6, 6])
+    nkc_next = next_coarse_k_after_bvector_failure(nkc_now, attempt=attempts_done)
+    if nkc_next is None:
+        return None
+
+    cls = classify_epw_failure(failure_text)
+    nk_label = f"{nkc_now[0]}×{nkc_now[1]}×{nkc_now[2]}"
+    new_label = f"{nkc_next[0]}×{nkc_next[1]}×{nkc_next[2]}"
+    short = "kmesh_get_bvector" if cls == "kmesh_bvector" else cls
+    log_line = (
+        f"EPW failed ({short} @ nk={nkc_now[0]}) — "
+        f"retrying EPW-only with nk={nkc_next[0]} (DFPT reused)"
+    )
+    new_cfg = apply_coarse_k_to_config(config, nkc_next)
+    # Surface detail in a second sentence for notes
+    detail = (
+        f"{log_line}; coarse k {nk_label}→{new_label}; "
+        f"nqc unchanged={list(config.epw.nqc)}; attempt {attempts_done + 1}/{max_retries}"
+    )
+    return new_cfg, detail
 
 
 def _run_epw_once(
@@ -729,6 +966,7 @@ def _run_epw_once(
                 full_text, work_dir=work_dir, step_name="epw"
             )
             summary["primary_failure"] = primary
+            summary["failure_class"] = classify_epw_failure(full_text)
             eph = eph.model_copy(update={"alpha2F_summary": summary})
 
     return step, eph, full_text
@@ -753,6 +991,9 @@ def run_epw(
 
     On Wannier frozen-window overflow (screening), optionally retries **once**
     with a larger nbndsub (reuses save/nscf via same workdir).
+
+    Coarse-k / bvector remediation that needs re-NSCF is handled by
+    :func:`run_relax_scf_phonon_epw` (EPW-only path after DFPT).
     """
     from siscforge.calculators.qe.epw_inputs import default_nbndsub_screening
 
@@ -877,6 +1118,104 @@ def run_epw(
     return step, eph
 
 
+def _retry_epw_with_denser_k(
+    structure: Structure,
+    config: DFTConfig,
+    scf_dir: Path,
+    *,
+    prefix: str,
+    qe_env: QEEnvironment | None,
+    full_text: str,
+    log: list[str],
+    result: EPWWorkflowResult,
+    step: QEStepResult,
+    eph: ElectronPhononResult | None,
+) -> tuple[DFTConfig, QEStepResult, ElectronPhononResult | None, str]:
+    """Post-DFPT EPW-only remediation loop (kmesh bvector / k-grid mismatch).
+
+    Never cleans phonon / DFPT artifacts. Re-runs NSCF when nkc changes, then
+    epw.x. Caps at ``epw.max_kmesh_retries``.
+    """
+    attempt = 0
+    while True:
+        plan = plan_kmesh_remediation(
+            config, full_text or step.message, work_dir=scf_dir
+        )
+        if plan is None:
+            break
+        new_cfg, detail = plan
+        nkc_before = list(config.epw.nkc)
+        nkc_after = list(new_cfg.epw.nkc)
+        attempt += 1
+        cli_line = (
+            f"EPW failed (kmesh_get_bvector @ nk={nkc_before[0]}) — "
+            f"retrying EPW-only with nk={nkc_after[0]} (DFPT reused)"
+        )
+        log.append(cli_line)
+        log.append(detail)
+
+        record_epw_remediation_attempt(
+            scf_dir,
+            reason=classify_epw_failure(full_text),
+            nkc_before=nkc_before,
+            nkc_after=nkc_after,
+            note=cli_line,
+        )
+        _archive_epw_attempt(scf_dir, attempt)
+        _clean_nscf_and_epw_only(scf_dir, prefix=prefix)
+
+        # Re-NSCF on denser coarse k (must match epw nk1–3)
+        log.append(
+            f"running nscf (remediation nk={nkc_after[0]}×{nkc_after[1]}×{nkc_after[2]})"
+        )
+        nscf_step = run_nscf_for_epw(
+            structure,
+            new_cfg,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            outdir=scf_dir,
+        )
+        result.epw_steps.append(nscf_step)
+        result.steps.append(nscf_step)
+        if not nscf_step.success:
+            step = nscf_step
+            eph = None
+            full_text = nscf_step.message or ""
+            config = new_cfg
+            break
+
+        log.append(f"running epw (remediation nk={nkc_after[0]})")
+        step, eph = run_epw(
+            new_cfg,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            structure=structure,
+            outdir=scf_dir,
+        )
+        step.message = f"{cli_line}\n{step.message}"
+        result.epw_steps.append(step)
+        result.steps.append(step)
+        config = new_cfg
+        full_text = ""
+        if step.stdout_path is not None and step.stdout_path.is_file():
+            try:
+                full_text = step.stdout_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                full_text = step.message or ""
+        if step.success or (
+            eph is not None and eph.lambda_total is not None
+        ):
+            break
+        if not is_remediable_kmesh_failure(full_text):
+            break
+
+    return config, step, eph, full_text
+
+
 def run_relax_scf_phonon_epw(
     structure: Structure,
     config: DFTConfig,
@@ -898,6 +1237,12 @@ def run_relax_scf_phonon_epw(
     vc-relax/SCF; incomplete DFPT that looks recoverable is re-launched with
     QE ``recover=.true.``, otherwise phonon restarts from a clean step.
     Incomplete EPW / pp / nscf steps still clean + re-run (no fragile recover).
+
+    **Pre-DFPT EPW preflight** auto-raises Wannier-unsafe coarse k (e.g. 6→8
+    on ≥8-atom production cells) and aligns nqc to DFPT qpoints.
+
+    **Post-DFPT EPW remediation** on ``kmesh_get_bvector`` re-runs NSCF+epw
+    only with denser nkc — phonon artifacts are never deleted.
     """
     from siscforge.calculators.qe.qe_checkpoint import (
         clean_step_outputs,
@@ -920,6 +1265,23 @@ def run_relax_scf_phonon_epw(
     current = structure
     log: list[str] = step_log if step_log is not None else []
 
+    # --- Pre-DFPT EPW preflight (coarse k + nq consistency) ---
+    nkc_changed_by_preflight = False
+    if want_epw:
+        pre = preflight_epw_grids(config, structure=structure)
+        for m in pre.summary_lines:
+            log.append(m)
+        if not pre.ok:
+            result.success = False
+            result.message = (
+                "EPW preflight failed (strict_coarse_k or invalid grids):\n"
+                + "\n".join(pre.summary_lines)
+            )
+            return result
+        if pre.nkc_raised:
+            nkc_changed_by_preflight = True
+        config = pre.config
+
     do_resume = _should_resume_qe_steps(config, resume_qe_steps=resume_qe_steps)
     do_force = _force_qe_steps(config, force_qe_steps=force_qe_steps) or not do_resume
     ckpt = probe_workdir(
@@ -931,6 +1293,30 @@ def run_relax_scf_phonon_epw(
         force=do_force,
     )
     log.extend(ckpt.log)
+
+    # If preflight raised nkc, invalidate NSCF/EPW checkpoints so resume does
+    # not reuse a too-coarse nscf mesh with the new epw.in.
+    if nkc_changed_by_preflight and want_epw and not do_force:
+        if ckpt.is_complete("nscf") or ckpt.is_complete("epw"):
+            log.append(
+                "preflight raised coarse k — invalidating nscf/epw checkpoints "
+                "(phonon kept)"
+            )
+            clean_step_outputs(work_dir, "nscf", prefix=prefix)
+            clean_step_outputs(work_dir, "epw", prefix=prefix)
+            # Re-probe so is_complete reflects cleaned state
+            ckpt = probe_workdir(
+                work_dir,
+                config,
+                prefix=prefix,
+                structure=structure,
+                want_epw=want_epw,
+                force=do_force,
+            )
+            # Keep prior log trail
+            log.extend(
+                [x for x in ckpt.log if x not in log]
+            )
 
     # 1. Optional relax
     if config.do_relax:
@@ -1162,7 +1548,7 @@ def run_relax_scf_phonon_epw(
             result.success = False
             return result
 
-    # 6. epw.x
+    # 6. epw.x (+ optional post-DFPT k-mesh remediation)
     if ckpt.is_complete("epw"):
         probe = ckpt.steps["epw"]
         result.electron_phonon = probe.electron_phonon
@@ -1177,9 +1563,60 @@ def run_relax_scf_phonon_epw(
         log.append("skip epw (checkpoint)")
         eph = result.electron_phonon
         step_msg = "skip epw (checkpoint)"
+        step = result.steps[-1]
     else:
         if (scf_dir / "epw.out").is_file():
-            clean_step_outputs(work_dir, "epw", prefix=prefix)
+            # If a prior failed epw.out exists with remediable class and retries
+            # remaining, plan remediation before replaying the same nk.
+            prior_text = ""
+            try:
+                prior_text = (scf_dir / "epw.out").read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                prior_text = ""
+            plan = plan_kmesh_remediation(config, prior_text, work_dir=scf_dir)
+            if plan is not None:
+                new_cfg, detail = plan
+                log.append(
+                    "prior EPW failure remediable — applying denser coarse k "
+                    "before re-launch (DFPT kept)"
+                )
+                log.append(detail)
+                nkc_before = list(config.epw.nkc)
+                nkc_after = list(new_cfg.epw.nkc)
+                record_epw_remediation_attempt(
+                    scf_dir,
+                    reason=classify_epw_failure(prior_text),
+                    nkc_before=nkc_before,
+                    nkc_after=nkc_after,
+                    note=detail,
+                )
+                _archive_epw_attempt(scf_dir, len(load_epw_remediation_state(scf_dir).get("attempts") or []))
+                clean_step_outputs(work_dir, "nscf", prefix=prefix)
+                clean_step_outputs(work_dir, "epw", prefix=prefix)
+                config = new_cfg
+                log.append("running nscf (remediation after prior kmesh failure)")
+                nscf_step = run_nscf_for_epw(
+                    current,
+                    config,
+                    scf_dir,
+                    prefix=prefix,
+                    qe_env=qe_env,
+                    outdir=scf_dir,
+                )
+                result.epw_steps.append(nscf_step)
+                result.steps.append(nscf_step)
+                if not nscf_step.success:
+                    result.message = (
+                        f"EPW NSCF failed during k-mesh remediation: {nscf_step.message}"
+                    )
+                    result.success = False
+                    if step_log is not None:
+                        step_log.extend(log)
+                    return result
+            else:
+                clean_step_outputs(work_dir, "epw", prefix=prefix)
         log.append("running epw")
         step, eph = run_epw(
             config,
@@ -1193,6 +1630,30 @@ def run_relax_scf_phonon_epw(
         result.steps.append(step)
         result.electron_phonon = eph
         step_msg = step.message
+        full_text = ""
+        if step.stdout_path is not None and step.stdout_path.is_file():
+            try:
+                full_text = step.stdout_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                full_text = step.message or ""
+        # Post-DFPT auto-remediation (EPW-only)
+        if not step.success and is_remediable_kmesh_failure(full_text):
+            config, step, eph, full_text = _retry_epw_with_denser_k(
+                current,
+                config,
+                scf_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+                full_text=full_text,
+                log=log,
+                result=result,
+                step=step,
+                eph=eph,
+            )
+            result.electron_phonon = eph
+            step_msg = step.message
 
     if eph is not None and (eph.converged or eph.lambda_total is not None):
         tc = eph.best_tc_K()
@@ -1211,20 +1672,35 @@ def run_relax_scf_phonon_epw(
             result.message = step_msg
     else:
         result.success = False
+        primary = extract_primary_failure_reason(step_msg, step_name="epw")
+        next_step = (
+            "Human next step: raise epw.nkc further (e.g. 12³), check NSCF k "
+            "matches nk1–3, or set material-specific Wannier projections. "
+            "Do not re-run DFPT for kmesh_get_bvector — phonon is intact. "
+            "Use --force-rerun only if you intentionally want a full redo."
+        )
+        if is_kmesh_bvector_failure(step_msg):
+            next_step = (
+                "Human next step: all automatic coarse-k retries exhausted "
+                "(6→8→12). Inspect epw.out / Wannier90 .wout; try nkc=12 with "
+                "hand-tuned projections, or a different strain/cell. "
+                "DFPT/phonon artifacts were NOT deleted — re-run without "
+                "--force-rerun to retry EPW only."
+            )
         result.message = (
             f"EPW failed or did not converge (quality_tag={config.quality_tag}):\n"
+            f"{primary}\n"
             f"{step_msg}\n"
-            "Common issues: Wannier projections for metals (proj=random is "
-            "screening-only), nscf k-grid must match nk1–nk3, and dense enough "
-            "q-mesh / soft modes in unstable structures. "
-            "See recommended_grids() / docs/examples/nbN_epw.md to tighten settings."
+            f"{next_step}"
         )
 
     if step_log is not None:
-        step_log.extend(log)
+        # log already is step_log when provided
+        if log is not step_log:
+            step_log.extend(log)
     elif log:
         # surface checkpoint trail in message when useful
-        if any(x.startswith("skip ") or x.startswith("running ") for x in log):
+        if any(x.startswith("skip ") or x.startswith("running ") or "EPW" in x for x in log):
             trail = "; ".join(log)
             if result.message == "ok" or result.message.startswith("ok "):
                 result.message = f"{result.message} [{trail}]"
@@ -1272,4 +1748,8 @@ def recipe_epw_info() -> dict[str, Any]:
         ],
         "models": ["SCFResult", "PhononResult", "ElectronPhononResult"],
         "tc": ["Allen-Dynes", "isotropic Eliashberg (EPW or closed-form)"],
+        "coarse_k_safety": (
+            "workstation_dense/production min nkc=8³ for ≥8-atom cells; "
+            "post-DFPT kmesh_get_bvector → EPW-only retry 6→8→12"
+        ),
     }

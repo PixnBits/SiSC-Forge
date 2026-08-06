@@ -274,7 +274,12 @@ class EPWConfig(BaseModel):
     3. See ``siscforge.calculators.qe.epw_inputs.recommended_grids`` and
        docs/examples/nbN_epw.md for NbN / MgB₂ grid ladders.
 
-    This config does not auto-upgrade grids from ``quality_tag`` alone.
+    **Coarse electronic k (nkc):** for ``production`` / refine
+    ``workstation_dense`` on ≥8-atom cells, SiSC-Forge enforces a **minimum
+    8³** Wannier mesh (auto-raise unless ``strict_coarse_k``). Never use 6³
+    on those cells — Wannier90 ``kmesh_get_bvector`` fails after DFPT.
+    ``nqc`` must match the DFPT q-mesh and is **not** auto-changed after
+    phonons complete.
     """
 
     enabled: bool = False
@@ -289,7 +294,10 @@ class EPWConfig(BaseModel):
     """Fine q-grid for electron-phonon interpolation (screening default 6³)."""
 
     nkc: list[int] = Field(default_factory=lambda: [4, 4, 4])
-    """Coarse k-grid consistent with Wannierization / NSCF."""
+    """Coarse k-grid consistent with Wannierization / NSCF.
+
+    Dense tiers auto-raise undersized meshes (min 8³ for ≥8-atom cells).
+    """
 
     nqc: list[int] = Field(default_factory=lambda: [2, 2, 2])
     """Coarse q-grid (**must match DFPT q-mesh** when possible)."""
@@ -308,6 +316,19 @@ class EPWConfig(BaseModel):
     wannier_retry_on_froz_overflow: bool = True
     """If EPW fails with frozen-window overflow, retry epw.x once with a
     larger nbndsub (screening only). Mid-step resume reuses save/nscf."""
+
+    auto_retry_kmesh: bool = True
+    """If EPW fails with Wannier90 ``kmesh_get_bvector`` / not enough
+    bvectors **after DFPT is complete**, retry EPW-only (re-NSCF + epw.x)
+    with denser coarse k (6→8→12, max 2 retries). **Never** deletes or
+    re-runs finished phonon / DFPT."""
+
+    max_kmesh_retries: int = Field(default=2, ge=0, le=4)
+    """Cap on post-DFPT coarse-k remediation attempts (default 2)."""
+
+    strict_coarse_k: bool = False
+    """When True, refuse to auto-raise undersized coarse k and fail preflight
+    instead. Default False: auto-raise with a clear log line."""
 
     bands_skipped: int = 0
     """Bands below the Wannier window to skip."""
@@ -485,12 +506,14 @@ class RunConfig(BaseModel):
 
     force_rerun: bool = False
     """When True, ignore prior successes and re-run the expensive calculator
-    (also disables mid-step QE workdir checkpoints for that candidate)."""
+    (also disables mid-step QE workdir checkpoints for that candidate).
+    Full redo of vc-relax → SCF → DFPT → EPW — not an EPW-only remediation."""
 
     resume_qe_steps: bool = True
     """When True, re-use successful upstream QE artifacts in the candidate
     workdir (vc-relax → SCF → phonon → EPW). Default on; applies when the
-    candidate itself is not skipped by campaign-level resume."""
+    candidate itself is not skipped by campaign-level resume.
+    Finished phonon is sacred: EPW k-mesh remediation never deletes DFPT."""
 
     force_rerun_qe_steps: bool = False
     """When True, ignore workdir checkpoints and re-run every QE step.

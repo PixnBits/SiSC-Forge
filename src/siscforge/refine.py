@@ -9,6 +9,9 @@ Workflow
 Uses the same ``candidate_specs`` schema as shortlist (formula × strain × CIF).
 Does **not** re-enumerate the full composition grid. Trust layer re-assesses
 after refine EPW — quality is not faked cleaner.
+
+**Slice 25:** refine tiers emit Wannier-safe coarse k (≥8³ for supercells).
+EPW k-mesh failures after DFPT retry EPW-only — never redo finished phonon.
 """
 
 from __future__ import annotations
@@ -16,7 +19,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from siscforge.calculators.qe.epw_inputs import recommended_grids
+from siscforge.calculators.qe.epw_inputs import (
+    ensure_wannier_safe_nkc,
+    recommended_grids,
+)
 from siscforge.models.candidate import CandidateEvaluation
 from siscforge.models.config import (
     CampaignConfig,
@@ -154,11 +160,15 @@ def default_refine_dft(
     family: Literal["tm_nitride", "mgb2_boride", "generic"] = "tm_nitride",
     pseudo_dir: str | None = None,
     nproc: int = 16,
+    n_atoms: int = 8,
 ) -> DFTConfig:
-    """Denser DFT/EPW knobs for refine campaigns (not screening shortlist)."""
+    """Denser DFT/EPW knobs for refine campaigns (not screening shortlist).
+
+    Coarse electronic k is Wannier-safe: ≥8³ for ≥8-atom cells on dense tiers
+    (never 6³ — ``kmesh_get_bvector`` trap after multi-day DFPT).
+    """
     grids = recommended_grids(family, tier)
     epw_g = dict(grids.get("epw") or {})
-    qtag = "production" if tier == "production" else "production"
     # workstation_dense still uses production quality_tag label for honesty
     # (recommended_grids already sets quality_tag production for dense tiers)
 
@@ -170,6 +180,18 @@ def default_refine_dft(
 
     # Supercell nitrides still need empty bands
     nbnd = 72 if tier == "production" else 64
+
+    nkc_raw = list(epw_g.get("nkc") or [8, 8, 8])[:3]
+    nkc, raise_msg = ensure_wannier_safe_nkc(
+        nkc_raw,
+        quality_tag="production",
+        n_atoms=n_atoms,
+        tier=tier,
+        auto_raise=True,
+    )
+    # Default fallback was historically 6³ — force floor even if grids lag
+    if max(nkc) < 8 and n_atoms >= 8:
+        nkc = [8, 8, 8]
 
     return DFTConfig(
         engine="qe-epw",
@@ -194,11 +216,14 @@ def default_refine_dft(
             enabled=True,
             nkf=list(epw_g.get("nkf") or [12, 12, 12])[:3],
             nqf=list(epw_g.get("nqf") or [12, 12, 12])[:3],
-            nkc=list(epw_g.get("nkc") or [6, 6, 6])[:3],
+            nkc=list(nkc)[:3],
             nqc=nqc,
             nbndsub=None,
             auto_nbndsub=True,
             wannier_retry_on_froz_overflow=True,
+            auto_retry_kmesh=True,
+            max_kmesh_retries=2,
+            strict_coarse_k=False,
             mu_star=0.10,
             eliashberg=True,
             allen_dynes_fallback=True,
@@ -268,8 +293,22 @@ def build_refine_campaign(
     specs = [evaluation_to_refine_spec(e) for e in chosen]
     out = output_dir or f"outputs/{name}"
     calc_name = "mock" if dry_run else calculator
+    # Infer typical supercell size from first CIF when possible
+    n_atoms = 8
+    for s in specs:
+        if s.structure_cif:
+            try:
+                from pymatgen.core import Structure
+
+                n_atoms = max(n_atoms, len(Structure.from_str(s.structure_cif, fmt="cif")))
+            except Exception:  # noqa: BLE001
+                pass
     dft = default_refine_dft(
-        tier=tier, family=family, pseudo_dir=pseudo_dir, nproc=nproc
+        tier=tier,
+        family=family,
+        pseudo_dir=pseudo_dir,
+        nproc=nproc,
+        n_atoms=n_atoms,
     )
 
     desc = (
@@ -325,7 +364,9 @@ def build_refine_campaign(
                 "walltime_note": _TIER_WALLTIME.get(tier, ""),
                 "limitation": (
                     "Random Wannier projections may remain until a projection "
-                    "library lands; refine improves grids/quality_tag first."
+                    "library lands; refine improves grids/quality_tag first. "
+                    "EPW coarse k auto-bump; DFPT never redone on Wannier "
+                    "k-mesh failure. Auto-nk does not guarantee physical λ/Tc."
                 ),
             }
         },
@@ -345,6 +386,7 @@ def write_refine_yaml(config: CampaignConfig, path: str | Path) -> Path:
             "# Auto-generated REFINE campaign — denser grids than screening shortlist\n"
             "# refinement — do not cite Tc until result_quality flags clear/improve\n"
             f"# Tier notes: {_TIER_WALLTIME.get((config.extras or {}).get('refine', {}).get('tier', ''), '')}\n"
+            "# EPW coarse k auto-bump; DFPT never redone on Wannier k-mesh failure\n"
             "# Run: siscforge run --calculator qe-epw " + path.name + "\n"
             "# Resume: re-run the same command (campaign + mid-step QE checkpoints)\n"
             "# Dry-run: siscforge run --dry-run " + path.name + "\n"

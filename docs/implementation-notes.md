@@ -1,5 +1,74 @@
 # Implementation Notes
 
+## Slice 25 (2026-08-05) — EPW coarse-k Wannier safety + post-DFPT auto-remediation
+
+**Scope**: Prevent multi-day DFPT from being wasted when EPW aborts in seconds on
+a known-bad Wannier coarse k-mesh (`kmesh_get_bvector: Not enough bvectors`).
+Auto-raise unsafe `nkc` before DFPT; on remediable EPW failure **after** phonon
+is complete, retry **EPW-only** (re-NSCF + epw.x) with denser coarse k.
+**Never** delete or re-run finished DFPT/phonon. No DMFT, Josephson, GNN, or
+material-specific orbital projections.
+
+| Item | Location |
+|------|----------|
+| Min coarse k / auto-raise | `epw_inputs.minimum_coarse_k_dim`, `ensure_wannier_safe_nkc` |
+| Pre-DFPT preflight | `epw_inputs.preflight_epw_grids` + CLI campaign start + `run_relax_scf_phonon_epw` |
+| `recommended_grids` workstation_dense | `nkc: [8,8,8]` (was 6³) |
+| Diagnose fingerprint | `kmesh_get_bvector` / not enough bvectors → class `kmesh_bvector` |
+| EPW-only retry policy | `plan_kmesh_remediation`, `_retry_epw_with_denser_k` (6→8→12, max 2) |
+| Attempt sidecar | `siscforge_epw_remediation.json` in workdir (resume anti-loop) |
+| Config knobs | `epw.auto_retry_kmesh`, `max_kmesh_retries`, `strict_coarse_k` |
+| Refine defaults | `default_refine_dft` emits nkc≥8³ for supercells |
+| Tests | `tests/test_epw_coarse_k.py` |
+
+### Production incident (Nb0.25Ti0.75N refine)
+
+- ~188 h DFPT (36 q, JOB DONE) then EPW failed in ~2 s with
+  `kmesh_get_bvector: Not enough bvectors found`
+- Generated epw.in had `nk=6`, `nq=4` (nq correctly matched DFPT; k was wrong)
+- Resume skipped DFPT but replayed the same broken EPW inputs
+
+### Policy
+
+| Tier | n_atoms ≥ 8 | Notes |
+|------|-------------|--------|
+| screening | min 6³ allowed | Documented risk; order-of-magnitude only |
+| workstation_dense / production | **min 8³** | Auto-raise 6→8 with log line; nq unchanged |
+
+```text
+EPW coarse k raised to 8×8×8 (Wannier safety; was 6×6×6; nq unchanged to match DFPT)
+EPW failed (kmesh_get_bvector @ nk=6) — retrying EPW-only with nk=8 (DFPT reused)
+```
+
+### Resume
+
+- Successful phonon remains skippable (JOB DONE + dyn probes).
+- Failed EPW with remediable class + retries remaining → denser nkc, not identical replay.
+- `--force-rerun` still forces full redo (vc-relax → DFPT → EPW).
+- Never auto-change `nqc` / qpoints for an existing finished DFPT workdir.
+
+### Limitations (explicit)
+
+- Material-specific Wannier projections still out of scope (`proj=random`).
+- Auto-raised nk does **not** guarantee physical λ/Tc — trust layer still applies.
+- Cap 2 k-mesh retries (8 then 12); further failures need human / hand-tuned projs.
+
+### Safe re-run of an existing refine campaign (no --force-rerun)
+
+```bash
+# After pull: same campaign YAML + same output_dir
+siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
+# Finished phonon skipped; EPW re-launches with Wannier-safe nkc if needed
+```
+
+### Manual checks after λ/Tc appears
+
+1. Imaginary modes in `ph.out` / `PhononResult` (trust layer may still flag unreliable)
+2. `result_quality` / quality flags after ranking
+3. λ not pathologically inflated vs family expectations
+
+---
+
 ## Slice 24 (2026-08-03) — Phonon failure UX: Errno 36 + d_matrix
 
 **Scope**: Fix the machine-2 phonon-map failure mode where `ph.x` dies with

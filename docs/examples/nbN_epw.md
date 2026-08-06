@@ -88,13 +88,17 @@ dft:
   kpoints: [8, 8, 8]
   qpoints: [4, 4, 4]
   epw:
-    nkc: [6, 6, 6]
+    nkc: [8, 8, 8]   # ≥8³ on ≥8-atom cells (Wannier bvector safety; not 6³)
     nqc: [4, 4, 4]   # must match DFPT q-grid
     nkf: [12, 12, 12]
     nqf: [12, 12, 12]
     eps_acustic: 5.0
     degaussw: 0.05
 ```
+
+SiSC-Forge auto-raises undersized coarse k on production/workstation_dense
+tiers and, after DFPT, retries EPW-only on `kmesh_get_bvector` (never redos
+phonon). See Slice 25 in `docs/implementation-notes.md`.
 
 **`quality_tag` is a label** propagated to SCF / phonon / e-ph results and
 exports. Changing it alone does not densify grids — edit the knobs above.

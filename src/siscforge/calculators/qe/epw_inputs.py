@@ -7,14 +7,27 @@ order-of-magnitude λ / Tc on a workstation.  ``quality_tag: production`` is a
 label for denser hand-tuned campaigns — raise k/q grids in YAML (see
 ``recommended_grids`` and docs/examples/nbN_epw.md).
 
+Coarse electronic k (``nkc`` / EPW ``nk1–3``)
+--------------------------------------------
+Wannier90 needs enough b-vectors on the coarse k-mesh. On ≥8-atom supercells,
+``nk=6`` often aborts with ``kmesh_get_bvector: Not enough bvectors found``
+after multi-day DFPT. SiSC-Forge therefore:
+
+- Uses **minimum 8³** coarse k for ``workstation_dense`` / ``production`` tiers
+  when ``n_atoms ≥ 8`` (see :func:`minimum_coarse_k_dim`).
+- Auto-raises undersized ``nkc`` in preflight (unless ``strict_coarse_k``).
+- **Never** auto-changes ``nqc`` / DFPT q-mesh after phonons are done.
+
 This module does **not** auto-discover Wannier projections; ``proj=random`` is
 intentional for screening. Production runs need material-specific projections.
+Auto-raised nk does **not** guarantee physical λ/Tc.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from pymatgen.core import Element, Structure
 
@@ -37,6 +50,10 @@ _DEFAULT_AMASS: dict[str, float] = {
     "Ta": 180.948,
     "Pb": 207.2,
 }
+
+# Coarse-k remediation ladder after kmesh_get_bvector (per dimension, isotropic bump).
+COARSE_K_REMEDIATION_LADDER: tuple[int, ...] = (6, 8, 12)
+MAX_EPW_KMESH_RETRIES: int = 2
 
 
 def qe_atomic_type_symbols(structure: Structure) -> list[str]:
@@ -153,15 +170,119 @@ def _wannier_window_lines(
     ]
 
 
+# ---------------------------------------------------------------------------
+# Coarse electronic k — Wannier safety (Feature A / B)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_grid3(values: Sequence[int] | None, default: list[int]) -> list[int]:
+    base = list(values) if values is not None else list(default)
+    out = [int(x) for x in (base + list(default))[:3]]
+    return [max(1, x) for x in out]
+
+
+def minimum_coarse_k_dim(
+    *,
+    quality_tag: str = "screening",
+    n_atoms: int = 2,
+    tier: str | None = None,
+) -> int:
+    """Minimum per-dimension coarse electronic k for Wannier safety.
+
+    Policy
+    ------
+    - **screening**: allow 4³ on small cells; allow 6³ on ≥8-atom cells
+      (documented risk of bvector failures on awkward cells).
+    - **workstation_dense / production** (or ``quality_tag=production``):
+      **minimum 8** per dimension when ``n_atoms ≥ 8``; 6 on smaller cells.
+
+    ``tier`` may be set explicitly by refine (``workstation_dense``) even when
+    the YAML still carries ``quality_tag: production``.
+    """
+    qtag = (quality_tag or "screening").lower()
+    t = (tier or "").lower()
+    dense = (
+        qtag in {"production", "workstation_dense"}
+        or t in {"production", "workstation_dense"}
+    )
+    n_at = max(1, int(n_atoms))
+    if dense:
+        return 8 if n_at >= 8 else 6
+    # screening
+    return 6 if n_at >= 8 else 4
+
+
+def ensure_wannier_safe_nkc(
+    nkc: Sequence[int],
+    *,
+    quality_tag: str = "screening",
+    n_atoms: int = 2,
+    tier: str | None = None,
+    auto_raise: bool = True,
+) -> tuple[list[int], str | None]:
+    """Return Wannier-safe coarse k and an optional log line when raised.
+
+    Does **not** touch nqc / DFPT q-mesh.
+    """
+    nkc_list = _normalize_grid3(nkc, [4, 4, 4])
+    floor = minimum_coarse_k_dim(
+        quality_tag=quality_tag, n_atoms=n_atoms, tier=tier
+    )
+    if all(x >= floor for x in nkc_list):
+        return nkc_list, None
+    if not auto_raise:
+        return nkc_list, (
+            f"EPW coarse k {nkc_list[0]}×{nkc_list[1]}×{nkc_list[2]} is below "
+            f"Wannier safety floor {floor}³ for n_atoms={n_atoms} "
+            f"(quality_tag={quality_tag}"
+            + (f", tier={tier}" if tier else "")
+            + "); auto_raise disabled"
+        )
+    raised = [max(x, floor) for x in nkc_list]
+    msg = (
+        f"EPW coarse k raised to {raised[0]}×{raised[1]}×{raised[2]} "
+        f"(Wannier safety; was {nkc_list[0]}×{nkc_list[1]}×{nkc_list[2]}; "
+        f"nq unchanged to match DFPT)"
+    )
+    return raised, msg
+
+
+def next_coarse_k_after_bvector_failure(
+    nkc: Sequence[int],
+    *,
+    attempt: int = 0,
+) -> list[int] | None:
+    """Next isotropic coarse-k after ``kmesh_get_bvector`` (6→8→12).
+
+    *attempt* is 0-based index among k-mesh remediation tries (max 2).
+    Returns None when the ladder is exhausted.
+    """
+    cur = _normalize_grid3(nkc, [6, 6, 6])
+    # Use max dimension as current density proxy
+    cur_dim = max(cur)
+    # Find next ladder step strictly denser than current
+    for step in COARSE_K_REMEDIATION_LADDER:
+        if step > cur_dim:
+            if attempt >= MAX_EPW_KMESH_RETRIES:
+                return None
+            return [step, step, step]
+    # Already at or above top of ladder
+    return None
+
+
 def recommended_grids(
     family: Literal["tm_nitride", "mgb2_boride", "generic"] = "generic",
     tier: Literal["screening", "workstation_dense", "production"] = "screening",
 ) -> dict[str, Any]:
     """Suggested DFT/EPW grid knobs by material family and quality tier.
 
-    These are **guidance** for YAML overrides — not applied automatically.
-    ``workstation_dense`` is a practical next step after screening on a
-    high-end workstation; ``production`` still needs hand-tuned Wannier.
+    These are **guidance** for YAML overrides — also applied by
+    ``default_refine_dft``. ``workstation_dense`` is a practical next step
+    after screening on a high-end workstation; ``production`` still needs
+    hand-tuned Wannier.
+
+    **Wannier safety (Slice 25):** dense tiers use coarse k ≥ 8³ for typical
+    8-atom nitride supercells — never 6³ (kmesh_get_bvector trap).
     """
     # Common skeleton
     base: dict[str, Any] = {
@@ -183,7 +304,8 @@ def recommended_grids(
                         "fsthick": 0.6,
                     },
                     "notes": (
-                        "Order-of-magnitude NbN-like λ/Tc; soft modes may inflate λ."
+                        "Order-of-magnitude NbN-like λ/Tc; soft modes may inflate λ. "
+                        "Screening nkc=4 is intentional; supercell EPW may need 6³+."
                     ),
                 }
             )
@@ -193,7 +315,8 @@ def recommended_grids(
                     "kpoints": [8, 8, 8],
                     "qpoints": [4, 4, 4],
                     "epw": {
-                        "nkc": [6, 6, 6],
+                        # Was 6³ — Wannier90 kmesh_get_bvector fails on 8-atom cells
+                        "nkc": [8, 8, 8],
                         "nqc": [4, 4, 4],
                         "nkf": [12, 12, 12],
                         "nqf": [12, 12, 12],
@@ -203,6 +326,7 @@ def recommended_grids(
                     },
                     "notes": (
                         "Denser DFPT q + EPW fine mesh; nqc must match DFPT q-grid. "
+                        "Coarse k ≥ 8³ for Wannier safety on supercells. "
                         "Expect multi-hour wall-time on 16–32 cores."
                     ),
                 }
@@ -247,7 +371,8 @@ def recommended_grids(
                     "kpoints": [8, 8, 6],
                     "qpoints": [4, 4, 2],
                     "epw": {
-                        "nkc": [6, 6, 4],
+                        # denser in-plane coarse k (3-atom cell; anisotropic ok)
+                        "nkc": [8, 8, 4],
                         "nqc": [4, 4, 2],
                         "nkf": [16, 16, 12],
                         "nqf": [16, 16, 12],
@@ -292,6 +417,141 @@ def recommended_grids(
     return base
 
 
+@dataclass
+class EPWPreflightResult:
+    """Outcome of pre-DFPT EPW grid validation."""
+
+    ok: bool
+    config: DFTConfig
+    messages: list[str] = field(default_factory=list)
+    nkc_raised: bool = False
+    nqc_aligned: bool = False
+    strict_violations: list[str] = field(default_factory=list)
+
+    @property
+    def summary_lines(self) -> list[str]:
+        lines = list(self.messages)
+        if self.strict_violations:
+            lines.extend(f"STRICT: {v}" for v in self.strict_violations)
+        return lines
+
+
+def preflight_epw_grids(
+    config: DFTConfig,
+    *,
+    structure: Structure | None = None,
+    n_atoms: int | None = None,
+    tier: str | None = None,
+    auto_raise: bool | None = None,
+) -> EPWPreflightResult:
+    """Validate / auto-fix coarse k and nq consistency **before** DFPT+EPW.
+
+    - Coarse k must meet Wannier safety floor for tier + cell size.
+    - ``epw.nqc`` should equal ``dft.qpoints`` (DFPT mesh); auto-align nqc →
+      qpoints when they differ (never the reverse after DFPT exists).
+    - When ``epw.strict_coarse_k`` is True, undersized k is a hard failure
+      (``ok=False``) instead of auto-raise.
+
+    Fine grids (nkf/nqf) are not modified.
+    """
+    n_at = (
+        int(n_atoms)
+        if n_atoms is not None
+        else (len(structure) if structure is not None else 2)
+    )
+    epw = config.epw
+    strict = bool(getattr(epw, "strict_coarse_k", False))
+    do_auto = (not strict) if auto_raise is None else (bool(auto_raise) and not strict)
+
+    messages: list[str] = []
+    violations: list[str] = []
+    nkc_in = _normalize_grid3(epw.nkc, [4, 4, 4])
+    nqc_in = _normalize_grid3(epw.nqc, [2, 2, 2])
+    qpts = _normalize_grid3(config.qpoints, [2, 2, 2])
+
+    floor = minimum_coarse_k_dim(
+        quality_tag=config.quality_tag or "screening",
+        n_atoms=n_at,
+        tier=tier,
+    )
+    below = any(x < floor for x in nkc_in)
+
+    nkc_out = list(nkc_in)
+    nkc_raised = False
+    if below:
+        if do_auto:
+            nkc_out, raise_msg = ensure_wannier_safe_nkc(
+                nkc_in,
+                quality_tag=config.quality_tag or "screening",
+                n_atoms=n_at,
+                tier=tier,
+                auto_raise=True,
+            )
+            nkc_raised = nkc_out != nkc_in
+            if raise_msg:
+                messages.append(raise_msg)
+        else:
+            violations.append(
+                f"EPW coarse k {nkc_in[0]}×{nkc_in[1]}×{nkc_in[2]} is below "
+                f"Wannier safety floor {floor}³ for n_atoms={n_at} "
+                f"(quality_tag={config.quality_tag}"
+                + (f", tier={tier}" if tier else "")
+                + "); set epw.strict_coarse_k=false to auto-raise or raise nkc in YAML"
+            )
+
+    nqc_out = list(nqc_in)
+    nqc_aligned = False
+    if nqc_in != qpts:
+        # Align EPW coarse q to DFPT qpoints (required for dvscf/save match)
+        nqc_out = list(qpts)
+        nqc_aligned = True
+        messages.append(
+            f"EPW nqc aligned to DFPT qpoints {qpts[0]}×{qpts[1]}×{qpts[2]} "
+            f"(was {nqc_in[0]}×{nqc_in[1]}×{nqc_in[2]})"
+        )
+
+    cfg = config
+    epw_updates: dict[str, Any] = {}
+    if nkc_out != nkc_in:
+        epw_updates["nkc"] = nkc_out
+    if nqc_out != nqc_in:
+        epw_updates["nqc"] = nqc_out
+    if epw_updates:
+        cfg = config.model_copy(
+            update={"epw": config.epw.model_copy(update=epw_updates)}
+        )
+
+    # Summary always present for CLI once-at-start
+    summary = (
+        f"EPW preflight: n_atoms={n_at} quality_tag={cfg.quality_tag} "
+        f"nkc={list(cfg.epw.nkc)} nqc={list(cfg.epw.nqc)} "
+        f"qpoints={list(cfg.qpoints)} nkf={list(cfg.epw.nkf)} "
+        f"nproc={cfg.nproc} npool={cfg.epw.npool}"
+    )
+    messages.insert(0, summary)
+
+    ok = len(violations) == 0
+    return EPWPreflightResult(
+        ok=ok,
+        config=cfg,
+        messages=messages,
+        nkc_raised=nkc_raised,
+        nqc_aligned=nqc_aligned,
+        strict_violations=violations,
+    )
+
+
+def apply_coarse_k_to_config(
+    config: DFTConfig,
+    nkc: Sequence[int],
+) -> DFTConfig:
+    """Return config with epw.nkc set (NSCF builders read this)."""
+    nkc_list = _normalize_grid3(nkc, [8, 8, 8])
+    return config.model_copy(
+        update={"epw": config.epw.model_copy(update={"nkc": nkc_list})}
+    )
+
+
 def build_epw_input(
     config: DFTConfig,
     *,
@@ -314,11 +574,20 @@ def build_epw_input(
       anisotropic Eliashberg is not generated by this template.
     - Full production runs still need careful Wannier projections and denser grids.
     - Generated file includes a header comment recording ``quality_tag`` and grids.
+    - Coarse k may be raised for Wannier safety (see :func:`ensure_wannier_safe_nkc`);
+      nqc is **not** auto-changed here (must match DFPT).
     """
     epw: EPWConfig = config.epw
     nkf = (list(epw.nkf) + [6, 6, 6])[:3]
     nqf = (list(epw.nqf) + [6, 6, 6])[:3]
-    nkc = (list(epw.nkc) + [4, 4, 4])[:3]
+    n_at = len(structure) if structure is not None else 2
+    nkc_raw = (list(epw.nkc) + [4, 4, 4])[:3]
+    nkc, _raise_msg = ensure_wannier_safe_nkc(
+        nkc_raw,
+        quality_tag=getattr(config, "quality_tag", "screening") or "screening",
+        n_atoms=n_at,
+        auto_raise=not bool(getattr(epw, "strict_coarse_k", False)),
+    )
     nqc = (list(epw.nqc) + [2, 2, 2])[:3]
     qtag = getattr(config, "quality_tag", "screening") or "screening"
     auto_nbnd = bool(getattr(epw, "auto_nbndsub", True))
@@ -338,6 +607,7 @@ def build_epw_input(
         f"! Coarse k/q (nkc/nqc) = {nkc} / {nqc}  (nqc should match DFPT q-grid)",
         f"! nbndsub={nbndsub} (auto_nbndsub={auto_nbnd}; dft.nbnd={config.nbnd})",
         "! Screening: proj=random + tight frozen window; production needs hand projs.",
+        "! Coarse k auto-bump for Wannier safety; DFPT nq never redone on k-mesh fail.",
         "! Raise nkf/nqf/qpoints for denser grids (recommended_grids / docs).",
         "!",
     ]

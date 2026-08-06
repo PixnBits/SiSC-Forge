@@ -136,6 +136,32 @@ CLI failure lines now show the reason without opening `epw.out`:
 Evaluation notes include workdir, output tail, and remediation. Production
 still needs hand-tuned Wannier projections.
 
+### EPW coarse k auto-bump (Wannier safety)
+
+After multi-day DFPT, EPW can die in seconds with:
+
+```text
+kmesh_get_bvector: Not enough bvectors found
+```
+
+Typical cause: refine / `workstation_dense` used **nkc=6** on an 8-atom
+supercell. SiSC-Forge now:
+
+1. **Preflight** (before DFPT): raise coarse k to ≥ **8³** for production /
+   workstation_dense on ≥8-atom cells; log
+   `EPW coarse k raised to 8×8×8 (Wannier safety; was 6×6×6; nq unchanged to match DFPT)`.
+2. **Post-DFPT**: on that error, **EPW-only** retry with denser nkc (6→8→12,
+   max 2) — **DFPT / phonon is never deleted or redone**.
+3. Resume without `--force-rerun` reuses finished phonon and applies remediation
+   instead of replaying the same broken `epw.in`.
+
+`nqc` always stays equal to the DFPT q-mesh. Auto-nk does **not** guarantee
+physical λ/Tc; material-specific Wannier projections remain out of scope.
+
+```text
+EPW failed (kmesh_get_bvector @ nk=6) — retrying EPW-only with nk=8 (DFPT reused)
+```
+
 ### Progress heartbeats (long DFPT)
 
 While `ph.x` / `pw.x` / `epw.x` run, the CLI prints a heartbeat every
@@ -271,9 +297,11 @@ siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
 | `ids` | Explicit `--id` list |
 
 Refine YAML uses denser k/q/nkf than screening, `quality_tag: production`,
-`epw.npool = nproc`, and exact CIF×strain specs. **Do not cite Tc** until
-`result_quality` improves. Limitation: random Wannier may remain until
-material-specific projections are added; refine improves grids/tags first.
+`epw.npool = nproc`, coarse k ≥ **8³** (Wannier-safe), and exact CIF×strain
+specs. **Do not cite Tc** until `result_quality` improves. **EPW coarse k
+auto-bump; DFPT never redone on Wannier k-mesh failure.** Limitation: random
+Wannier may remain until material-specific projections are added; auto-nk does
+not guarantee physical λ/Tc.
 
 ## Walltime (order-of-magnitude)
 

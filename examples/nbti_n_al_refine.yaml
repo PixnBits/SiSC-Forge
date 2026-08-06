@@ -1,6 +1,7 @@
 # Auto-generated REFINE campaign — denser grids than screening shortlist
 # refinement — do not cite Tc until result_quality flags clear/improve
 # Tier notes: workstation_dense: often multi-hour DFPT per candidate on 8–16 cores; plan overnight for 2 jobs
+# EPW coarse k auto-bump; DFPT never redone on Wannier k-mesh failure
 # Run: siscforge run --calculator qe-epw nbti_n_al_refine.yaml
 # Resume: re-run the same command (campaign + mid-step QE checkpoints)
 # Dry-run: siscforge run --dry-run nbti_n_al_refine.yaml
@@ -240,9 +241,9 @@ dft:
     - 12
     - 12
     nkc:
-    - 6
-    - 6
-    - 6
+    - 8
+    - 8
+    - 8
     nqc:
     - 4
     - 4
@@ -250,6 +251,9 @@ dft:
     nbndsub: null
     auto_nbndsub: true
     wannier_retry_on_froz_overflow: true
+    auto_retry_kmesh: true
+    max_kmesh_retries: 2
+    strict_coarse_k: false
     bands_skipped: 0
     mu_star: 0.1
     fsthick: 0.4
