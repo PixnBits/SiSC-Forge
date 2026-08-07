@@ -150,11 +150,16 @@ supercell. SiSC-Forge now:
 1. **Preflight** (before DFPT): raise coarse k to ≥ **8³** for production /
    workstation_dense on ≥8-atom cells; log
    `EPW coarse k raised to 8×8×8 (Wannier safety; was 6×6×6; nq unchanged to match DFPT)`.
-2. **Post-DFPT**: on that error, **EPW-only** retry with denser nkc (6→8→12,
-   max 2) — **DFPT / phonon is never deleted or redone**.
-3. Resume without `--force-rerun` reuses finished phonon and applies remediation
+2. **Post-DFPT Phase A**: on that error, **EPW-only** retry with denser nkc
+   (6→8→12, max 2) — **DFPT / phonon is never deleted or redone**.
+3. **Post-DFPT Phase B** (Slice 27): if still `kmesh_get_bvector` after the
+   nk ladder (e.g. already failed at nk=8 and nk=12 with matching NSCF),
+   retry **EPW-only** with Wannier90 `search_shells` **36→48** (same nkc,
+   NSCF reused). Still **not** a guarantee — pathological cells may need
+   hand-tuned projections (out of auto scope).
+4. Resume without `--force-rerun` reuses finished phonon and applies remediation
    instead of replaying the same broken `epw.in`.
-4. **Stale NSCF after nkc raise** (Slice 26): if an existing `nscf.out` was run
+5. **Stale NSCF after nkc raise** (Slice 26): if an existing `nscf.out` was run
    at 6³ but campaign/epw now wants 8³, resume **invalidates NSCF+EPW only**
    and rebuilds electronic steps. You should **not** manually
    `rm nscf.out epw.out epw.in`. CLI:
@@ -163,11 +168,13 @@ supercell. SiSC-Forge now:
 nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF (phonon reused)
 ```
 
-`nqc` always stays equal to the DFPT q-mesh. Auto-nk does **not** guarantee
-physical λ/Tc; material-specific Wannier projections remain out of scope.
+`nqc` always stays equal to the DFPT q-mesh. Auto-nk / auto-`search_shells`
+does **not** guarantee physical λ/Tc; material-specific Wannier projections
+remain out of scope.
 
 ```text
 EPW failed (kmesh_get_bvector @ nk=6) — retrying EPW-only with nk=8 (DFPT reused)
+EPW failed (kmesh_get_bvector @ nk=12) — nk ladder exhausted; retrying EPW-only with search_shells=36 (DFPT reused)
 ```
 
 ### Progress heartbeats (long DFPT)

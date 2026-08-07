@@ -12,6 +12,7 @@ from siscforge.calculators.qe.epw_inputs import (
     ensure_wannier_safe_nkc,
     minimum_coarse_k_dim,
     next_coarse_k_after_bvector_failure,
+    next_search_shells_after_bvector_failure,
     preflight_epw_grids,
     recommended_grids,
 )
@@ -151,10 +152,38 @@ def test_retry_policy_sequence_6_8_12_and_stops() -> None:
     plan = plan_kmesh_remediation(cfg, _BVECTOR_FAIL, work_dir=None)
     assert plan is not None
     new_cfg, line = plan
+    assert plan.phase == "nkc"
     assert list(new_cfg.epw.nkc) == [8, 8, 8]
     assert list(new_cfg.epw.nqc) == [4, 4, 4]  # nq sacred
     assert "EPW-only" in line or "DFPT reused" in line
     assert "nk=6" in line or "nk=8" in line
+
+
+def test_search_shells_ladder_12_36_48() -> None:
+    assert next_search_shells_after_bvector_failure(None, attempt=0) == 36
+    assert next_search_shells_after_bvector_failure(12, attempt=0) == 36
+    assert next_search_shells_after_bvector_failure(36, attempt=1) == 48
+    assert next_search_shells_after_bvector_failure(48, attempt=0) is None
+    assert next_search_shells_after_bvector_failure(12, attempt=2) is None
+
+
+def test_build_epw_input_emits_search_shells_wdata() -> None:
+    s = build_ternary_nitride("Nb", "Ti", 0.25, supercell=(2, 2, 1))
+    cfg = DFTConfig(
+        do_epw=True,
+        quality_tag="production",
+        nbnd=64,
+        epw=EPWConfig(
+            enabled=True,
+            nkc=[12, 12, 12],
+            nqc=[4, 4, 4],
+            search_shells=36,
+        ),
+    )
+    text = build_epw_input(cfg, structure=s, fermi_eV=20.0)
+    assert "search_shells = 36" in text
+    assert "wdata(" in text
+    assert "nk1         = 12" in text
 
 
 def test_build_epw_input_raises_nkc_for_production_supercell() -> None:
@@ -347,32 +376,290 @@ def test_post_dfpt_bvector_retries_epw_only_phonon_intact(tmp_path: Path) -> Non
     assert any("EPW-only" in (a.get("note") or "") or "DFPT reused" in (a.get("note") or "") for a in state["attempts"])
 
 
-def test_plan_stops_after_max_retries(tmp_path: Path) -> None:
+def test_plan_phase_b_after_nk_ladder_exhausted(tmp_path: Path) -> None:
+    """After max nkc (or 8→12 sidecar), Phase B selects search_shells=36."""
     cfg = DFTConfig(
         quality_tag="production",
         epw=EPWConfig(
             nkc=[12, 12, 12],
             auto_retry_kmesh=True,
+            auto_retry_search_shells=True,
             max_kmesh_retries=2,
+            max_search_shells_retries=2,
         ),
     )
-    # Already at top of ladder
-    assert plan_kmesh_remediation(cfg, _BVECTOR_FAIL, work_dir=tmp_path) is None
+    # Already at top of nkc ladder → Phase B
+    plan = plan_kmesh_remediation(cfg, _BVECTOR_FAIL, work_dir=tmp_path)
+    assert plan is not None
+    assert plan.phase == "search_shells"
+    assert plan.re_nscf is False
+    assert list(plan.config.epw.nkc) == [12, 12, 12]
+    assert plan.config.epw.search_shells == 36
+    assert "nk ladder exhausted" in plan.log_line
+    assert "search_shells=36" in plan.log_line
 
     cfg2 = DFTConfig(
         quality_tag="production",
-        epw=EPWConfig(nkc=[6, 6, 6], auto_retry_kmesh=True, max_kmesh_retries=2),
+        epw=EPWConfig(
+            nkc=[6, 6, 6],
+            auto_retry_kmesh=True,
+            auto_retry_search_shells=True,
+            max_kmesh_retries=2,
+            max_search_shells_retries=2,
+        ),
     )
-    # Exhaust attempts via sidecar
+    # Exhaust Phase A via sidecar (legacy records without phase still count)
     from siscforge.calculators.qe.epw_recipes import record_epw_remediation_attempt
 
     record_epw_remediation_attempt(
-        tmp_path, reason="kmesh_bvector", nkc_before=[6, 6, 6], nkc_after=[8, 8, 8]
+        tmp_path,
+        reason="kmesh_bvector",
+        nkc_before=[6, 6, 6],
+        nkc_after=[8, 8, 8],
+        phase="nkc",
     )
     record_epw_remediation_attempt(
-        tmp_path, reason="kmesh_bvector", nkc_before=[8, 8, 8], nkc_after=[12, 12, 12]
+        tmp_path,
+        reason="kmesh_bvector",
+        nkc_before=[8, 8, 8],
+        nkc_after=[12, 12, 12],
+        phase="nkc",
     )
-    assert plan_kmesh_remediation(cfg2, _BVECTOR_FAIL, work_dir=tmp_path) is None
+    plan_b = plan_kmesh_remediation(cfg2, _BVECTOR_FAIL, work_dir=tmp_path)
+    assert plan_b is not None
+    assert plan_b.phase == "search_shells"
+    assert plan_b.config.epw.search_shells == 36
+    # nq sacred even on Phase B
+    assert list(plan_b.config.epw.nqc) == list(cfg2.epw.nqc)
+
+
+def test_plan_phase_b_anti_loop_when_exhausted(tmp_path: Path) -> None:
+    from siscforge.calculators.qe.epw_recipes import record_epw_remediation_attempt
+
+    cfg = DFTConfig(
+        quality_tag="production",
+        epw=EPWConfig(
+            nkc=[12, 12, 12],
+            search_shells=48,
+            auto_retry_kmesh=True,
+            auto_retry_search_shells=True,
+            max_kmesh_retries=2,
+            max_search_shells_retries=2,
+        ),
+    )
+    record_epw_remediation_attempt(
+        tmp_path,
+        reason="kmesh_bvector",
+        nkc_before=[8, 8, 8],
+        nkc_after=[12, 12, 12],
+        phase="nkc",
+    )
+    record_epw_remediation_attempt(
+        tmp_path,
+        reason="kmesh_bvector",
+        nkc_before=[12, 12, 12],
+        nkc_after=[12, 12, 12],
+        phase="search_shells",
+        search_shells_before=12,
+        search_shells_after=36,
+    )
+    record_epw_remediation_attempt(
+        tmp_path,
+        reason="kmesh_bvector",
+        nkc_before=[12, 12, 12],
+        nkc_after=[12, 12, 12],
+        phase="search_shells",
+        search_shells_before=36,
+        search_shells_after=48,
+    )
+    assert plan_kmesh_remediation(cfg, _BVECTOR_FAIL, work_dir=tmp_path) is None
+
+
+def test_phase_b_epw_only_no_phonon_clean_after_nk_exhausted(tmp_path: Path) -> None:
+    """Simulated 8→12 already done + bvector → Phase B search_shells; phonon intact."""
+    s = build_ternary_nitride("Nb", "Ti", 0.25, supercell=(2, 2, 1))
+    work = tmp_path / "cand"
+    work.mkdir()
+    scf = work / "02_scf"
+    scf.mkdir()
+    (scf / "ph.out").write_text("     JOB DONE.\n", encoding="utf-8")
+    (scf / "siscforge.dyn0").write_text("Dynamical matrices\n", encoding="utf-8")
+    (scf / "siscforge.dyn1").write_text("freq = 100.0\n", encoding="utf-8")
+    (scf / "_ph0").mkdir()
+    (scf / "_ph0" / "keep").write_text("dvscf", encoding="utf-8")
+    (scf / "scf.out").write_text(
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+    (scf / "siscforge.save").mkdir()
+    # Successful NSCF at 12³ (keep sacred across Phase B)
+    (scf / "nscf.in").write_text("K_POINTS crystal\n1728\n", encoding="utf-8")
+    (scf / "nscf.out").write_text(
+        "     number of k points=   1728\n"
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+    (scf / "epw.out").write_text(_BVECTOR_FAIL, encoding="utf-8")
+    (scf / "epw.in").write_text(
+        "  nk1         = 12\n  nk2 = 12\n  nk3 = 12\n", encoding="utf-8"
+    )
+    # Phase A already done (8→12) like production Nb0.25Ti0.75N refine
+    from siscforge.calculators.qe.epw_recipes import record_epw_remediation_attempt
+
+    record_epw_remediation_attempt(
+        scf,
+        reason="kmesh_bvector",
+        nkc_before=[8, 8, 8],
+        nkc_after=[12, 12, 12],
+        phase="nkc",
+        note="EPW failed (kmesh_get_bvector @ nk=8) — retrying EPW-only with nk=12",
+    )
+    (work / "01_relax").mkdir()
+    (work / "01_relax" / "vc-relax.out").write_text(
+        "     JOB DONE.\n", encoding="utf-8"
+    )
+
+    cfg = DFTConfig(
+        nproc=1,
+        do_relax=True,
+        do_phonon=True,
+        do_epw=True,
+        quality_tag="production",
+        nbnd=64,
+        qpoints=[4, 4, 4],
+        kpoints=[8, 8, 8],
+        epw=EPWConfig(
+            enabled=True,
+            nkc=[12, 12, 12],
+            nqc=[4, 4, 4],
+            npool=1,
+            auto_retry_kmesh=True,
+            auto_retry_search_shells=True,
+            max_kmesh_retries=2,
+            max_search_shells_retries=2,
+            auto_nbndsub=True,
+            wannier_retry_on_froz_overflow=False,
+        ),
+        pseudo_dir=str(tmp_path),
+    )
+
+    epw_shells: list[int | None] = []
+    nscf_runs: list[bool] = []
+    cleaned: list[str] = []
+
+    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None, **kwargs):
+        out = Path(stdout_path)
+        label = str(kwargs.get("step_label") or "")
+        if out.name == "nscf.out" or "nscf" in label.lower():
+            nscf_runs.append(True)
+            out.write_text(
+                "     number of k points=   1728\n"
+                "     the Fermi energy is    20.0000 ev\n"
+                "!\n     total energy              =     -100.0 Ry\n"
+                "     JOB DONE.\n",
+                encoding="utf-8",
+            )
+            return 0
+        if out.name == "epw.out" or label.lower().startswith("epw.x"):
+            shells = None
+            epw_in = Path(cwd) / "epw.in"
+            if epw_in.is_file():
+                text = epw_in.read_text(encoding="utf-8")
+                for line in text.splitlines():
+                    if "search_shells" in line:
+                        # wdata(1) = 'search_shells = 36'
+                        if "=" in line:
+                            part = line.split("search_shells")[-1]
+                            digits = "".join(c for c in part if c.isdigit())
+                            if digits:
+                                shells = int(digits)
+            epw_shells.append(shells)
+            # First launch (resume plan may already set 36) succeeds when shells set
+            if shells is not None and shells >= 36:
+                out.write_text(_EPW_OK, encoding="utf-8")
+                return 0
+            out.write_text(_BVECTOR_FAIL, encoding="utf-8")
+            return 1
+        out.write_text(
+            "     the Fermi energy is    20.0000 ev\n"
+            "!\n     total energy              =     -100.0 Ry\n"
+            "     JOB DONE.\n",
+            encoding="utf-8",
+        )
+        return 0
+
+    from siscforge.calculators.qe import qe_checkpoint
+    from siscforge.calculators.qe.recipes import QEStepResult
+
+    real_clean = qe_checkpoint.clean_step_outputs
+
+    def tracking_clean(work_dir, step, prefix="siscforge"):
+        cleaned.append(step)
+        return real_clean(work_dir, step, prefix=prefix)
+
+    fake_env = MagicMock()
+    fake_env.epw = "/usr/bin/epw.x"
+    fake_env.pw = "/usr/bin/pw.x"
+    fake_env.ph = "/usr/bin/ph.x"
+    fake_env.mpirun = None
+
+    def fake_pp(work_dir, prefix):
+        save = Path(work_dir) / "save"
+        save.mkdir(exist_ok=True)
+        (save / "x").write_text("1", encoding="utf-8")
+        return QEStepResult(
+            name="epw_pp",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=Path(work_dir) / "pp.out",
+            input_path=Path(work_dir) / "pp.py",
+            success=True,
+            message="ok",
+        )
+
+    step_log: list[str] = []
+    with (
+        patch("siscforge.calculators.qe.epw_recipes.require_epw", return_value=fake_env),
+        patch("siscforge.calculators.qe.recipes.require_qe", return_value=fake_env),
+        patch("siscforge.calculators.qe.recipes._run_cmd", side_effect=fake_run_cmd),
+        patch("siscforge.calculators.qe.recipes._mpi_prefix", return_value=[]),
+        patch(
+            "siscforge.calculators.qe.qe_checkpoint.clean_step_outputs",
+            side_effect=tracking_clean,
+        ),
+        patch("siscforge.calculators.qe.epw_recipes.run_epw_pp", side_effect=fake_pp),
+        patch(
+            "siscforge.calculators.qe.inputs.resolve_pseudopotentials",
+            return_value={"N": "N.upf", "Nb": "Nb.upf", "Ti": "Ti.upf"},
+        ),
+        patch(
+            "siscforge.calculators.qe.pseudos.resolve_pseudopotentials",
+            return_value={"N": "N.upf", "Nb": "Nb.upf", "Ti": "Ti.upf"},
+        ),
+    ):
+        result = run_relax_scf_phonon_epw(
+            s, cfg, work, prefix="siscforge", step_log=step_log
+        )
+
+    # Phonon sacred — never cleaned
+    assert "phonon" not in cleaned
+    assert (scf / "ph.out").is_file()
+    assert (scf / "siscforge.dyn1").is_file()
+    assert (scf / "_ph0" / "keep").is_file()
+
+    # Phase B: no re-NSCF (nscf at 12 already matches)
+    assert not nscf_runs, f"Phase B should not re-NSCF; log={step_log}"
+    assert any(s is not None and s >= 36 for s in epw_shells), epw_shells
+    assert any("nk ladder exhausted" in line for line in step_log), step_log
+    assert any("search_shells" in line for line in step_log), step_log
+    state = load_epw_remediation_state(scf)
+    phases = [a.get("phase") for a in state.get("attempts") or []]
+    assert "search_shells" in phases
+    assert result.success
 
 
 

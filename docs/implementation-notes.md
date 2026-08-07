@@ -1,5 +1,61 @@
 # Implementation Notes
 
+## Slice 27 (2026-08-07) — Phase B: Wannier90 `search_shells` after nk ladder
+
+**Scope**: After Phase A coarse-k remediation (6→8→12) is exhausted, EPW can
+still die with `kmesh_get_bvector: Not enough bvectors found` on strained
+low-symmetry supercells (e.g. Nb0.25Ti0.75N refine: matched NSCF at 8³ and
+12³, ~188 h DFPT intact). **Denser nk alone is the wrong lever.** Phase B
+retries **EPW-only** with larger Wannier90 neighbour-shell search
+(`search_shells` 12→36→48 via EPW `wdata`). Phonon / DFPT remain sacred.
+No material-specific projections, DMFT, or Josephson.
+
+| Item | Location |
+|------|----------|
+| Input knobs | `EPWConfig.search_shells`, `kmesh_tol` → `build_epw_input` `wdata(*)` |
+| Shell ladder | `next_search_shells_after_bvector_failure` (36, 48) |
+| Planner | `plan_kmesh_remediation` → Phase A `nkc` then Phase B `search_shells` |
+| Loop / resume | `_retry_epw_with_denser_k`, prior-`epw.out` path in `run_relax_scf_phonon_epw` |
+| Sidecar phases | `siscforge_epw_remediation.json` field `phase`: `nkc` \| `search_shells` |
+| Config | `auto_retry_search_shells`, `max_search_shells_retries` (default 2) |
+| Tests | `tests/test_epw_coarse_k.py` (Phase B plan, anti-loop, EPW-only) |
+
+### Policy
+
+| Phase | Trigger | Action | NSCF | DFPT |
+|-------|---------|--------|------|------|
+| A | `kmesh_bvector` / k-grid, denser nkc available | nkc 6→8→12 (max 2) | rebuild | keep |
+| B | still `kmesh_bvector`, nk ladder exhausted | `search_shells` 36→48 (max 2) | **reuse** | keep |
+| done | both exhausted | fail with actionable notes | — | keep |
+
+```text
+EPW failed (kmesh_get_bvector @ nk=12) — nk ladder exhausted; retrying EPW-only with search_shells=36 (DFPT reused)
+```
+
+`kmesh_tol` is **not** auto-loosened (conservative). Set `epw.kmesh_tol` in YAML
+only if you intentionally accept a looser shell match.
+
+### Resume (existing 8→12 workdir)
+
+If `siscforge_epw_remediation.json` already has Phase A only (e.g. 8→12), the
+next resume **without** `--force-rerun` applies Phase B. Do not manually delete
+phonon/`dyn`/`_ph0`.
+
+### Limitations (explicit)
+
+- Phase B may still fail on pathological cells; it is **not** a guarantee of λ/Tc.
+- Material-specific Wannier projections remain **out of scope** for auto path.
+- Do not invent default `nk=16`; further denser k is a human YAML choice.
+
+### Safe re-run
+
+```bash
+siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
+# Expect: skip phonon; Phase B search_shells log lines if nk ladder already done
+```
+
+---
+
 ## Slice 26 (2026-08-07) — Stale NSCF invalidation when EPW coarse k rises
 
 **Scope**: After multi-day DFPT, raising EPW coarse k (`nkc` / `nk1–3`) must
@@ -59,7 +115,7 @@ Do **not** use `--force-rerun` just to clear NSCF — that redos DFPT.
 | Preflight raises nkc | Invalidate NSCF + EPW; keep phonon |
 | On-disk NSCF mesh ≠ campaign nkc | Same invalidation; rebuild NSCF |
 | EPW k-grid / XML fail, phonon complete, NSCF stale | Rebuild NSCF at **current** nkc then epw |
-| EPW `kmesh_get_bvector` after mesh matches | Ladder denser nkc (6→8→12), re-NSCF+epw |
+| EPW `kmesh_get_bvector` after mesh matches | Phase A denser nkc (6→8→12); Phase B `search_shells` (36→48) — see Slice 27 |
 | `--force-rerun` | Full redo (unchanged) |
 
 ---
@@ -116,7 +172,8 @@ EPW failed (kmesh_get_bvector @ nk=6) — retrying EPW-only with nk=8 (DFPT reus
 
 - Material-specific Wannier projections still out of scope (`proj=random`).
 - Auto-raised nk does **not** guarantee physical λ/Tc — trust layer still applies.
-- Cap 2 k-mesh retries (8 then 12); further failures need human / hand-tuned projs.
+- Cap 2 k-mesh retries (8 then 12), then Phase B `search_shells` (36→48); further
+  failures need human / hand-tuned projs (Slice 27).
 
 ### Safe re-run of an existing refine campaign (no --force-rerun)
 

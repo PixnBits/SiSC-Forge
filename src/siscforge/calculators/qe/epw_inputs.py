@@ -52,8 +52,13 @@ _DEFAULT_AMASS: dict[str, float] = {
 }
 
 # Coarse-k remediation ladder after kmesh_get_bvector (per dimension, isotropic bump).
+# Phase A — denser nkc (re-NSCF + epw). Phase B — search_shells (EPW-only, same nkc).
 COARSE_K_REMEDIATION_LADDER: tuple[int, ...] = (6, 8, 12)
 MAX_EPW_KMESH_RETRIES: int = 2
+# Wannier90 default search_shells is 12; Phase B raises neighbour-shell search.
+DEFAULT_W90_SEARCH_SHELLS: int = 12
+SEARCH_SHELLS_REMEDIATION_LADDER: tuple[int, ...] = (36, 48)
+MAX_EPW_SEARCH_SHELLS_RETRIES: int = 2
 
 
 def qe_atomic_type_symbols(structure: Structure) -> list[str]:
@@ -268,6 +273,48 @@ def next_coarse_k_after_bvector_failure(
             return [step, step, step]
     # Already at or above top of ladder
     return None
+
+
+def effective_search_shells(value: int | None) -> int:
+    """Resolve configured ``search_shells`` (None → Wannier90 default 12)."""
+    if value is None:
+        return DEFAULT_W90_SEARCH_SHELLS
+    return max(1, int(value))
+
+
+def next_search_shells_after_bvector_failure(
+    search_shells: int | None,
+    *,
+    attempt: int = 0,
+) -> int | None:
+    """Next Wannier90 ``search_shells`` after nk ladder exhausted (12→36→48).
+
+    *attempt* is 0-based among Phase-B tries (max
+    :data:`MAX_EPW_SEARCH_SHELLS_RETRIES`). Returns None when exhausted.
+    Does **not** change nkc / nqc / DFPT.
+    """
+    cur = effective_search_shells(search_shells)
+    for step in SEARCH_SHELLS_REMEDIATION_LADDER:
+        if step > cur:
+            if attempt >= MAX_EPW_SEARCH_SHELLS_RETRIES:
+                return None
+            return int(step)
+    return None
+
+
+def apply_search_shells_to_config(
+    config: DFTConfig,
+    search_shells: int,
+    *,
+    kmesh_tol: float | None = None,
+) -> DFTConfig:
+    """Return config with ``epw.search_shells`` set (nkc / nqc unchanged)."""
+    updates: dict[str, Any] = {"search_shells": int(search_shells)}
+    if kmesh_tol is not None:
+        updates["kmesh_tol"] = float(kmesh_tol)
+    return config.model_copy(
+        update={"epw": config.epw.model_copy(update=updates)}
+    )
 
 
 def recommended_grids(
@@ -600,12 +647,19 @@ def build_epw_input(
     )
     screening_tight = qtag == "screening"
 
+    ss_hdr = getattr(epw, "search_shells", None)
+    ss_note = (
+        f"search_shells={int(ss_hdr)}"
+        if ss_hdr is not None
+        else "search_shells=W90 default (12)"
+    )
     header = [
         "!",
         f"! SiSC-Forge EPW input — quality_tag={qtag}",
         f"! Fine k/q (nkf/nqf) = {nkf} / {nqf}",
         f"! Coarse k/q (nkc/nqc) = {nkc} / {nqc}  (nqc should match DFPT q-grid)",
         f"! nbndsub={nbndsub} (auto_nbndsub={auto_nbnd}; dft.nbnd={config.nbnd})",
+        f"! {ss_note} (Phase B remediation may raise via wdata)",
         "! Screening: proj=random + tight frozen window; production needs hand projs.",
         "! Coarse k auto-bump for Wannier safety; DFPT nq never redone on k-mesh fail.",
         "! Raise nkf/nqf/qpoints for denser grids (recommended_grids / docs).",
@@ -656,6 +710,18 @@ def build_epw_input(
             f"  eps_acustic = {epw.eps_acustic}",
         ]
     )
+    # Wannier90 knobs via EPW wdata (search_shells / kmesh_tol). Omitted when
+    # unset so W90 defaults apply; Phase-B remediation sets search_shells.
+    wdata_i = 1
+    ss = getattr(epw, "search_shells", None)
+    if ss is not None and int(ss) > 0:
+        lines.append(f"  wdata({wdata_i})  = 'search_shells = {int(ss)}'")
+        wdata_i += 1
+    kt = getattr(epw, "kmesh_tol", None)
+    if kt is not None and float(kt) > 0.0:
+        # Scientific format is accepted by Wannier90
+        lines.append(f"  wdata({wdata_i})  = 'kmesh_tol = {float(kt):.3e}'")
+        wdata_i += 1
     if fermi_eV is not None:
         # Avoid efermig failure on a poorly interpolated fine mesh.
         lines.extend(

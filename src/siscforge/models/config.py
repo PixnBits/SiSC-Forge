@@ -319,12 +319,39 @@ class EPWConfig(BaseModel):
 
     auto_retry_kmesh: bool = True
     """If EPW fails with Wannier90 ``kmesh_get_bvector`` / not enough
-    bvectors **after DFPT is complete**, retry EPW-only (re-NSCF + epw.x)
-    with denser coarse k (6→8→12, max 2 retries). **Never** deletes or
-    re-runs finished phonon / DFPT."""
+    bvectors **after DFPT is complete**, retry EPW-only:
+
+    * **Phase A** — denser coarse k (6→8→12, max ``max_kmesh_retries``) +
+      re-NSCF when nkc changes.
+    * **Phase B** — when the nk ladder is exhausted, raise Wannier90
+      ``search_shells`` (default→36→48) without changing nkc/nq or DFPT
+      (see ``auto_retry_search_shells``).
+
+    **Never** deletes or re-runs finished phonon / DFPT."""
 
     max_kmesh_retries: int = Field(default=2, ge=0, le=4)
-    """Cap on post-DFPT coarse-k remediation attempts (default 2)."""
+    """Cap on post-DFPT Phase-A coarse-k remediation attempts (default 2)."""
+
+    auto_retry_search_shells: bool = True
+    """After Phase A (nk ladder) is exhausted, still retry EPW-only with
+    larger Wannier90 ``search_shells`` (via EPW ``wdata``). Same failure
+    class (``kmesh_bvector`` only). Does not change nkc or DFPT."""
+
+    max_search_shells_retries: int = Field(default=2, ge=0, le=4)
+    """Cap on Phase-B ``search_shells`` remediation attempts (default 2)."""
+
+    search_shells: int | None = Field(default=None, ge=1, le=256)
+    """Wannier90 ``search_shells`` (neighbour-shell search for b-vectors).
+
+    ``None`` → omit from ``epw.in`` (Wannier90 default is 12). Remediation
+    may set 36 or 48. Passed as EPW ``wdata`` so epw.x/Wannier90 see it."""
+
+    kmesh_tol: float | None = Field(default=None, gt=0.0)
+    """Optional Wannier90 ``kmesh_tol`` (shell-distance tolerance).
+
+    ``None`` → omit (W90 default 1e-6). Only set when intentionally
+    relaxing shell matching; auto-remediation does **not** loosen this
+    by default (conservative)."""
 
     strict_coarse_k: bool = False
     """When True, refuse to auto-raise undersized coarse k and fail preflight

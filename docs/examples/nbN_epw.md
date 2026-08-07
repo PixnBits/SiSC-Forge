@@ -97,8 +97,9 @@ dft:
 ```
 
 SiSC-Forge auto-raises undersized coarse k on production/workstation_dense
-tiers and, after DFPT, retries EPW-only on `kmesh_get_bvector` (never redos
-phonon). See Slice 25 in `docs/implementation-notes.md`.
+tiers and, after DFPT, retries EPW-only on `kmesh_get_bvector`: denser nkc
+(6→8→12) then larger Wannier90 `search_shells` (36→48). Never redos phonon.
+See Slices 25–27 in `docs/implementation-notes.md`.
 
 **`quality_tag` is a label** propagated to SCF / phonon / e-ph results and
 exports. Changing it alone does not densify grids — edit the knobs above.
