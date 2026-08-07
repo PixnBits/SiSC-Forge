@@ -373,3 +373,336 @@ def test_plan_stops_after_max_retries(tmp_path: Path) -> None:
         tmp_path, reason="kmesh_bvector", nkc_before=[8, 8, 8], nkc_after=[12, 12, 12]
     )
     assert plan_kmesh_remediation(cfg2, _BVECTOR_FAIL, work_dir=tmp_path) is None
+
+
+
+_KGRID_FAIL = """
+     Program EPW
+     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     Error in routine epw_readin (1):
+     k-grid inconsistency between nscf and epw
+     Error reading XML file in save directory
+     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     stopping ...
+"""
+
+
+def test_diagnose_maps_kgrid_and_xml() -> None:
+    assert is_kmesh_bvector_failure(_BVECTOR_FAIL)
+    from siscforge.calculators.qe.epw_recipes import is_kgrid_inconsistency
+
+    assert is_kgrid_inconsistency(_KGRID_FAIL)
+    assert is_remediable_kmesh_failure(_KGRID_FAIL)
+    assert classify_epw_failure(_KGRID_FAIL) == "kgrid_inconsistency"
+    diag = diagnose_epw_failure(_KGRID_FAIL, work_dir="/tmp/fake", include_tail=False)
+    assert "kgrid_inconsistency" in diag
+    assert "nscf" in diag.lower() or "invalidat" in diag.lower() or "rebuild" in diag.lower()
+
+
+def test_stale_nscf_resume_rebuilds_without_touching_phonon(tmp_path: Path) -> None:
+    """phonon done + nscf @ 6³ + campaign nkc=8 → re-NSCF, phonon files intact."""
+    from siscforge.calculators.qe.qe_checkpoint import nscf_matches_epw_coarse_k
+    from siscforge.calculators.qe.recipes import QEStepResult
+
+    s = build_ternary_nitride("Nb", "Ti", 0.25, supercell=(2, 2, 1))
+    work = tmp_path / "cand"
+    work.mkdir()
+    scf = work / "02_scf"
+    scf.mkdir()
+    (scf / "ph.out").write_text("     JOB DONE.\n", encoding="utf-8")
+    (scf / "siscforge.dyn0").write_text("Dynamical matrices\n", encoding="utf-8")
+    (scf / "siscforge.dyn1").write_text("freq = 100.0\n", encoding="utf-8")
+    (scf / "_ph0").mkdir()
+    (scf / "_ph0" / "keep").write_text("dvscf", encoding="utf-8")
+    (scf / "siscforge.dvscf1").write_text("x", encoding="utf-8")
+    (scf / "scf.out").write_text(
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+    (scf / "siscforge.save").mkdir()
+    (work / "01_relax").mkdir()
+    (work / "01_relax" / "vc-relax.out").write_text(
+        "     JOB DONE.\n", encoding="utf-8"
+    )
+    # Stale NSCF at 6³
+    (scf / "nscf.in").write_text("K_POINTS crystal\n216\n", encoding="utf-8")
+    (scf / "nscf.out").write_text(
+        "     number of k points=   216\n"
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+    (scf / "epw.out").write_text(_KGRID_FAIL, encoding="utf-8")
+    (scf / "epw.in").write_text("  nk1         = 8\n  nk2 = 8\n  nk3 = 8\n", encoding="utf-8")
+
+    assert not nscf_matches_epw_coarse_k(work, [8, 8, 8])
+
+    cfg = DFTConfig(
+        nproc=1,
+        do_relax=True,
+        do_phonon=True,
+        do_epw=True,
+        quality_tag="production",
+        nbnd=64,
+        qpoints=[4, 4, 4],
+        kpoints=[8, 8, 8],
+        epw=EPWConfig(
+            enabled=True,
+            nkc=[8, 8, 8],
+            nqc=[4, 4, 4],
+            npool=1,
+            auto_retry_kmesh=True,
+            max_kmesh_retries=2,
+            auto_nbndsub=True,
+            wannier_retry_on_froz_overflow=False,
+        ),
+        pseudo_dir=str(tmp_path),
+    )
+
+    nscf_runs: list[list[int]] = []
+    epw_runs: list[int] = []
+    cleaned: list[str] = []
+
+    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None, **kwargs):
+        out = Path(stdout_path)
+        label = str(kwargs.get("step_label") or "")
+        if out.name == "nscf.out" or "nscf" in label.lower():
+            # Read written nscf.in mesh if present
+            nkc = [8, 8, 8]
+            nscf_in = Path(cwd) / "nscf.in"
+            if nscf_in.is_file():
+                t = nscf_in.read_text(encoding="utf-8")
+                if "K_POINTS crystal" in t:
+                    for line in t.splitlines():
+                        if line.strip().isdigit():
+                            n = int(line.strip())
+                            c = round(n ** (1 / 3))
+                            if c * c * c == n:
+                                nkc = [c, c, c]
+                            break
+            nscf_runs.append(list(nkc))
+            out.write_text(
+                f"     number of k points=   {nkc[0]*nkc[1]*nkc[2]}\n"
+                "     the Fermi energy is    20.0000 ev\n"
+                "!\n     total energy              =     -100.0 Ry\n"
+                "     JOB DONE.\n",
+                encoding="utf-8",
+            )
+            return 0
+        if out.name == "epw.out" or label.lower().startswith("epw.x"):
+            epw_runs.append(1)
+            out.write_text(_EPW_OK, encoding="utf-8")
+            return 0
+        out.write_text(
+            "     the Fermi energy is    20.0000 ev\n"
+            "!\n     total energy              =     -100.0 Ry\n"
+            "     JOB DONE.\n",
+            encoding="utf-8",
+        )
+        return 0
+
+    from siscforge.calculators.qe import qe_checkpoint
+
+    real_clean = qe_checkpoint.clean_step_outputs
+
+    def tracking_clean(work_dir, step, prefix="siscforge"):
+        cleaned.append(step)
+        return real_clean(work_dir, step, prefix=prefix)
+
+    fake_env = MagicMock()
+    fake_env.epw = "/usr/bin/epw.x"
+    fake_env.pw = "/usr/bin/pw.x"
+    fake_env.ph = "/usr/bin/ph.x"
+    fake_env.mpirun = None
+
+    def fake_pp(work_dir, prefix):
+        save = Path(work_dir) / "save"
+        save.mkdir(exist_ok=True)
+        (save / "x").write_text("1", encoding="utf-8")
+        return QEStepResult(
+            name="epw_pp",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=Path(work_dir) / "pp.out",
+            input_path=Path(work_dir) / "pp.py",
+            success=True,
+            message="ok",
+        )
+
+    step_log: list[str] = []
+    with (
+        patch(
+            "siscforge.calculators.qe.epw_recipes.require_epw",
+            return_value=fake_env,
+        ),
+        patch(
+            "siscforge.calculators.qe.recipes.require_qe",
+            return_value=fake_env,
+        ),
+        patch(
+            "siscforge.calculators.qe.recipes._run_cmd",
+            side_effect=fake_run_cmd,
+        ),
+        patch(
+            "siscforge.calculators.qe.recipes._mpi_prefix",
+            return_value=[],
+        ),
+        patch(
+            "siscforge.calculators.qe.qe_checkpoint.clean_step_outputs",
+            side_effect=tracking_clean,
+        ),
+        patch(
+            "siscforge.calculators.qe.epw_recipes.run_epw_pp",
+            side_effect=fake_pp,
+        ),
+        patch(
+            "siscforge.calculators.qe.inputs.resolve_pseudopotentials",
+            return_value={"N": "N.upf", "Nb": "Nb.upf", "Ti": "Ti.upf"},
+        ),
+        patch(
+            "siscforge.calculators.qe.pseudos.resolve_pseudopotentials",
+            return_value={"N": "N.upf", "Nb": "Nb.upf", "Ti": "Ti.upf"},
+        ),
+    ):
+        result = run_relax_scf_phonon_epw(
+            s, cfg, work, prefix="siscforge", step_log=step_log
+        )
+
+    # Phonon sacred
+    assert "phonon" not in cleaned
+    assert (scf / "ph.out").is_file()
+    assert (scf / "siscforge.dyn1").is_file()
+    assert (scf / "_ph0" / "keep").is_file()
+    assert (scf / "siscforge.dvscf1").is_file()
+
+    # Must rebuild NSCF at 8 and run EPW
+    assert nscf_runs, f"expected re-NSCF; log={step_log}"
+    assert nscf_runs[0] == [8, 8, 8]
+    assert epw_runs, "expected EPW launch"
+    assert result.success
+    assert any("invalidating NSCF" in line for line in step_log), step_log
+    assert nscf_matches_epw_coarse_k(work, [8, 8, 8])
+
+
+def test_preflight_raise_invalidates_existing_nscf(tmp_path: Path) -> None:
+    """YAML nkc=6 with existing 6³ nscf → preflight 8 → invalidate (no manual rm)."""
+    from siscforge.calculators.qe.recipes import QEStepResult
+
+    s = build_ternary_nitride("Nb", "Ti", 0.25, supercell=(2, 2, 1))
+    work = tmp_path / "cand"
+    work.mkdir()
+    scf = work / "02_scf"
+    scf.mkdir()
+    (scf / "ph.out").write_text("     JOB DONE.\n", encoding="utf-8")
+    (scf / "siscforge.dyn1").write_text("freq = 100.0\n", encoding="utf-8")
+    (scf / "scf.out").write_text(
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+    (scf / "siscforge.save").mkdir()
+    (work / "01_relax").mkdir()
+    (work / "01_relax" / "vc-relax.out").write_text("     JOB DONE.\n", encoding="utf-8")
+    (scf / "nscf.in").write_text("K_POINTS crystal\n216\n", encoding="utf-8")
+    (scf / "nscf.out").write_text(
+        "     number of k points=   216\n"
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+
+    cfg = DFTConfig(
+        nproc=1,
+        do_relax=True,
+        do_phonon=True,
+        do_epw=True,
+        quality_tag="production",
+        nbnd=64,
+        qpoints=[4, 4, 4],
+        epw=EPWConfig(
+            enabled=True,
+            nkc=[6, 6, 6],  # preflight raises to 8
+            nqc=[4, 4, 4],
+            npool=1,
+            auto_retry_kmesh=True,
+            max_kmesh_retries=2,
+            auto_nbndsub=True,
+            wannier_retry_on_froz_overflow=False,
+        ),
+        pseudo_dir=str(tmp_path),
+    )
+
+    nscf_launched = []
+
+    def fake_run_cmd(cmd, *, cwd, stdout_path, env=None, **kwargs):
+        out = Path(stdout_path)
+        if out.name == "nscf.out":
+            nscf_launched.append(True)
+            out.write_text(
+                "     number of k points=   512\n"
+                "     the Fermi energy is    20.0000 ev\n"
+                "!\n     total energy              =     -100.0 Ry\n"
+                "     JOB DONE.\n",
+                encoding="utf-8",
+            )
+            return 0
+        if out.name == "epw.out":
+            out.write_text(_EPW_OK, encoding="utf-8")
+            return 0
+        out.write_text(
+            "     the Fermi energy is    20.0000 ev\n"
+            "!\n     total energy              =     -100.0 Ry\n"
+            "     JOB DONE.\n",
+            encoding="utf-8",
+        )
+        return 0
+
+    fake_env = MagicMock()
+    fake_env.epw = "/usr/bin/epw.x"
+    fake_env.pw = "/usr/bin/pw.x"
+    fake_env.ph = "/usr/bin/ph.x"
+    fake_env.mpirun = None
+
+    def fake_pp(work_dir, prefix):
+        save = Path(work_dir) / "save"
+        save.mkdir(exist_ok=True)
+        (save / "x").write_text("1", encoding="utf-8")
+        return QEStepResult(
+            name="epw_pp",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=Path(work_dir) / "pp.out",
+            input_path=Path(work_dir) / "pp.py",
+            success=True,
+            message="ok",
+        )
+
+    step_log: list[str] = []
+    with (
+        patch("siscforge.calculators.qe.epw_recipes.require_epw", return_value=fake_env),
+        patch("siscforge.calculators.qe.recipes.require_qe", return_value=fake_env),
+        patch("siscforge.calculators.qe.recipes._run_cmd", side_effect=fake_run_cmd),
+        patch("siscforge.calculators.qe.recipes._mpi_prefix", return_value=[]),
+        patch("siscforge.calculators.qe.epw_recipes.run_epw_pp", side_effect=fake_pp),
+        patch(
+            "siscforge.calculators.qe.inputs.resolve_pseudopotentials",
+            return_value={"N": "N.upf", "Nb": "Nb.upf", "Ti": "Ti.upf"},
+        ),
+        patch(
+            "siscforge.calculators.qe.pseudos.resolve_pseudopotentials",
+            return_value={"N": "N.upf", "Nb": "Nb.upf", "Ti": "Ti.upf"},
+        ),
+    ):
+        result = run_relax_scf_phonon_epw(
+            s, cfg, work, prefix="siscforge", step_log=step_log
+        )
+
+    assert nscf_launched, step_log
+    assert (scf / "ph.out").is_file()
+    assert result.success
+    assert any("invalidating NSCF" in line or "raised" in line.lower() for line in step_log)

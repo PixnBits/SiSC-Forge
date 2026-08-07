@@ -1,5 +1,70 @@
 # Implementation Notes
 
+## Slice 26 (2026-08-07) — Stale NSCF invalidation when EPW coarse k rises
+
+**Scope**: After multi-day DFPT, raising EPW coarse k (`nkc` / `nk1–3`) must
+**never** leave a successful but **stale** NSCF in place. Resume / preflight
+compare the NSCF k-mesh fingerprint to the campaign `nkc` and invalidate
+NSCF + EPW electronic outputs only. Phonon / DFPT (`ph.out`, `*.dyn*`, `_ph0`,
+dvscf) are sacred. Users must **not** manually `rm nscf.out`. No DMFT,
+Josephson, GNN, or material-specific Wannier projections.
+
+| Item | Location |
+|------|----------|
+| Mesh fingerprint + match | `qe_checkpoint.nscf_matches_epw_coarse_k`, `inspect_nscf_vs_epw_coarse_k` |
+| Sidecar on NSCF success | `siscforge_nscf_kmesh.json` via `write_nscf_kmesh_sidecar` |
+| Invalidate electronic only | `invalidate_nscf_epw_for_kmesh` (never phonon) |
+| Resume / probe | `probe_nscf(..., expected_nkc=)` + `probe_workdir` |
+| Preflight + resume wiring | `run_relax_scf_phonon_epw` after preflight |
+| k-grid / XML remediable class | `is_kgrid_inconsistency` (+ stale-NSCF rebuild at same nkc) |
+| Ladder (unchanged) | 6→8→12, max 2, `siscforge_epw_remediation.json` |
+| Tests | `tests/test_qe_checkpoint.py`, `tests/test_epw_coarse_k.py` |
+
+### Production incident (follow-on to Slice 25)
+
+- ~188 h DFPT (JOB DONE, full dyn mesh) for Nb0.25Ti0.75N refine/production
+- Slice 25 preflight raised `nkc` 6→8; `epw.in` correctly had `nk1–3=8`
+- Resume still treated existing `nscf.out` as complete (`number of k points = 216` = 6³)
+- EPW died in ~2 s (k-grid inconsistency / fatal XML read on save); no remediation
+  sidecar written; user had to manually `rm nscf.out epw.out epw.in`
+
+### Comparison rule
+
+Prefer **requested** mesh over fragile symmetry-reduced counts alone:
+
+1. `siscforge_nscf_kmesh.json` (written when NSCF-for-EPW succeeds)
+2. `nscf.in` `K_POINTS crystal` count / dims
+3. `nscf.out` `number of k points` product (last resort; EPW NSCF is full crystal)
+
+### CLI one-liner
+
+```text
+nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF (phonon reused)
+```
+
+### Resume refine after coarse-k raise (no manual file deletion)
+
+```bash
+# Same campaign YAML + same output_dir; finished DFPT is skipped automatically.
+# Stale NSCF (e.g. 6³ after nkc→8) is invalidated and rebuilt; no rm needed.
+siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
+```
+
+Do **not** use `--force-rerun` just to clear NSCF — that redos DFPT.
+
+### Policy
+
+| Situation | Action |
+|-----------|--------|
+| Preflight raises nkc | Invalidate NSCF + EPW; keep phonon |
+| On-disk NSCF mesh ≠ campaign nkc | Same invalidation; rebuild NSCF |
+| EPW k-grid / XML fail, phonon complete, NSCF stale | Rebuild NSCF at **current** nkc then epw |
+| EPW `kmesh_get_bvector` after mesh matches | Ladder denser nkc (6→8→12), re-NSCF+epw |
+| `--force-rerun` | Full redo (unchanged) |
+
+---
+
+
 ## Slice 25 (2026-08-05) — EPW coarse-k Wannier safety + post-DFPT auto-remediation
 
 **Scope**: Prevent multi-day DFPT from being wasted when EPW aborts in seconds on
@@ -59,6 +124,7 @@ EPW failed (kmesh_get_bvector @ nk=6) — retrying EPW-only with nk=8 (DFPT reus
 # After pull: same campaign YAML + same output_dir
 siscforge run --calculator qe-epw examples/nbti_n_al_refine.yaml
 # Finished phonon skipped; EPW re-launches with Wannier-safe nkc if needed
+# Slice 26: stale NSCF after nkc raise is auto-invalidated (no manual rm)
 ```
 
 ### Manual checks after λ/Tc appears

@@ -154,6 +154,14 @@ supercell. SiSC-Forge now:
    max 2) — **DFPT / phonon is never deleted or redone**.
 3. Resume without `--force-rerun` reuses finished phonon and applies remediation
    instead of replaying the same broken `epw.in`.
+4. **Stale NSCF after nkc raise** (Slice 26): if an existing `nscf.out` was run
+   at 6³ but campaign/epw now wants 8³, resume **invalidates NSCF+EPW only**
+   and rebuilds electronic steps. You should **not** manually
+   `rm nscf.out epw.out epw.in`. CLI:
+
+```text
+nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF (phonon reused)
+```
 
 `nqc` always stays equal to the DFPT q-mesh. Auto-nk does **not** guarantee
 physical λ/Tc; material-specific Wannier projections remain out of scope.

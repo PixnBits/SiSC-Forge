@@ -9,11 +9,17 @@ from pymatgen.core import Structure
 
 from siscforge.calculators.qe.qe_checkpoint import (
     clean_step_outputs,
+    inspect_nscf_vs_epw_coarse_k,
+    invalidate_nscf_epw_for_kmesh,
+    nscf_matches_epw_coarse_k,
+    parse_nscf_in_kmesh,
     probe_epw,
+    probe_nscf,
     probe_phonon,
     probe_scf,
     probe_vc_relax,
     probe_workdir,
+    write_nscf_kmesh_sidecar,
 )
 from siscforge.calculators.qe.recipes import run_relax_scf_phonon
 from siscforge.models.config import DFTConfig, RunConfig
@@ -607,3 +613,117 @@ def test_build_ph_input_recover_flag() -> None:
     assert "recover = .true." in text
     text_off = build_ph_input(recover=False, prefix="s")
     assert "recover" not in text_off
+
+
+def test_nscf_in_crystal_mesh_parse() -> None:
+    """K_POINTS crystal N is preferred requested-mesh fingerprint."""
+    text = "K_POINTS crystal\n216\n  0.0 0.0 0.0 1.0\n"
+    from pathlib import Path
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "nscf.in"
+        p.write_text(text, encoding="utf-8")
+        parsed = parse_nscf_in_kmesh(p)
+        assert parsed == (6, 6, 6)
+
+
+def test_nscf_matches_epw_coarse_k_sidecar_and_in(tmp_path: Path) -> None:
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    scf.mkdir(parents=True)
+    # Stale 6³ via nscf.in crystal count + JOB DONE out
+    nscf_in = "K_POINTS crystal\n216\n"
+    for i in range(3):
+        nscf_in += f"  0.{i} 0.0 0.0 0.001\n"
+    _write(scf / "nscf.in", nscf_in)
+    _write(
+        scf / "nscf.out",
+        "     number of k points=   216\n"
+        "!    total energy              =    -100.0 Ry\n"
+        "     the Fermi energy is    10.0 ev\n"
+        "     JOB DONE.\n",
+    )
+    assert not nscf_matches_epw_coarse_k(work, [8, 8, 8])
+    assert nscf_matches_epw_coarse_k(work, [6, 6, 6])
+
+    write_nscf_kmesh_sidecar(work, [8, 8, 8])
+    assert nscf_matches_epw_coarse_k(work, [8, 8, 8])
+    assert not nscf_matches_epw_coarse_k(work, [6, 6, 6])
+
+
+def test_probe_nscf_mismatch_incomplete(tmp_path: Path) -> None:
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    _write(
+        scf / "nscf.out",
+        "     number of k points=   216\n"
+        "!    total energy              =    -100.0 Ry\n"
+        "     the Fermi energy is    10.0 ev\n"
+        "     JOB DONE.\n",
+    )
+    _write(scf / "nscf.in", "K_POINTS crystal\n216\n")
+    ok = probe_nscf(work, quality_tag="screening", expected_nkc=[6, 6, 6])
+    assert ok.complete
+    bad = probe_nscf(work, quality_tag="screening", expected_nkc=[8, 8, 8])
+    assert not bad.complete
+    assert "mismatch" in bad.message.lower()
+
+
+def test_invalidate_nscf_epw_keeps_phonon(tmp_path: Path) -> None:
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    _write(scf / "nscf.out", _SCF_OK)
+    _write(scf / "nscf.in", "K_POINTS crystal\n216\n")
+    _write(scf / "epw.out", _EPW_OK)
+    _write(scf / "epw.in", "nk1 = 8\n")
+    _write(scf / "ph.out", _PH_OK)
+    _write(scf / "s.dyn1", "freq")
+    (scf / "_ph0").mkdir()
+    (scf / "_ph0" / "x").write_text("dvscf", encoding="utf-8")
+    _write(scf / "s.dvscf1", "x")
+    _write(scf / "foo.amn", "wannier")
+    removed, msg = invalidate_nscf_epw_for_kmesh(
+        work, prefix="s", reason="nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF (phonon reused)"
+    )
+    assert "invalidating NSCF" in msg
+    assert not (scf / "nscf.out").exists()
+    assert not (scf / "epw.out").exists()
+    assert not (scf / "foo.amn").exists()
+    assert (scf / "ph.out").is_file()
+    assert (scf / "s.dyn1").is_file()
+    assert (scf / "_ph0" / "x").is_file()
+    assert (scf / "s.dvscf1").is_file()
+    assert removed
+
+
+def test_probe_workdir_stale_nscf_not_skipped(tmp_path: Path) -> None:
+    """Phonon done + nscf at 6³ + campaign nkc=8 → nscf incomplete, phonon complete."""
+    from siscforge.models.config import EPWConfig
+
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    _write(work / "01_relax" / "vc-relax.out", _RELAX_OK)
+    _write(scf / "scf.out", _SCF_OK)
+    (scf / "s.save").mkdir()
+    _write(scf / "ph.out", _PH_OK)
+    _write(scf / "s.dyn0", "Dynamical matrices\n")
+    _write(scf / "s.dyn1", "freq ( 1) = 5.0 [THz] = 166.78 [cm-1]\n")
+    _write(scf / "nscf.in", "K_POINTS crystal\n216\n")
+    _write(
+        scf / "nscf.out",
+        "     number of k points=   216\n"
+        "!    total energy              =    -100.0 Ry\n"
+        "     the Fermi energy is    10.0 ev\n"
+        "     JOB DONE.\n",
+    )
+    cfg = DFTConfig(
+        do_relax=True,
+        do_phonon=True,
+        do_epw=True,
+        quality_tag="production",
+        epw=EPWConfig(enabled=True, nkc=[8, 8, 8], nqc=[4, 4, 4]),
+    )
+    ckpt = probe_workdir(work, cfg, prefix="s", structure=_nbn(), want_epw=True)
+    assert ckpt.is_complete("phonon")
+    assert not ckpt.is_complete("nscf")
+    assert any("mismatch" in line.lower() for line in ckpt.log)

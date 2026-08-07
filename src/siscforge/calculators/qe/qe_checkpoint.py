@@ -28,6 +28,16 @@ All of the following:
 
 Otherwise → clean partial phonon outputs and full step restart.
 
+NSCF / EPW coarse-k fingerprint (Slice 26)
+-----------------------------------------
+EPW coarse k (``nkc`` / ``nk1–3``) can change via preflight auto-raise or
+post-DFPT remediation while finished DFPT is kept. A successful ``nscf.out``
+from a **previous** mesh must **not** be skipped: compare the mesh used by
+existing NSCF inputs against the campaign's current ``nkc``. Prefer the
+**requested** mesh from ``nscf.in`` / sidecar over symmetry-reduced counts
+in ``nscf.out`` alone. On mismatch, invalidate NSCF + EPW electronic outputs
+only — never ``ph.out``, ``*.dyn*``, ``_ph0``, or dvscf.
+
 Limitations
 -----------
 - Not Folding@home-style mid-iteration pause; granularity is **QE step** +
@@ -39,10 +49,12 @@ Limitations
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Sequence
 
 from pymatgen.core import Structure
 
@@ -80,6 +92,27 @@ _RECOVER_UNSAFE_MARKERS: tuple[str, ...] = (
     "error reading recover",
     "error in routine  read_file_ph",
     "problems reading recover",
+)
+
+# Sidecar written when NSCF-for-EPW completes (requested mesh fingerprint).
+NSCF_KMESH_SIDECAR = "siscforge_nscf_kmesh.json"
+
+# Wannier / EPW electronic side products safe to clear on nkc change.
+_WANNIER_EPW_GLOBS: tuple[str, ...] = (
+    "*.win",
+    "*.amn",
+    "*.mmn",
+    "*.eig",
+    "*.nnkp",
+    "*.wout",
+    "*.chk",
+    "*.uk",
+    "*.uHu",
+    "*.uIu",
+    "epwdata.fmt",
+    "crystal.fmt",
+    "*.epmat*",
+    "selecq.fmt",
 )
 
 
@@ -144,6 +177,18 @@ class PhononRecoverability:
         return f"{self.reason}{art}"
 
 
+@dataclass(frozen=True)
+class NscfKmeshFingerprint:
+    """How an existing NSCF relates to the campaign's current EPW coarse k."""
+
+    matches: bool
+    expected_nkc: tuple[int, int, int]
+    observed_nkc: tuple[int, int, int] | None
+    observed_nk_count: int | None
+    source: str
+    message: str
+
+
 def _job_done(text: str) -> bool:
     return "JOB DONE" in text.upper()
 
@@ -180,6 +225,355 @@ def _dir_has_files(path: Path) -> bool:
 def _ph_out_has_unsafe_recover_markers(text: str) -> bool:
     low = text.lower()
     return any(m in low for m in _RECOVER_UNSAFE_MARKERS)
+
+
+def _normalize_nkc3(nkc: Sequence[int] | None) -> tuple[int, int, int] | None:
+    if nkc is None:
+        return None
+    vals = [int(x) for x in list(nkc)[:3]]
+    if len(vals) < 3:
+        return None
+    if min(vals) < 1:
+        return None
+    return (vals[0], vals[1], vals[2])
+
+
+def _scf_subdir(work_dir: Path) -> Path:
+    """Return the flat EPW scf dir (``work_dir/02_scf`` or ``work_dir`` itself)."""
+    work_dir = Path(work_dir)
+    if (work_dir / "02_scf").is_dir():
+        return work_dir / "02_scf"
+    if work_dir.name == "02_scf":
+        return work_dir
+    # Flat layout: nscf lives directly under work_dir
+    if (work_dir / "nscf.out").is_file() or (work_dir / "nscf.in").is_file():
+        return work_dir
+    return work_dir / "02_scf"
+
+
+def write_nscf_kmesh_sidecar(
+    work_dir: Path | str,
+    nkc: Sequence[int],
+) -> Path | None:
+    """Record the requested NSCF/EPW coarse mesh after a successful NSCF run."""
+    scf_dir = _scf_subdir(Path(work_dir))
+    mesh = _normalize_nkc3(nkc)
+    if mesh is None:
+        return None
+    scf_dir.mkdir(parents=True, exist_ok=True)
+    path = scf_dir / NSCF_KMESH_SIDECAR
+    payload = {
+        "nkc": list(mesh),
+        "nk_product": int(mesh[0] * mesh[1] * mesh[2]),
+        "source": "run_nscf_for_epw",
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return None
+    return path
+
+
+def parse_nscf_in_kmesh(path: Path | str) -> tuple[int, int, int] | int | None:
+    """Parse requested k-mesh from ``nscf.in``.
+
+    Preference order
+    ----------------
+    1. Explicit ``nk1/nk2/nk3``-style comments or keys if present
+    2. ``K_POINTS crystal`` followed by point count *N* — return *N* as product
+       (cube-root factors only when N is a perfect cube; else product-only)
+
+    Returns a 3-tuple when dimensions are known, an int product when only the
+    crystal mesh count is known, or None if unparseable.
+    """
+    text = _read_text(Path(path))
+    if text is None:
+        return None
+
+    # Optional: nk1 = … nk2 = … nk3 = … (some decks / comments)
+    dims: list[int | None] = [None, None, None]
+    for i, key in enumerate(("nk1", "nk2", "nk3")):
+        m = re.search(rf"\b{key}\s*=\s*(\d+)", text, flags=re.IGNORECASE)
+        if m:
+            dims[i] = int(m.group(1))
+    if all(d is not None for d in dims):
+        return (int(dims[0]), int(dims[1]), int(dims[2]))  # type: ignore[arg-type]
+
+    # K_POINTS crystal\n  <N>
+    m = re.search(
+        r"K_POINTS\s+crystal\s*\n\s*(\d+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        n_pts = int(m.group(1))
+        # Prefer exact isotropic cube when possible
+        cbrt = round(n_pts ** (1.0 / 3.0))
+        if cbrt > 0 and cbrt * cbrt * cbrt == n_pts:
+            return (cbrt, cbrt, cbrt)
+        return n_pts
+
+    # K_POINTS automatic\n  nk1 nk2 nk3  shift…
+    m = re.search(
+        r"K_POINTS\s+automatic\s*\n\s*(\d+)\s+(\d+)\s+(\d+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return None
+
+
+def parse_nscf_out_k_count(path: Path | str) -> int | None:
+    """Parse ``number of k points = N`` from pw.x NSCF stdout (may be reduced)."""
+    text = _read_text(Path(path))
+    if text is None:
+        return None
+    m = re.search(r"number of k points\s*=\s*(\d+)", text, flags=re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def parse_epw_in_nkc(path: Path | str) -> tuple[int, int, int] | None:
+    """Parse ``nk1/nk2/nk3`` from ``epw.in``."""
+    text = _read_text(Path(path))
+    if text is None:
+        return None
+    dims: list[int | None] = [None, None, None]
+    for i, key in enumerate(("nk1", "nk2", "nk3")):
+        m = re.search(rf"\b{key}\s*=\s*(\d+)", text, flags=re.IGNORECASE)
+        if m:
+            dims[i] = int(m.group(1))
+    if all(d is not None for d in dims):
+        return (int(dims[0]), int(dims[1]), int(dims[2]))  # type: ignore[arg-type]
+    return None
+
+
+def read_nscf_kmesh_sidecar(work_dir: Path | str) -> tuple[int, int, int] | None:
+    """Load requested nkc from ``siscforge_nscf_kmesh.json`` if present."""
+    scf_dir = _scf_subdir(Path(work_dir))
+    path = scf_dir / NSCF_KMESH_SIDECAR
+    if not path.is_file():
+        # Also try candidate root
+        alt = Path(work_dir) / NSCF_KMESH_SIDECAR
+        path = alt if alt.is_file() else path
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    nkc = data.get("nkc") if isinstance(data, dict) else None
+    return _normalize_nkc3(nkc)
+
+
+def inspect_nscf_vs_epw_coarse_k(
+    work_dir: Path | str,
+    nkc: Sequence[int],
+) -> NscfKmeshFingerprint:
+    """Compare existing NSCF mesh fingerprint to campaign ``nkc``.
+
+    Comparison rule (prefer requested mesh over fragile reduced counts)
+    -------------------------------------------------------------------
+    1. Sidecar ``siscforge_nscf_kmesh.json`` → exact ``nkc`` triple match
+    2. ``nscf.in`` ``K_POINTS crystal`` count / dims → product or triple match
+    3. ``nscf.out`` ``number of k points`` → product match only (last resort;
+       symmetry-reduced counts can false-mismatch automatic MP meshes, but
+       EPW NSCF uses full crystal meshes so product equality is expected)
+
+    Missing NSCF files ⇒ **matches=True** (nothing stale to invalidate; the
+    normal incomplete probe handles absence). Callers that need "exists and
+    mismatches" should check for ``nscf.out`` first.
+    """
+    expected = _normalize_nkc3(nkc)
+    if expected is None:
+        return NscfKmeshFingerprint(
+            matches=True,
+            expected_nkc=(0, 0, 0),
+            observed_nkc=None,
+            observed_nk_count=None,
+            source="no_expected",
+            message="no expected nkc — skip mesh check",
+        )
+    exp_prod = expected[0] * expected[1] * expected[2]
+    work_dir = Path(work_dir)
+    scf_dir = _scf_subdir(work_dir)
+
+    nscf_out = scf_dir / "nscf.out"
+    nscf_in = scf_dir / "nscf.in"
+    if not nscf_out.is_file() and not nscf_in.is_file():
+        # Also allow flat work_dir without 02_scf
+        if (work_dir / "nscf.out").is_file():
+            scf_dir = work_dir
+            nscf_out = work_dir / "nscf.out"
+            nscf_in = work_dir / "nscf.in"
+        else:
+            return NscfKmeshFingerprint(
+                matches=True,
+                expected_nkc=expected,
+                observed_nkc=None,
+                observed_nk_count=None,
+                source="missing",
+                message="no nscf artifacts — mesh check N/A",
+            )
+
+    # 1. Sidecar (authoritative requested mesh)
+    side = read_nscf_kmesh_sidecar(scf_dir)
+    if side is not None:
+        ok = side == expected
+        return NscfKmeshFingerprint(
+            matches=ok,
+            expected_nkc=expected,
+            observed_nkc=side,
+            observed_nk_count=side[0] * side[1] * side[2],
+            source="sidecar",
+            message=(
+                f"nscf sidecar nkc={side[0]}×{side[1]}×{side[2]} "
+                f"{'matches' if ok else '≠'} campaign "
+                f"{expected[0]}×{expected[1]}×{expected[2]}"
+            ),
+        )
+
+    # 2. nscf.in requested mesh
+    if nscf_in.is_file():
+        parsed = parse_nscf_in_kmesh(nscf_in)
+        if isinstance(parsed, tuple):
+            ok = parsed == expected
+            return NscfKmeshFingerprint(
+                matches=ok,
+                expected_nkc=expected,
+                observed_nkc=parsed,
+                observed_nk_count=parsed[0] * parsed[1] * parsed[2],
+                source="nscf.in",
+                message=(
+                    f"nscf.in nkc={parsed[0]}×{parsed[1]}×{parsed[2]} "
+                    f"{'matches' if ok else '≠'} campaign "
+                    f"{expected[0]}×{expected[1]}×{expected[2]}"
+                ),
+            )
+        if isinstance(parsed, int):
+            ok = parsed == exp_prod
+            return NscfKmeshFingerprint(
+                matches=ok,
+                expected_nkc=expected,
+                observed_nkc=None,
+                observed_nk_count=parsed,
+                source="nscf.in_count",
+                message=(
+                    f"nscf.in K_POINTS count={parsed} "
+                    f"{'matches' if ok else '≠'} product "
+                    f"{exp_prod} ({expected[0]}×{expected[1]}×{expected[2]})"
+                ),
+            )
+
+    # 3. nscf.out number of k points (full crystal mesh expected for EPW)
+    if nscf_out.is_file():
+        n_k = parse_nscf_out_k_count(nscf_out)
+        if n_k is not None:
+            ok = n_k == exp_prod
+            return NscfKmeshFingerprint(
+                matches=ok,
+                expected_nkc=expected,
+                observed_nkc=None,
+                observed_nk_count=n_k,
+                source="nscf.out",
+                message=(
+                    f"nscf.out number of k points={n_k} "
+                    f"{'matches' if ok else '≠'} product "
+                    f"{exp_prod} ({expected[0]}×{expected[1]}×{expected[2]})"
+                ),
+            )
+
+    # Artifacts exist but unparseable — conservative mismatch (force re-NSCF)
+    return NscfKmeshFingerprint(
+        matches=False,
+        expected_nkc=expected,
+        observed_nkc=None,
+        observed_nk_count=None,
+        source="unparseable",
+        message=(
+            f"nscf present but k-mesh unparseable — treating as mismatch vs "
+            f"{expected[0]}×{expected[1]}×{expected[2]}"
+        ),
+    )
+
+
+def nscf_matches_epw_coarse_k(
+    work_dir: Path | str,
+    nkc: Sequence[int],
+) -> bool:
+    """True when existing NSCF is absent or its requested mesh matches *nkc*.
+
+    See :func:`inspect_nscf_vs_epw_coarse_k` for the comparison rule.
+    """
+    return inspect_nscf_vs_epw_coarse_k(work_dir, nkc).matches
+
+
+def invalidate_nscf_epw_for_kmesh(
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+    reason: str | None = None,
+    clear_wannier: bool = True,
+) -> tuple[list[Path], str]:
+    """Remove NSCF + EPW electronic outputs so resume re-runs electronic steps.
+
+    **Never** deletes phonon / DFPT artifacts (``ph.out``, ``*.dyn*``, ``_ph0``,
+    dvscf). Optionally clears Wannier side products (``*.win``, ``*.amn``, …).
+
+    Returns ``(removed_paths, one_line_cli_message)``.
+    """
+    work_dir = Path(work_dir)
+    cand = work_dir
+    if work_dir.name == "02_scf":
+        cand = work_dir.parent
+    scf_dir = _scf_subdir(work_dir)
+    removed: list[Path] = []
+
+    def _rm(path: Path) -> None:
+        if path.is_file():
+            try:
+                path.unlink()
+                removed.append(path)
+            except OSError:
+                pass
+        elif path.is_dir():
+            try:
+                shutil.rmtree(path)
+                removed.append(path)
+            except OSError:
+                pass
+
+    # Prefer clean_step_outputs when candidate root has 02_scf layout
+    if (cand / "02_scf").is_dir():
+        removed.extend(clean_step_outputs(cand, "nscf", prefix=prefix))
+        removed.extend(clean_step_outputs(cand, "epw", prefix=prefix))
+    else:
+        for name in ("nscf.out", "nscf.in", "epw.out", "epw.in"):
+            _rm(scf_dir / name)
+
+    # Always clear inputs + sidecar + archives that pin the old mesh
+    for name in (
+        "nscf.in",
+        "nscf.out",
+        "epw.in",
+        "epw.out",
+        NSCF_KMESH_SIDECAR,
+    ):
+        _rm(scf_dir / name)
+    for archive in scf_dir.glob("epw.attempt*.out"):
+        _rm(archive)
+
+    if clear_wannier:
+        for pattern in _WANNIER_EPW_GLOBS:
+            for p in scf_dir.glob(pattern):
+                _rm(p)
+
+    msg = reason or (
+        "nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF (phonon reused)"
+    )
+    return removed, msg
 
 
 def assess_phonon_recoverability(
@@ -492,8 +886,14 @@ def probe_nscf(
     work_dir: Path,
     *,
     quality_tag: str = "screening",
+    expected_nkc: Sequence[int] | None = None,
 ) -> StepProbe:
-    """Probe EPW NSCF under ``work_dir/02_scf/nscf.out``."""
+    """Probe EPW NSCF under ``work_dir/02_scf/nscf.out``.
+
+    When *expected_nkc* is set (campaign EPW coarse k), a JOB DONE ``nscf.out``
+    whose k-mesh fingerprint does not match is treated as **incomplete** so
+    resume never pairs a denser ``epw.in`` with a stale NSCF mesh.
+    """
     scf_dir = work_dir / "02_scf"
     out_path = scf_dir / "nscf.out"
     text = _read_text(out_path)
@@ -520,6 +920,23 @@ def probe_nscf(
             scf=scf,
             stdout_path=out_path,
         )
+
+    if expected_nkc is not None:
+        fp = inspect_nscf_vs_epw_coarse_k(work_dir, expected_nkc)
+        if not fp.matches:
+            exp = fp.expected_nkc
+            detail = fp.message
+            return StepProbe(
+                name="nscf",
+                complete=False,
+                message=(
+                    f"nscf k-mesh mismatch vs epw nkc "
+                    f"{exp[0]}×{exp[1]}×{exp[2]} ({detail})"
+                ),
+                scf=scf,
+                stdout_path=out_path,
+            )
+
     return StepProbe(
         name="nscf",
         complete=True,
@@ -587,6 +1004,8 @@ def probe_workdir(
 
     Conservative: incomplete or unparseable outputs ⇒ step not complete.
     When *force* is True, all steps are reported incomplete (no skips).
+    For EPW campaigns, NSCF is complete only when the on-disk k-mesh matches
+    ``config.epw.nkc`` (see :func:`nscf_matches_epw_coarse_k`).
     """
     work_dir = Path(work_dir).resolve()
     want = (
@@ -664,7 +1083,10 @@ def probe_workdir(
             else f"incomplete epw_pp: {probe.message}"
         )
 
-        probe = probe_nscf(work_dir, quality_tag=qtag)
+        expected_nkc = list(config.epw.nkc) if config.epw.nkc else None
+        probe = probe_nscf(
+            work_dir, quality_tag=qtag, expected_nkc=expected_nkc
+        )
         ckpt.steps["nscf"] = probe
         log_lines.append(
             f"skip nscf (checkpoint): {probe.message}"
@@ -763,7 +1185,12 @@ def clean_step_outputs(
             except OSError:
                 pass
     elif step == "nscf":
-        _rm(work_dir / "02_scf" / "nscf.out")
+        scf_dir = work_dir / "02_scf"
+        _rm(scf_dir / "nscf.out")
+        _rm(scf_dir / "nscf.in")
+        _rm(scf_dir / NSCF_KMESH_SIDECAR)
     elif step == "epw":
-        _rm(work_dir / "02_scf" / "epw.out")
+        scf_dir = work_dir / "02_scf"
+        _rm(scf_dir / "epw.out")
+        _rm(scf_dir / "epw.in")
     return removed

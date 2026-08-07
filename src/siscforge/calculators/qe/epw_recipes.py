@@ -225,6 +225,15 @@ def run_nscf_for_epw(
             msg += f"\n--- output tail ---\n{tail}"
         except OSError:
             pass
+    if ok:
+        # Fingerprint requested coarse mesh so resume can detect nkc bumps.
+        try:
+            from siscforge.calculators.qe.qe_checkpoint import write_nscf_kmesh_sidecar
+
+            nkc = list(dft.epw.nkc or dft.kpoints or [4, 4, 4])
+            write_nscf_kmesh_sidecar(work_dir, nkc)
+        except Exception:  # noqa: BLE001
+            pass
     return QEStepResult(
         name="nscf",
         work_dir=work_dir,
@@ -355,9 +364,26 @@ _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
         "Set epw.npool=dft.nproc (nimage=1).",
     ),
     (
+        "k-grid",
+        "EPW: k-grid inconsistency",
+        "nscf crystal mesh must match epw nk1–nk3 (nkc). "
+        "SiSC-Forge invalidates stale NSCF when nkc changes and retries EPW-only.",
+    ),
+    (
         "k-point",
         "EPW: k-grid inconsistency",
         "nscf crystal mesh must match epw nk1–nk3 (nkc).",
+    ),
+    (
+        "error reading xml",
+        "EPW: fatal XML read (often stale NSCF after nkc change)",
+        "Rebuild NSCF at current nkc then re-run epw — DFPT kept. "
+        "Do not manually rm nscf.out; resume auto-invalidates on mesh mismatch.",
+    ),
+    (
+        "reading xml file",
+        "EPW: XML/save read failure after k-mesh change",
+        "Usually nscf wavefunctions from a different coarse k. Re-NSCF + epw only.",
     ),
     (
         "imaginary",
@@ -408,15 +434,42 @@ def is_kmesh_bvector_failure(text: str | None) -> bool:
 
 
 def is_kgrid_inconsistency(text: str | None) -> bool:
-    """True if EPW reports nscf / epw nk mesh mismatch."""
+    """True if EPW reports nscf / epw nk mesh mismatch (or related XML fail).
+
+    Covers explicit k-grid inconsistency messages and the common follow-on
+    fatal XML/save read that appears when epw nk ≠ nscf crystal mesh.
+    """
     if not text:
         return False
     blob = text.lower()
+    if "k-grid" in blob and ("inconsist" in blob or "mismatch" in blob):
+        return True
     if "k-point" in blob and (
         "inconsist" in blob or "does not match" in blob or "must match" in blob
     ):
         return True
-    if "number of k" in blob and "nscf" in blob:
+    if "k point" in blob and (
+        "inconsist" in blob or "does not match" in blob or "must match" in blob
+    ):
+        return True
+    if "number of k" in blob and ("nscf" in blob or "inconsist" in blob):
+        return True
+    if "nk1" in blob and ("match" in blob or "inconsist" in blob):
+        return True
+    # XML / save read fatals that commonly follow a stale nscf mesh after nkc raise
+    xmlish = (
+        "error reading xml" in blob
+        or "error while reading xml" in blob
+        or "fatal error reading xml" in blob
+        or "reading xml file" in blob
+    )
+    if xmlish and (
+        "k" in blob or "save" in blob or "nscf" in blob or "wannier" in blob
+    ):
+        return True
+    if "error in routine" in blob and "xml" in blob and (
+        "k-grid" in blob or "kmesh" in blob or "nscf" in blob or "save" in blob
+    ):
         return True
     return False
 
@@ -642,6 +695,11 @@ def diagnose_epw_failure(
             "  · remediation: EPW-only retry with denser nkc (6→8→12); DFPT reused. "
             "Do not --force-rerun just for this error."
         )
+    if cls == "kgrid_inconsistency":
+        parts.append(
+            "  · remediation: invalidate/rebuild NSCF at current nkc then epw "
+            "(phonon kept). No manual rm of nscf.out required."
+        )
     parts.append(
         "  · screening: enable auto_nbndsub (default) and "
         "wannier_retry_on_froz_overflow; raise epw.nbndsub if retry fails."
@@ -774,24 +832,14 @@ def _clean_nscf_and_epw_only(work_dir: Path, prefix: str = "siscforge") -> None:
     When coarse k changes, nscf wavefunctions must be regenerated; epw.out is
     archived separately. Phonon artifacts are sacred.
     """
-    from siscforge.calculators.qe.qe_checkpoint import clean_step_outputs
+    from siscforge.calculators.qe.qe_checkpoint import invalidate_nscf_epw_for_kmesh
 
-    # work_dir here is scf_dir (flat EPW layout) or campaign work_dir root
-    root = Path(work_dir)
-    # Prefer candidate root if we are inside 02_scf
-    cand_root = root.parent if root.name == "02_scf" else root
-    if (cand_root / "02_scf").is_dir():
-        clean_step_outputs(cand_root, "nscf", prefix=prefix)
-        clean_step_outputs(cand_root, "epw", prefix=prefix)
-    else:
-        # Flat layout (scf_dir == work_dir for EPW path)
-        for name in ("nscf.out", "nscf.in", "epw.out", "epw.in"):
-            p = root / name
-            if p.is_file():
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
+    invalidate_nscf_epw_for_kmesh(
+        work_dir,
+        prefix=prefix,
+        reason="cleaning NSCF/EPW for denser or corrected coarse k (phonon reused)",
+        clear_wannier=True,
+    )
 
 
 def plan_kmesh_remediation(
@@ -1135,8 +1183,81 @@ def _retry_epw_with_denser_k(
 
     Never cleans phonon / DFPT artifacts. Re-runs NSCF when nkc changes, then
     epw.x. Caps at ``epw.max_kmesh_retries``.
+
+    Special case: k-grid inconsistency with *stale* NSCF at the *current*
+    campaign nkc rebuilds NSCF at the same nkc first (no ladder bump) so an
+    8³ epw is not forced to 12³ solely because resume skipped a 6³ nscf.
     """
+    from siscforge.calculators.qe.qe_checkpoint import (
+        inspect_nscf_vs_epw_coarse_k,
+        nscf_matches_epw_coarse_k,
+    )
+
     attempt = 0
+
+    # One-shot: rebuild NSCF at current nkc when mesh is stale (k-grid path).
+    cls0 = classify_epw_failure(full_text or step.message)
+    nkc_cur = list(config.epw.nkc or [8, 8, 8])
+    if cls0 == "kgrid_inconsistency" and not nscf_matches_epw_coarse_k(
+        scf_dir, nkc_cur
+    ):
+        fp = inspect_nscf_vs_epw_coarse_k(scf_dir, nkc_cur)
+        cli_line = (
+            "nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF "
+            f"(phonon reused); rebuilding NSCF at nk={nkc_cur[0]}"
+        )
+        log.append(cli_line)
+        log.append(fp.message)
+        record_epw_remediation_attempt(
+            scf_dir,
+            reason="kgrid_stale_nscf",
+            nkc_before=nkc_cur,
+            nkc_after=nkc_cur,
+            note=cli_line,
+        )
+        _archive_epw_attempt(scf_dir, 0)
+        _clean_nscf_and_epw_only(scf_dir, prefix=prefix)
+        log.append(
+            f"running nscf (stale-mesh rebuild nk={nkc_cur[0]}×{nkc_cur[1]}×{nkc_cur[2]})"
+        )
+        nscf_step = run_nscf_for_epw(
+            structure,
+            config,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            outdir=scf_dir,
+        )
+        result.epw_steps.append(nscf_step)
+        result.steps.append(nscf_step)
+        if nscf_step.success:
+            log.append(f"running epw (after stale NSCF rebuild nk={nkc_cur[0]})")
+            step, eph = run_epw(
+                config,
+                scf_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+                structure=structure,
+                outdir=scf_dir,
+            )
+            step.message = f"{cli_line}\n{step.message}"
+            result.epw_steps.append(step)
+            result.steps.append(step)
+            full_text = ""
+            if step.stdout_path is not None and step.stdout_path.is_file():
+                try:
+                    full_text = step.stdout_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    full_text = step.message or ""
+            if step.success or (eph is not None and eph.lambda_total is not None):
+                return config, step, eph, full_text
+            if not is_remediable_kmesh_failure(full_text):
+                return config, step, eph, full_text
+        else:
+            return config, nscf_step, None, nscf_step.message or ""
+
     while True:
         plan = plan_kmesh_remediation(
             config, full_text or step.message, work_dir=scf_dir
@@ -1294,17 +1415,44 @@ def run_relax_scf_phonon_epw(
     )
     log.extend(ckpt.log)
 
-    # If preflight raised nkc, invalidate NSCF/EPW checkpoints so resume does
-    # not reuse a too-coarse nscf mesh with the new epw.in.
-    if nkc_changed_by_preflight and want_epw and not do_force:
-        if ckpt.is_complete("nscf") or ckpt.is_complete("epw"):
-            log.append(
-                "preflight raised coarse k — invalidating nscf/epw checkpoints "
-                "(phonon kept)"
+    # Invalidate NSCF/EPW when coarse k changed (preflight) OR existing NSCF
+    # mesh fingerprint ≠ campaign nkc. Never touch phonon / DFPT artifacts.
+    # (CLI preflight may already have raised nkc before this function runs, so
+    # nkc_raised alone is insufficient — always compare on-disk mesh.)
+    if want_epw and not do_force:
+        from siscforge.calculators.qe.qe_checkpoint import (
+            inspect_nscf_vs_epw_coarse_k,
+            invalidate_nscf_epw_for_kmesh,
+        )
+
+        nkc_now = list(config.epw.nkc or [4, 4, 4])
+        scf_probe_dir = work_dir / "02_scf"
+        has_nscf = (scf_probe_dir / "nscf.out").is_file() or (
+            scf_probe_dir / "nscf.in"
+        ).is_file()
+        fp = inspect_nscf_vs_epw_coarse_k(work_dir, nkc_now)
+        need_invalidate = False
+        inv_reason = ""
+        if nkc_changed_by_preflight and (has_nscf or ckpt.is_complete("epw")):
+            need_invalidate = True
+            inv_reason = (
+                "nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF "
+                "(phonon reused)"
             )
-            clean_step_outputs(work_dir, "nscf", prefix=prefix)
-            clean_step_outputs(work_dir, "epw", prefix=prefix)
-            # Re-probe so is_complete reflects cleaned state
+        elif has_nscf and not fp.matches:
+            need_invalidate = True
+            inv_reason = (
+                "nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF "
+                f"(phonon reused); {fp.message}"
+            )
+        if need_invalidate:
+            _, inv_msg = invalidate_nscf_epw_for_kmesh(
+                work_dir,
+                prefix=prefix,
+                reason=inv_reason,
+                clear_wannier=True,
+            )
+            log.append(inv_msg)
             ckpt = probe_workdir(
                 work_dir,
                 config,
@@ -1313,10 +1461,7 @@ def run_relax_scf_phonon_epw(
                 want_epw=want_epw,
                 force=do_force,
             )
-            # Keep prior log trail
-            log.extend(
-                [x for x in ckpt.log if x not in log]
-            )
+            log.extend([x for x in ckpt.log if x not in log])
 
     # 1. Optional relax
     if config.do_relax:
@@ -1575,28 +1720,45 @@ def run_relax_scf_phonon_epw(
                 )
             except OSError:
                 prior_text = ""
-            plan = plan_kmesh_remediation(config, prior_text, work_dir=scf_dir)
-            if plan is not None:
-                new_cfg, detail = plan
+            from siscforge.calculators.qe.qe_checkpoint import (
+                invalidate_nscf_epw_for_kmesh,
+                nscf_matches_epw_coarse_k,
+            )
+
+            prior_cls = classify_epw_failure(prior_text)
+            nkc_cur = list(config.epw.nkc or [8, 8, 8])
+            # Stale NSCF + k-grid/XML class: rebuild at current nkc (no ladder yet)
+            if (
+                prior_cls in {"kgrid_inconsistency", "kmesh_bvector"}
+                and not nscf_matches_epw_coarse_k(work_dir, nkc_cur)
+            ):
                 log.append(
-                    "prior EPW failure remediable — applying denser coarse k "
-                    "before re-launch (DFPT kept)"
+                    "nkc changed or NSCF/EPW k-mesh mismatch — invalidating NSCF "
+                    f"(phonon reused); prior EPW class={prior_cls}"
                 )
-                log.append(detail)
-                nkc_before = list(config.epw.nkc)
-                nkc_after = list(new_cfg.epw.nkc)
+                _archive_epw_attempt(
+                    scf_dir,
+                    len(load_epw_remediation_state(scf_dir).get("attempts") or []),
+                )
+                invalidate_nscf_epw_for_kmesh(
+                    work_dir,
+                    prefix=prefix,
+                    reason=(
+                        "nkc changed or NSCF/EPW k-mesh mismatch — "
+                        "invalidating NSCF (phonon reused)"
+                    ),
+                )
                 record_epw_remediation_attempt(
                     scf_dir,
-                    reason=classify_epw_failure(prior_text),
-                    nkc_before=nkc_before,
-                    nkc_after=nkc_after,
-                    note=detail,
+                    reason="kgrid_stale_nscf",
+                    nkc_before=nkc_cur,
+                    nkc_after=nkc_cur,
+                    note="stale NSCF rebuild at current nkc after prior EPW fail",
                 )
-                _archive_epw_attempt(scf_dir, len(load_epw_remediation_state(scf_dir).get("attempts") or []))
-                clean_step_outputs(work_dir, "nscf", prefix=prefix)
-                clean_step_outputs(work_dir, "epw", prefix=prefix)
-                config = new_cfg
-                log.append("running nscf (remediation after prior kmesh failure)")
+                log.append(
+                    f"running nscf (stale-mesh rebuild nk={nkc_cur[0]}×"
+                    f"{nkc_cur[1]}×{nkc_cur[2]})"
+                )
                 nscf_step = run_nscf_for_epw(
                     current,
                     config,
@@ -1609,14 +1771,65 @@ def run_relax_scf_phonon_epw(
                 result.steps.append(nscf_step)
                 if not nscf_step.success:
                     result.message = (
-                        f"EPW NSCF failed during k-mesh remediation: {nscf_step.message}"
+                        f"EPW NSCF failed during stale-mesh rebuild: {nscf_step.message}"
                     )
                     result.success = False
                     if step_log is not None:
                         step_log.extend(log)
                     return result
             else:
-                clean_step_outputs(work_dir, "epw", prefix=prefix)
+                plan = plan_kmesh_remediation(config, prior_text, work_dir=scf_dir)
+                if plan is not None:
+                    new_cfg, detail = plan
+                    log.append(
+                        "prior EPW failure remediable — applying denser coarse k "
+                        "before re-launch (DFPT kept)"
+                    )
+                    log.append(detail)
+                    nkc_before = list(config.epw.nkc)
+                    nkc_after = list(new_cfg.epw.nkc)
+                    record_epw_remediation_attempt(
+                        scf_dir,
+                        reason=classify_epw_failure(prior_text),
+                        nkc_before=nkc_before,
+                        nkc_after=nkc_after,
+                        note=detail,
+                    )
+                    _archive_epw_attempt(
+                        scf_dir,
+                        len(load_epw_remediation_state(scf_dir).get("attempts") or []),
+                    )
+                    invalidate_nscf_epw_for_kmesh(
+                        work_dir,
+                        prefix=prefix,
+                        reason=(
+                            "nkc changed or NSCF/EPW k-mesh mismatch — "
+                            "invalidating NSCF (phonon reused)"
+                        ),
+                    )
+                    config = new_cfg
+                    log.append("running nscf (remediation after prior kmesh failure)")
+                    nscf_step = run_nscf_for_epw(
+                        current,
+                        config,
+                        scf_dir,
+                        prefix=prefix,
+                        qe_env=qe_env,
+                        outdir=scf_dir,
+                    )
+                    result.epw_steps.append(nscf_step)
+                    result.steps.append(nscf_step)
+                    if not nscf_step.success:
+                        result.message = (
+                            "EPW NSCF failed during k-mesh remediation: "
+                            f"{nscf_step.message}"
+                        )
+                        result.success = False
+                        if step_log is not None:
+                            step_log.extend(log)
+                        return result
+                else:
+                    clean_step_outputs(work_dir, "epw", prefix=prefix)
         log.append("running epw")
         step, eph = run_epw(
             config,
