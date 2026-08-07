@@ -1,7 +1,12 @@
 # SiSC-Forge Development Roadmap
 
 **Version 0.3 – Practical Implementation Plan**  
-Aligned with [PRD v0.2](PRD/SiSC-Forge-PRD.md) and [Technical Specifications v0.3](specs/SiSC-Forge-Technical-Specifications.md).
+Aligned with [PRD v0.3](PRD/SiSC-Forge-PRD.md) and [Technical Specifications v0.4](specs/SiSC-Forge-Technical-Specifications.md).
+
+Workstation production-path features (resume, trust layer, EPW coarse-k + Phase B,
+phonon-first stable_only, phonon FFT/symmetry retry, Docker QE≥7.2) are **required
+for desktop EPW/maps** and are documented as shipped/must-have in PRD §5 and Specs
+§2.3–2.3b / §9; they sit alongside Phase 1 EPW rather than deferring to Phase 2.
 
 This roadmap turns the specifications into an ordered, workstation-first sequence of work. Every phase ends with concrete, locally-validatable deliverables so that progress is possible before any large HPC allocation arrives.
 
@@ -63,11 +68,12 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 ### Key Deliverables
 - Full EPW integration (coarse → fine grids) + isotropic Eliashberg Tc solver.
 - `ElectronPhononResult` fully populated (λ, ω_log, α²F, Tc_allen_dynes, Tc_eliashberg, quality_tag).
-- Multi-task or dedicated GNN heads for λ / ω_log / Tc proxy with uncertainty.
-- Active-learning loop (uncertainty sampling or simple UCB) that retrains the surrogate and re-prioritizes the queue.
+- Multi-task or dedicated GNN heads for λ / ω_log / Tc proxy with uncertainty (**stub prioritization shipped; trained GNN later**).
+- Active-learning loop (uncertainty sampling or simple UCB) that prioritizes expensive jobs (**retrain later**).
 - Screening vs production quality tags and automatic fallbacks for Wannierization failures.
+- **Desktop operability (must):** campaign resume + mid-step QE checkpoints; EPW nproc/npool; coarse-k preflight + EPW-only remediation (nkc ladder + search_shells Phase B); trust/result_quality layer; phonon-first maps + `stable_only` shortlist; phonon-specific diagnose + FFT/symmetry nosym retry; refine-from-store; Docker QE≥7.2.
 - MgB₂ prototype support and basic boride enumeration.
-- Improved buffer-layer suggestions and thermal-budget scoring inside the Silicon Integration module.
+- Improved buffer-layer suggestions and thermal-budget scoring inside the Silicon Integration module (45°/buffers shipped).
 - Campaign YAML fully operational for nitride and MgB₂ families.
 
 ### Dependencies
