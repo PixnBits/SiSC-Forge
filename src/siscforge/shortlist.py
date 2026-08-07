@@ -65,10 +65,20 @@ def _phonon_min_freq(ev: CandidateEvaluation) -> float | None:
 
 
 def is_dynamically_stable(ev: CandidateEvaluation) -> bool:
-    """True when phonon reports dynamical stability (no imaginary modes)."""
+    """True when phonon reports dynamical stability (no imaginary modes).
+
+    Setup failures (``phq_setup`` / empty modes / status failed) are **not**
+    stable — only completed phonon with no imaginary modes qualifies.
+    """
     ph = ev.phonon
     if ph is None:
         return False
+    if ph.status not in {"ok", "mock"}:
+        return False
+    if ph.n_modes is None or int(ph.n_modes or 0) <= 0:
+        # No modes parsed → incomplete phonon, not a stability conclusion
+        if ph.min_frequency_cm1 is None:
+            return False
     if ph.has_imaginary_modes:
         return False
     if ph.dynamically_stable is False:

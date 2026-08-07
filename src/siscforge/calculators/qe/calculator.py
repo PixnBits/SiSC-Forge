@@ -232,10 +232,12 @@ class QECalculator(BaseCalculator):
         )
 
         notes_parts: list[str] = []
+        # Phonon-only campaigns must use phonon diagnose (never EPW k-grid labels)
+        fail_step = "phonon" if (not want_epw and dft.do_phonon) else "qe"
         if not wf.success:
             # Short primary first so CLI / notes never bury QE errors under Errno 36
             primary = extract_primary_failure_reason(
-                wf.message or "", step_name="qe"
+                wf.message or "", step_name=fail_step
             )
             notes_parts.append(primary)
             notes_parts.append(
@@ -260,12 +262,20 @@ class QECalculator(BaseCalculator):
                             continue
                 notes_parts.append(
                     diagnose_qe_step_failure(
-                        diag_src, work_dir=cand_dir, step_name="qe_workflow"
+                        diag_src,
+                        work_dir=cand_dir,
+                        step_name=fail_step,
                     )
                 )
             except Exception:  # noqa: BLE001
                 pass
             notes_parts.append(truncate_for_notes(wf.message, max_chars=800))
+            # Setup failures are not stability conclusions
+            if "fft" in primary.lower() or "phq_setup" in primary.lower():
+                notes_parts.append(
+                    "phonon setup failure — not a dynamical-stability conclusion "
+                    "(stable_only shortlist ignores this candidate)"
+                )
         else:
             notes_parts.append(wf.message or "ok")
         notes_parts.append(f"quality_tag={dft.quality_tag}")
@@ -274,6 +284,11 @@ class QECalculator(BaseCalculator):
         notes_parts.append(f"work_dir={cand_dir}")
         if step_log:
             notes_parts.append("qe_steps: " + "; ".join(step_log))
+            if any("fft_symmetry retry" in s or "nosym" in s for s in step_log):
+                if any("succeeded" in s for s in step_log):
+                    notes_parts.append(
+                        "phonon recovered via nosym+noinv SCF/PH retry"
+                    )
 
         scf = wf.scf
         phonon = wf.phonon
@@ -284,6 +299,14 @@ class QECalculator(BaseCalculator):
             phonon = phonon.model_copy(update={"quality_tag": dft.quality_tag})
         if eph is not None and eph.quality_tag != dft.quality_tag:
             eph = eph.model_copy(update={"quality_tag": dft.quality_tag})
+        # Never advertise stability from a failed / incomplete phonon setup
+        if phonon is not None and phonon.status not in {"ok", "mock"}:
+            phonon = phonon.model_copy(
+                update={
+                    "dynamically_stable": False,
+                    "has_imaginary_modes": False,
+                }
+            )
 
         performance = getattr(wf, "performance_score", None)
         if performance is None and eph is not None:
@@ -292,7 +315,9 @@ class QECalculator(BaseCalculator):
         err_list: list[str] = []
         if not wf.success:
             err_list.append(
-                extract_primary_failure_reason(wf.message or "", step_name="qe")
+                extract_primary_failure_reason(
+                    wf.message or "", step_name=fail_step
+                )
             )
             err_list.append(f"work_dir={cand_dir}")
             err_list.append(truncate_for_notes(wf.message, max_chars=600))

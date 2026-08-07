@@ -64,7 +64,8 @@ def test_parse_ph_imaginary_fixture() -> None:
 def test_summarize_frequencies_empty() -> None:
     s = summarize_frequencies([])
     assert s["n_modes"] == 0
-    assert s["dynamically_stable"] is True
+    # Empty modes are not a stability conclusion (setup failure / incomplete)
+    assert s["dynamically_stable"] is False
 
 
 def test_parse_frequency_list() -> None:

@@ -261,6 +261,79 @@ def _fermi_from_work_dir(work_dir: Path) -> float | None:
     return None
 
 
+# Phonon-only fingerprints (checked first when step_name is phonon/ph).
+# Prevents EPW needles like "k-point" matching ordinary ph.out k-mesh lines
+# and mislabeling FFT/symmetry setup crashes as "EPW: k-grid inconsistency".
+_PHONON_FAILURE_HINTS: list[tuple[str, str, str]] = [
+    (
+        "fft grid incompatible with symmetry",
+        "phonon: FFT grid incompatible with symmetry (phq_setup)",
+        "Ordered/low-symmetry cells often need SCF+PH with nosym/noinv. "
+        "SiSC-Forge auto-retries once when dft.phonon_retry_on_fft_symmetry "
+        "is true. This is a setup failure — not dynamical instability.",
+    ),
+    (
+        "error in routine phq_setup",
+        "phonon: phq_setup (setup error before DFPT iterations)",
+        "Inspect the QE message under phq_setup (often FFT/symmetry). "
+        "Auto nosym retry may apply; do not treat as imag-mode instability.",
+    ),
+    (
+        "phq_setup",
+        "phonon: phq_setup failure",
+        "Phonon setup aborted before modes. See primary QE line; nosym retry "
+        "for FFT/symmetry class. Not a stability conclusion.",
+    ),
+    (
+        "error in routine d_matrix",
+        "phonon: d_matrix — D_S (l=2) symmetry not orthogonal",
+        "PAW + crystal symmetry mismatch after strain/relax. Auto-retry may "
+        "re-SCF with nosym/noinv (dft.phonon_retry_on_d_matrix).",
+    ),
+    (
+        "d_matrix",
+        "phonon: d_matrix — D_S symmetry not orthogonal",
+        "Enable dft.phonon_retry_on_d_matrix (default) for one nosym SCF+ph retry.",
+    ),
+    (
+        "not orthogonal",
+        "phonon: symmetry representation not orthogonal",
+        "Usually d_matrix/D_S after strained DFPT. See phonon_retry_on_d_matrix.",
+    ),
+    (
+        "d_s (l=",
+        "phonon: D_S(l) symmetry matrix not orthogonal",
+        "PAW d_matrix failure class — retry with nosym SCF or cleaner geometry.",
+    ),
+    (
+        "buffer overflow",
+        "phonon: buffer overflow (often broken system ph.x 6.7)",
+        "Use QE ≥ 7.2 private build (docs/build-qe-from-source.md); not Ubuntu 6.7.",
+    ),
+]
+
+# Needles that are EPW-only — never apply when diagnosing a pure phonon step.
+_EPW_ONLY_NEEDLES: frozenset[str] = frozenset(
+    {
+        "kmesh_get_bvector",
+        "not enough bvectors",
+        "more states in the frozen window than target",
+        "more states in the frozen window than target wfs",
+        "dis_windows",
+        "cannot bracket",
+        "efermig",
+        "error in routine dafopen",
+        "k-grid",
+        "k-point",
+        "error reading xml",
+        "reading xml file",
+        "number of processes must be equal",
+        "number of pools and number of images",
+        "nbndsub",
+        "wannier",
+    }
+)
+
 # Common EPW / Wannier failure fingerprints → (short CLI label, remediation)
 # Order matters: more specific patterns first.
 _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
@@ -329,6 +402,22 @@ _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
         "d_s (l=",
         "QE phonon: D_S(l) symmetry matrix not orthogonal",
         "PAW d_matrix failure class — retry with nosym SCF or cleaner geometry.",
+    ),
+    (
+        "fft grid incompatible with symmetry",
+        "phonon: FFT grid incompatible with symmetry (phq_setup)",
+        "SCF+PH nosym/noinv retry (dft.phonon_retry_on_fft_symmetry). Setup fail, "
+        "not dynamical instability.",
+    ),
+    (
+        "error in routine phq_setup",
+        "phonon: phq_setup (setup error before DFPT iterations)",
+        "See FFT/symmetry or related setup message; nosym retry may apply.",
+    ),
+    (
+        "phq_setup",
+        "phonon: phq_setup failure",
+        "Phonon setup aborted; not a stability conclusion.",
     ),
     (
         "error in routine dafopen",
@@ -442,8 +531,13 @@ def is_kgrid_inconsistency(text: str | None) -> bool:
 
     Covers explicit k-grid inconsistency messages and the common follow-on
     fatal XML/save read that appears when epw nk ≠ nscf crystal mesh.
+
+    Never true for phonon ``phq_setup`` / FFT-grid-symmetry setup crashes
+    (those are phonon-only and must not be labeled as EPW k-grid).
     """
     if not text:
+        return False
+    if is_phq_setup_fft_symmetry_failure(text) or is_phq_setup_failure(text):
         return False
     blob = text.lower()
     if "k-grid" in blob and ("inconsist" in blob or "mismatch" in blob):
@@ -478,6 +572,32 @@ def is_kgrid_inconsistency(text: str | None) -> bool:
     return False
 
 
+def is_phq_setup_fft_symmetry_failure(text: str | None) -> bool:
+    """True if ph.x aborted in phq_setup with FFT grid / symmetry incompatibility."""
+    if not text:
+        return False
+    blob = text.lower()
+    if "fft grid incompatible with symmetry" in blob:
+        return True
+    if "phq_setup" in blob and "fft" in blob and "symmetry" in blob:
+        return True
+    if "incompatible with symmetry" in blob and (
+        "fft" in blob or "phq_setup" in blob or "grid" in blob
+    ):
+        return True
+    return False
+
+
+def is_phq_setup_failure(text: str | None) -> bool:
+    """True if ph.x failed inside routine phq_setup (any message)."""
+    if not text:
+        return False
+    blob = text.lower()
+    return "error in routine phq_setup" in blob or (
+        "phq_setup" in blob and "error" in blob
+    )
+
+
 def is_d_matrix_failure(text: str | None) -> bool:
     """True if ph.x / QE failed with PAW d_matrix / non-orthogonal D_S."""
     if not text:
@@ -492,16 +612,33 @@ def is_d_matrix_failure(text: str | None) -> bool:
     return False
 
 
+def is_phonon_nosym_retryable(text: str | None) -> bool:
+    """Failures that justify one SCF(nosym)+ph retry (d_matrix or FFT/symmetry)."""
+    return is_d_matrix_failure(text) or is_phq_setup_fft_symmetry_failure(text)
+
+
+def _step_is_phonon(step_name: str) -> bool:
+    s = (step_name or "").lower()
+    return s in {"phonon", "ph", "ph.x", "dfpt"} or s.startswith("phonon")
+
+
 def classify_epw_failure(text: str | None) -> EPWFailureClass:
-    """Map failure text to a remediable / non-remediable class."""
+    """Map failure text to a remediable / non-remediable class.
+
+    Phonon-only setup classes (phq_setup / d_matrix) are returned as
+    ``d_matrix`` or ``other`` — never as ``kgrid_inconsistency``.
+    """
     if is_kmesh_bvector_failure(text):
         return "kmesh_bvector"
+    # Phonon setup before EPW k-grid checks (ph.out often mentions k-points)
+    if is_phq_setup_fft_symmetry_failure(text) or is_phq_setup_failure(text):
+        return "other"
+    if is_d_matrix_failure(text):
+        return "d_matrix"
     if is_kgrid_inconsistency(text):
         return "kgrid_inconsistency"
     if is_frozen_window_overflow(text):
         return "frozen_window"
-    if is_d_matrix_failure(text):
-        return "d_matrix"
     blob = (text or "").lower()
     if "nbndsub" in blob or "not enough bands" in blob:
         return "nbndsub"
@@ -556,6 +693,7 @@ def diagnose_qe_step_failure(
     parts: list[str] = [f"[{step_name}] QE diagnostic"]
     primary = extract_primary_failure_reason(text, step_name=step_name)
     parts.append(f"  primary: {primary}")
+    phonon_step = _step_is_phonon(step_name)
     if work_dir is not None:
         wd = Path(work_dir)
         parts.append(f"  work_dir: {wd}")
@@ -580,9 +718,21 @@ def diagnose_qe_step_failure(
     blob = (text or "").lower()
     hits: list[str] = []
     if blob:
-        for needle, _short, hint in _EPW_FAILURE_HINTS:
-            if needle.lower() in blob:
-                hits.append(f"  · matched '{needle}': {hint}")
+        hint_lists: list[list[tuple[str, str, str]]] = []
+        if phonon_step:
+            hint_lists.append(_PHONON_FAILURE_HINTS)
+        hint_lists.append(_EPW_FAILURE_HINTS)
+        seen: set[str] = set()
+        for table in hint_lists:
+            for needle, _short, hint in table:
+                nlow = needle.lower()
+                if nlow in seen:
+                    continue
+                if phonon_step and nlow in _EPW_ONLY_NEEDLES:
+                    continue
+                if nlow in blob:
+                    seen.add(nlow)
+                    hits.append(f"  · matched '{needle}': {hint}")
         if not hits:
             hits.append(
                 "  · no known fingerprint — inspect ph.out / scf.out tail in work_dir."
@@ -595,6 +745,11 @@ def diagnose_qe_step_failure(
         parts.append(
             "  · d_matrix remediation: dft.phonon_retry_on_d_matrix (auto nosym SCF+ph); "
             "or tighten relax / change strain / clean lattice noise."
+        )
+    if is_phq_setup_fft_symmetry_failure(text):
+        parts.append(
+            "  · FFT/symmetry remediation: dft.phonon_retry_on_fft_symmetry "
+            "(auto nosym SCF+ph once). Setup failure — not dynamically unstable."
         )
     if include_tail and text:
         lines = str(text).splitlines()
@@ -612,16 +767,55 @@ def extract_primary_failure_reason(
     step_name: str = "epw",
     max_len: int = 120,
 ) -> str:
-    """One-line primary reason for CLI progress (no file open required)."""
+    """One-line primary reason for CLI progress (no file open required).
+
+    When *step_name* is a phonon step, phonon fingerprints win and EPW-only
+    needles (``k-point``, ``k-grid``, …) are skipped so ordinary ph.out
+    k-mesh lines cannot become ``EPW: k-grid inconsistency``.
+    """
     if not text or not str(text).strip():
         return f"{step_name}: failed (no output text)"
     blob = text.lower()
-    for needle, short, _hint in _EPW_FAILURE_HINTS:
-        if needle.lower() in blob:
-            msg = short
-            if len(msg) > max_len:
-                msg = msg[: max_len - 1] + "…"
-            return msg
+    phonon_step = _step_is_phonon(step_name)
+
+    # Explicit high-signal classes first (order independent of substring tables)
+    if is_phq_setup_fft_symmetry_failure(text):
+        msg = "phonon: FFT grid incompatible with symmetry (phq_setup)"
+        return msg[:max_len] + ("…" if len(msg) > max_len else "")
+    if is_d_matrix_failure(text) and (
+        phonon_step or "d_matrix" in blob or "not orthogonal" in blob
+    ):
+        msg = "phonon: d_matrix — D_S symmetry not orthogonal"
+        return msg[:max_len] + ("…" if len(msg) > max_len else "")
+    if phonon_step and is_phq_setup_failure(text):
+        # Generic phq_setup with specific QE message line when present
+        for line in str(text).splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            low = s.lower()
+            if "error" in low or "incompatible" in low or "fft" in low:
+                msg = f"phonon: phq_setup ({s})"
+                if len(msg) > max_len:
+                    msg = msg[: max_len - 1] + "…"
+                return msg
+        msg = "phonon: phq_setup failure"
+        return msg[:max_len] + ("…" if len(msg) > max_len else "")
+
+    tables: list[list[tuple[str, str, str]]] = []
+    if phonon_step:
+        tables.append(_PHONON_FAILURE_HINTS)
+    tables.append(_EPW_FAILURE_HINTS)
+    for table in tables:
+        for needle, short, _hint in table:
+            nlow = needle.lower()
+            if phonon_step and nlow in _EPW_ONLY_NEEDLES:
+                continue
+            if nlow in blob:
+                msg = short
+                if len(msg) > max_len:
+                    msg = msg[: max_len - 1] + "…"
+                return msg
     # Generic: first Error / %%% line
     for line in str(text).splitlines():
         s = line.strip()
@@ -1728,9 +1922,9 @@ def run_relax_scf_phonon_epw(
             log=log,
         )
         result.steps.append(step)
-        from siscforge.calculators.qe.recipes import _maybe_retry_phonon_d_matrix
+        from siscforge.calculators.qe.recipes import _maybe_retry_phonon_setup
 
-        step, ph_body = _maybe_retry_phonon_d_matrix(
+        step, ph_body = _maybe_retry_phonon_setup(
             config,
             structure=current,
             work_dir=work_dir,

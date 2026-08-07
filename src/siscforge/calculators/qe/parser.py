@@ -89,12 +89,14 @@ def summarize_frequencies(
     in many dumps) or as values with an ``i`` suffix already converted to negative.
     """
     if not frequencies_cm1:
+        # No modes parsed — not a stability conclusion (setup failure, empty
+        # log, etc.). Callers must not treat this as dynamically_stable=yes.
         return {
             "min_frequency_cm1": None,
             "max_frequency_cm1": None,
             "n_modes": 0,
             "has_imaginary_modes": False,
-            "dynamically_stable": True,
+            "dynamically_stable": False,
             "n_imaginary": 0,
         }
 
@@ -414,7 +416,15 @@ def parse_ph_output(
     freqs = parse_frequencies_from_text(text)
     summary = summarize_frequencies(freqs, imag_threshold_cm1=imag_threshold_cm1)
     job_done = "JOB DONE" in text.upper() or bool(freqs)
+    # Frequencies present → ok; otherwise setup/crash (not a stability result)
     status = "ok" if freqs else "failed"
+    # Setup failures (phq_setup, d_matrix, …) must never look "stable"
+    if status != "ok":
+        summary = {
+            **summary,
+            "dynamically_stable": False,
+            "has_imaginary_modes": False,
+        }
 
     raw: dict[str, Any] = {
         "source": source_name,

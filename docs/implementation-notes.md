@@ -1,5 +1,53 @@
 # Implementation Notes
 
+## Slice 28 (2026-08-07) — Phonon `phq_setup` / FFT–symmetry diagnosis + nosym retry
+
+**Scope**: Phonon-map campaigns (`do_epw=false`) were mislabeling
+`phq_setup` / `FFT grid incompatible with symmetry` as
+`EPW: k-grid inconsistency` because ordinary `ph.out` lines like
+`number of k points` matched EPW needles. Ordered ternaries (e.g.
+NbₓTi₁₋ₓN at ε=0) fail setup in ~2 s while binaries finish DFPT fine.
+
+Fix: phonon-aware primary reasons, one nosym+noinv SCF/PH retry (same shape
+as d_matrix), and no fake dynamical stability from setup failures.
+
+| Item | Location |
+|------|----------|
+| Fingerprints | `is_phq_setup_fft_symmetry_failure`, `is_phq_setup_failure` |
+| Step-aware primary | `extract_primary_failure_reason(..., step_name="phonon")` skips EPW-only needles |
+| Retry | `_maybe_retry_phonon_setup` (d_matrix + FFT/symmetry) |
+| Config | `dft.phonon_retry_on_fft_symmetry` (default true) |
+| Stability safety | failed / empty phonon → `dynamically_stable=False`; shortlist ignores |
+| Tests | `tests/test_phonon_failure.py`, fixture `ph_fft_symmetry_error.out` |
+
+### CLI examples
+
+```text
+[3/40] Nb0.25Ti0.75N strain=+0.000 — failed (phonon: FFT grid incompatible with symmetry (phq_setup))
+phonon failed (FFT grid incompatible with symmetry) — retrying once with nosym+noinv SCF/PH
+fft_symmetry retry: phonon succeeded after nosym SCF
+# or:
+fft_symmetry retry: phonon still failed after nosym SCF (setup failure — not a dynamical-stability conclusion)
+```
+
+### Disable retry
+
+```yaml
+dft:
+  phonon_retry_on_fft_symmetry: false
+  phonon_retry_on_d_matrix: false   # independent knob
+```
+
+### Resume failed candidates only
+
+```bash
+# Same campaign + output_dir; successful phonons skip; failed re-run with diagnose/retry
+siscforge run --calculator qe examples/nbti_n_phonon_map.yaml
+# Do NOT --force-rerun (would redo all DFPT)
+```
+
+---
+
 ## Slice 27 (2026-08-07) — Phase B: Wannier90 `search_shells` after nk ladder
 
 **Scope**: After Phase A coarse-k remediation (6→8→12) is exhausted, EPW can

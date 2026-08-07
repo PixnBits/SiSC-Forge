@@ -694,21 +694,44 @@ def _primary_failure_hint(result: CandidateEvaluation, *, max_len: int = 110) ->
         return f"status={result.status}"
     # Already a high-signal one-liner from run_epw / phonon diagnostics
     first = blob.splitlines()[0].strip()
+    # Prefer phonon classify when notes look phonon-only (avoid EPW mislabels)
+    phononish = (
+        "Phonon failed" in first
+        or "ph.x" in blob
+        or "phq_setup" in blob.lower()
+        or "d_matrix" in blob.lower()
+        or "fft grid incompatible" in blob.lower()
+        or "Program PHONON" in blob
+    )
+    step_for_hint = "phonon" if phononish else "calc"
     if (
         first.startswith("EPW ")
         or first.startswith("QE ")
         or first.startswith("Phonon failed")
+        or first.startswith("phonon:")
         or "Wannier" in first
         or "d_matrix" in first.lower()
+        or "phq_setup" in first.lower()
+        or "FFT grid" in first
     ):
         # Prefer classified fingerprint over raw "Phonon failed (ph.x): …"
-        reason = extract_primary_failure_reason(blob, step_name="calc", max_len=max_len)
-        if "d_matrix" in reason.lower() or "orthogonal" in reason.lower():
+        reason = extract_primary_failure_reason(
+            blob, step_name=step_for_hint, max_len=max_len
+        )
+        if (
+            "d_matrix" in reason.lower()
+            or "orthogonal" in reason.lower()
+            or "phq_setup" in reason.lower()
+            or "fft" in reason.lower()
+            or reason.startswith("phonon:")
+        ):
             return reason[:max_len] + ("…" if len(reason) > max_len else "")
         if first.startswith("QE ") or first.startswith("EPW "):
             return first[:max_len] + ("…" if len(first) > max_len else "")
         return reason[:max_len] + ("…" if len(reason) > max_len else "")
-    reason = extract_primary_failure_reason(blob, step_name="calc", max_len=max_len)
+    reason = extract_primary_failure_reason(
+        blob, step_name=step_for_hint, max_len=max_len
+    )
     return reason
 
 

@@ -633,7 +633,7 @@ def _read_step_log(stdout_path: Path | None) -> str:
         return ""
 
 
-def _maybe_retry_phonon_d_matrix(
+def _maybe_retry_phonon_setup(
     config: DFTConfig,
     *,
     structure: Structure,
@@ -647,34 +647,70 @@ def _maybe_retry_phonon_d_matrix(
     step: QEStepResult,
     result: QEWorkflowResult,
 ) -> tuple[QEStepResult, str]:
-    """One guarded SCF(nosym)+ph retry on PAW d_matrix failures.
+    """One guarded SCF(nosym)+ph retry on remediable phonon *setup* failures.
 
-    Policy (``dft.phonon_retry_on_d_matrix``, default True):
-    1. Classify failure from ph.out (must match d_matrix / non-orthogonal D_S).
-    2. Clean phonon partials; re-run SCF with ``nosym=.true.`` + ``noinv=.true.``.
+    Covers:
+
+    * PAW ``d_matrix`` / non-orthogonal ``D_S``
+      (``dft.phonon_retry_on_d_matrix``, default True)
+    * ``phq_setup`` / ``FFT grid incompatible with symmetry``
+      (``dft.phonon_retry_on_fft_symmetry``, default True)
+
+    Policy:
+    1. Classify failure from ph.out fingerprint.
+    2. Clean phonon partials only for this candidate; re-run SCF with
+       ``nosym=.true.`` + ``noinv=.true.``.
     3. Re-run phonon once (no recover from the broken DFPT).
-    4. Never invent geometry hacks; never mark success without JOB DONE.
+    4. Cap = 1 attempt; never invent geometry hacks; never mark success
+       without JOB DONE. Setup failure is **not** dynamical instability.
 
     Returns ``(final_step, ph_out_text)``.
     """
-    from siscforge.calculators.qe.epw_recipes import is_d_matrix_failure
+    from siscforge.calculators.qe.epw_recipes import (
+        is_d_matrix_failure,
+        is_phq_setup_fft_symmetry_failure,
+    )
     from siscforge.calculators.qe.qe_checkpoint import clean_step_outputs
 
     body = _read_step_log(step.stdout_path)
-    if step.success or not is_d_matrix_failure(body):
-        return step, body
-    if not getattr(config, "phonon_retry_on_d_matrix", True):
-        log.append(
-            "phonon d_matrix failure — retry disabled "
-            "(dft.phonon_retry_on_d_matrix=false)"
-        )
+    if step.success:
         return step, body
 
-    log.append(
-        "phonon d_matrix / D_S not orthogonal — one retry: "
-        "re-SCF with nosym=.true. noinv=.true. then ph.x"
-    )
-    # Drop broken DFPT artifacts
+    reason: str | None = None
+    if is_phq_setup_fft_symmetry_failure(body):
+        if not getattr(config, "phonon_retry_on_fft_symmetry", True):
+            log.append(
+                "phonon FFT/symmetry (phq_setup) failure — retry disabled "
+                "(dft.phonon_retry_on_fft_symmetry=false)"
+            )
+            return step, body
+        reason = "fft_symmetry"
+    elif is_d_matrix_failure(body):
+        if not getattr(config, "phonon_retry_on_d_matrix", True):
+            log.append(
+                "phonon d_matrix failure — retry disabled "
+                "(dft.phonon_retry_on_d_matrix=false)"
+            )
+            return step, body
+        reason = "d_matrix"
+    else:
+        return step, body
+
+    if reason == "fft_symmetry":
+        cli = (
+            "phonon failed (FFT grid incompatible with symmetry) — "
+            "retrying once with nosym+noinv SCF/PH"
+        )
+        tag = "fft_symmetry"
+    else:
+        cli = (
+            "phonon d_matrix / D_S not orthogonal — one retry: "
+            "re-SCF with nosym=.true. noinv=.true. then ph.x"
+        )
+        tag = "d_matrix"
+    log.append(cli)
+
+    # Drop broken DFPT artifacts for this candidate only
     clean_step_outputs(work_dir, "phonon", prefix=prefix)
     # Re-SCF with reduced symmetry (overwrites scf.out + charge density)
     if (scf_dir / "scf.out").is_file():
@@ -695,8 +731,7 @@ def _maybe_retry_phonon_d_matrix(
             scf_step.stdout_path, quality_tag=config.quality_tag
         )
     if not scf_step.success:
-        log.append("d_matrix retry: nosym SCF failed — giving up")
-        # Synthesize a failed ph step carrying SCF message (not a path)
+        log.append(f"{tag} retry: nosym SCF failed — giving up")
         fail = QEStepResult(
             name="ph",
             work_dir=scf_dir,
@@ -705,14 +740,14 @@ def _maybe_retry_phonon_d_matrix(
             input_path=scf_step.input_path,
             success=False,
             message=(
-                "d_matrix recovery SCF (nosym) failed; "
+                f"{tag} recovery SCF (nosym) failed; "
                 + (scf_step.message or "")[:400]
             ),
         )
         result.steps.append(fail)
         return fail, _read_step_log(scf_step.stdout_path)
 
-    log.append("d_matrix retry: running DFPT / phonon after nosym SCF")
+    log.append(f"{tag} retry: running DFPT / phonon after nosym SCF")
     step2 = run_ph(
         config,
         scf_dir,
@@ -725,10 +760,46 @@ def _maybe_retry_phonon_d_matrix(
     result.steps.append(step2)
     body2 = _read_step_log(step2.stdout_path)
     if step2.success:
-        log.append("d_matrix retry: phonon succeeded after nosym SCF")
+        log.append(
+            f"{tag} retry: phonon succeeded after nosym SCF "
+            f"(setup recovery used; not a default physics change for other cells)"
+        )
     else:
-        log.append("d_matrix retry: phonon still failed after nosym SCF")
+        log.append(
+            f"{tag} retry: phonon still failed after nosym SCF "
+            f"(setup failure — not a dynamical-stability conclusion)"
+        )
     return step2, body2
+
+
+def _maybe_retry_phonon_d_matrix(
+    config: DFTConfig,
+    *,
+    structure: Structure,
+    work_dir: Path,
+    scf_dir: Path,
+    prefix: str,
+    qe_env: QEEnvironment | None,
+    for_epw: bool,
+    outdir: Path | None,
+    log: list[str],
+    step: QEStepResult,
+    result: QEWorkflowResult,
+) -> tuple[QEStepResult, str]:
+    """Alias for :func:`_maybe_retry_phonon_setup` (d_matrix + FFT/symmetry)."""
+    return _maybe_retry_phonon_setup(
+        config,
+        structure=structure,
+        work_dir=work_dir,
+        scf_dir=scf_dir,
+        prefix=prefix,
+        qe_env=qe_env,
+        for_epw=for_epw,
+        outdir=outdir,
+        log=log,
+        step=step,
+        result=result,
+    )
 
 
 def run_relax_scf_phonon(
@@ -925,7 +996,7 @@ def run_relax_scf_phonon(
                 log=log,
             )
             result.steps.append(step)
-            step, ph_body = _maybe_retry_phonon_d_matrix(
+            step, ph_body = _maybe_retry_phonon_setup(
                 config,
                 structure=current,
                 work_dir=work_dir,

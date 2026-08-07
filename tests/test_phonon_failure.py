@@ -1,28 +1,42 @@
-"""Phonon failure handling: Errno 36 path bug + d_matrix classification."""
+"""Phonon failure handling: Errno 36, d_matrix, phq_setup FFT/symmetry."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from siscforge.calculators.qe.epw_recipes import (
+    classify_epw_failure,
     diagnose_qe_step_failure,
     extract_primary_failure_reason,
     is_d_matrix_failure,
+    is_kgrid_inconsistency,
+    is_phq_setup_fft_symmetry_failure,
     truncate_for_notes,
 )
 from siscforge.calculators.qe.parser import parse_ph_output, resolve_text_or_path
 from siscforge.cli.main import _primary_failure_hint
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import DFTConfig
+from siscforge.models.results import PhononResult
+from siscforge.shortlist import filter_stable_evaluations, is_dynamically_stable
 
 FIXTURES = Path(__file__).parent / "fixtures" / "qe"
 D_MATRIX_OUT = FIXTURES / "ph_d_matrix_error.out"
+FFT_SYMM_OUT = FIXTURES / "ph_fft_symmetry_error.out"
 
 
 def _d_matrix_blob(*, pad: int = 0) -> str:
     text = D_MATRIX_OUT.read_text(encoding="utf-8")
+    if pad:
+        text = text + ("x" * pad)
+    return text
+
+
+def _fft_blob(*, pad: int = 0) -> str:
+    text = FFT_SYMM_OUT.read_text(encoding="utf-8")
     if pad:
         text = text + ("x" * pad)
     return text
@@ -105,8 +119,202 @@ def test_truncate_for_notes_caps_blob() -> None:
 def test_phonon_retry_config_default() -> None:
     dft = DFTConfig()
     assert dft.phonon_retry_on_d_matrix is True
-    dft2 = DFTConfig(phonon_retry_on_d_matrix=False)
+    assert dft.phonon_retry_on_fft_symmetry is True
+    dft2 = DFTConfig(phonon_retry_on_d_matrix=False, phonon_retry_on_fft_symmetry=False)
     assert dft2.phonon_retry_on_d_matrix is False
+    assert dft2.phonon_retry_on_fft_symmetry is False
+
+
+def test_fft_symmetry_fingerprint_not_epw_kgrid() -> None:
+    blob = _fft_blob()
+    assert is_phq_setup_fft_symmetry_failure(blob) is True
+    assert is_kgrid_inconsistency(blob) is False
+    assert classify_epw_failure(blob) != "kgrid_inconsistency"
+    primary = extract_primary_failure_reason(blob, step_name="phonon")
+    assert "FFT" in primary or "fft" in primary.lower()
+    assert "phq_setup" in primary.lower()
+    assert "EPW" not in primary
+    assert "k-grid inconsistency" not in primary.lower()
+
+
+def test_phonon_only_with_kpoints_line_not_epw_kgrid() -> None:
+    """Regression: ordinary 'number of k points' in ph.out must not → EPW k-grid."""
+    blob = _fft_blob()
+    assert "number of k points" in blob.lower() or "k points" in blob.lower()
+    primary = extract_primary_failure_reason(blob, step_name="phonon")
+    assert "EPW: k-grid" not in primary
+    diag = diagnose_qe_step_failure(blob, work_dir="/tmp/fake", step_name="phonon")
+    assert "EPW: k-grid inconsistency" not in diag
+    assert "fft" in diag.lower() or "phq_setup" in diag.lower()
+
+
+def test_cli_primary_hint_for_fft_symmetry() -> None:
+    blob = _fft_blob(pad=2000)
+    primary = extract_primary_failure_reason(blob, step_name="phonon")
+    notes = (
+        "Phonon failed (ph.x): "
+        + primary
+        + "\nwork_dir=/tmp/qe_work/NbTiN_deadbeef\n"
+        + truncate_for_notes(blob, max_chars=400)
+    )
+    ev = CandidateEvaluation(
+        candidate=StructureCandidate(
+            formula="Nb0.25Ti0.75N", material_family="tm_nitride"
+        ),
+        status="failed",
+        errors=[primary, "work_dir=/tmp/qe_work/NbTiN_deadbeef"],
+        notes=notes,
+    )
+    hint = _primary_failure_hint(ev)
+    assert "EPW" not in hint
+    assert "k-grid inconsistency" not in hint.lower()
+    assert "fft" in hint.lower() or "phq_setup" in hint.lower()
+    assert len(hint) <= 120
+
+
+def test_failed_phonon_not_dynamically_stable() -> None:
+    blob = _fft_blob()
+    ph = parse_ph_output(blob)
+    assert ph.status == "failed"
+    assert ph.dynamically_stable is False
+    ev = CandidateEvaluation(
+        candidate=StructureCandidate(formula="Nb0.5Ti0.5N", material_family="tm_nitride"),
+        status="failed",
+        phonon=ph,
+    )
+    assert is_dynamically_stable(ev) is False
+    stable = filter_stable_evaluations([ev], mode="stable_only")
+    assert stable == []
+
+
+def test_fft_symmetry_retry_once_then_stop(tmp_path: Path) -> None:
+    """Fingerprint triggers one nosym SCF+PH retry; second failure stops (no loop)."""
+    from siscforge.calculators.qe.recipes import (
+        QEStepResult,
+        QEWorkflowResult,
+        _maybe_retry_phonon_setup,
+    )
+    from siscforge.structure.nitrides import build_ternary_nitride
+
+    s = build_ternary_nitride("Nb", "Ti", 0.25, supercell=(2, 2, 1))
+    work = tmp_path / "cand"
+    work.mkdir()
+    scf = work / "02_scf"
+    scf.mkdir()
+    (scf / "ph.out").write_text(_fft_blob(), encoding="utf-8")
+    (scf / "scf.out").write_text(
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+
+    cfg = DFTConfig(
+        nproc=1,
+        do_phonon=True,
+        do_epw=False,
+        phonon_retry_on_fft_symmetry=True,
+        phonon_retry_on_d_matrix=True,
+        pseudo_dir=str(tmp_path),
+    )
+    fail_step = QEStepResult(
+        name="ph",
+        work_dir=scf,
+        returncode=1,
+        stdout_path=scf / "ph.out",
+        input_path=scf / "ph.in",
+        success=False,
+        message="ph.x rc=1",
+    )
+    result = QEWorkflowResult(work_dir=work, structure=s)
+    log: list[str] = []
+    pw_calls: list[dict] = []
+    ph_calls: list[int] = []
+
+    def fake_run_pw(structure, config, work_dir, **kwargs):
+        pw_calls.append(dict(kwargs.get("extra_system") or {}))
+        out = Path(work_dir) / "scf.out"
+        out.write_text(
+            "     the Fermi energy is    20.0000 ev\n"
+            "!\n     total energy              =     -100.0 Ry\n"
+            "     JOB DONE.\n",
+            encoding="utf-8",
+        )
+        return QEStepResult(
+            name="scf",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=out,
+            input_path=Path(work_dir) / "scf.in",
+            success=True,
+            message="ok",
+        )
+
+    def fake_run_ph(config, work_dir, **kwargs):
+        ph_calls.append(1)
+        out = Path(work_dir) / "ph.out"
+        # Second attempt still fails with same class
+        out.write_text(_fft_blob(), encoding="utf-8")
+        return QEStepResult(
+            name="ph",
+            work_dir=Path(work_dir),
+            returncode=1,
+            stdout_path=out,
+            input_path=Path(work_dir) / "ph.in",
+            success=False,
+            message="ph.x rc=1",
+        )
+
+    with (
+        patch("siscforge.calculators.qe.recipes.run_pw", side_effect=fake_run_pw),
+        patch("siscforge.calculators.qe.recipes.run_ph", side_effect=fake_run_ph),
+        patch(
+            "siscforge.calculators.qe.qe_checkpoint.clean_step_outputs",
+            return_value=[],
+        ),
+    ):
+        step2, body2 = _maybe_retry_phonon_setup(
+            cfg,
+            structure=s,
+            work_dir=work,
+            scf_dir=scf,
+            prefix="siscforge",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log,
+            step=fail_step,
+            result=result,
+        )
+
+    assert any("FFT grid incompatible" in line for line in log)
+    assert any("nosym" in line for line in log)
+    assert pw_calls and pw_calls[0].get("nosym") is True
+    assert pw_calls[0].get("noinv") is True
+    assert len(ph_calls) == 1  # one phonon re-launch only
+    assert step2.success is False
+    assert is_phq_setup_fft_symmetry_failure(body2)
+
+    # Disabled flag → no retry
+    log2: list[str] = []
+    cfg_off = cfg.model_copy(update={"phonon_retry_on_fft_symmetry": False})
+    with patch("siscforge.calculators.qe.recipes.run_pw") as mock_pw:
+        step3, _ = _maybe_retry_phonon_setup(
+            cfg_off,
+            structure=s,
+            work_dir=work,
+            scf_dir=scf,
+            prefix="siscforge",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log2,
+            step=fail_step,
+            result=QEWorkflowResult(work_dir=work, structure=s),
+        )
+        mock_pw.assert_not_called()
+    assert any("retry disabled" in line for line in log2)
+    assert step3.success is False
 
 
 def test_simulated_failure_message_path_safe() -> None:

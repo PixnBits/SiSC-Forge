@@ -98,7 +98,31 @@ correctly down-ranked them. Phonon-first spends desktop hours on stability
 coverage; EPW budget goes only to cells that can host meaningful e-ph.
 
 
-## Phonon failures (d_matrix / Errno 36)
+## Phonon failures (setup vs instability)
+
+### FFT grid / symmetry (`phq_setup`) — ordered ternaries
+
+Ordered NbₓTi₁₋ₓN supercells (e.g. 0.25 / 0.5 / 0.75 at ε=0) often abort
+`ph.x` in ~2 s with:
+
+```text
+Error in routine phq_setup (1):
+  FFT grid incompatible with symmetry
+```
+
+CLI / notes must show a **phonon** reason (Slice 28), **not** EPW k-grid:
+
+```text
+… — failed (phonon: FFT grid incompatible with symmetry (phq_setup))
+phonon failed (FFT grid incompatible with symmetry) — retrying once with nosym+noinv SCF/PH
+```
+
+`dft.phonon_retry_on_fft_symmetry: true` (default) re-runs **one** SCF with
+`nosym=.true.` / `noinv=.true.` and retries phonon once. Success notes that
+recovery was used. Final failure is a **setup** failure — not “dynamically
+unstable” — and `stable_only` shortlist ignores it.
+
+### d_matrix / Errno 36
 
 If `ph.x` aborts with:
 
@@ -110,24 +134,42 @@ Error in routine d_matrix (2):
 SiSC-Forge classifies this as:
 
 ```text
-… — failed (QE phonon: d_matrix — D_S (l=2) symmetry not orthogonal)
+… — failed (phonon: d_matrix — D_S symmetry not orthogonal)
 ```
 
-**Not** `[Errno 36] File name too long` (that was a parser bug fixed in Slice 24).
+**Not** `[Errno 36] File name too long` (parser bug fixed in Slice 24).
+**Not** `EPW: k-grid inconsistency` (mislabel fixed in Slice 28).
 
 ### Automatic retry (default)
 
-`dft.phonon_retry_on_d_matrix: true` (default) re-runs **one** SCF with
-`nosym=.true.` / `noinv=.true.` and retries phonon once. If that still fails,
-the candidate is recorded failed and the campaign continues
-(`run.continue_on_error: true`).
+Both setup classes share a one-shot nosym recovery:
 
-Disable retry in the map YAML:
+| Flag | Default | Fingerprint |
+|------|---------|-------------|
+| `dft.phonon_retry_on_fft_symmetry` | true | FFT grid incompatible with symmetry |
+| `dft.phonon_retry_on_d_matrix` | true | d_matrix / D_S not orthogonal |
+
+If retry still fails, the candidate is recorded failed and the campaign
+continues (`run.continue_on_error: true`).
+
+Disable in the map YAML:
 
 ```yaml
 dft:
+  phonon_retry_on_fft_symmetry: false
   phonon_retry_on_d_matrix: false
 ```
+
+### Re-run only failed candidates on an existing map store
+
+```bash
+# Same YAML + same output_dir (e.g. outputs/nbti_n_phonon_map)
+# Successful phonons are skipped (resume); failed cells re-run with diagnose/retry
+siscforge run --calculator qe examples/nbti_n_phonon_map.yaml
+```
+
+Do **not** pass `--force-rerun` unless you intentionally want to redo **all**
+DFPT (including the ~1–3 min binary successes).
 
 ### Manual remediation if retry fails
 

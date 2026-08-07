@@ -486,6 +486,13 @@ class DFTConfig(BaseModel):
     Conservative discovery recovery — never marks success without JOB DONE.
     Set False to fail immediately with diagnostic notes only."""
 
+    phonon_retry_on_fft_symmetry: bool = True
+    """If True (default), when ``ph.x`` fails with ``phq_setup`` /
+    ``FFT grid incompatible with symmetry`` (ordered ternary / low-symmetry
+    cells after SCF), re-run SCF once with ``nosym=.true.`` + ``noinv=.true.``
+    and retry phonon **once**. Same recovery shape as d_matrix; does not
+    change defaults for successful phonons. Set False to fail immediately."""
+
     do_epw: bool = False
     """Run EPW + isotropic Tc after phonon (requires epw.x). Also set via EPWConfig.enabled."""
 
