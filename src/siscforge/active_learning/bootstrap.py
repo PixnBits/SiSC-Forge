@@ -392,6 +392,8 @@ def al_status(
     n = int(ts.get("n_examples") or 0)
     ctx = registry.active_context(n_labels=n)
     bootstrap = ctx.bootstrap
+    target = DEFAULT_BOOTSTRAP_MAX_LABELS
+    by_family = dict(ts.get("by_family") or {})
     return {
         "training_set": ts,
         "model": (
@@ -409,6 +411,11 @@ def al_status(
         ),
         "bootstrap": bootstrap,
         "n_labels": n,
+        "bootstrap_target_labels": target,
+        "labels_to_bootstrap_exit": max(0, target - n),
+        "progress_pct": round(min(100.0, 100.0 * n / float(target)), 1),
+        "n_families": len(by_family),
+        "families_covered": sorted(by_family.keys()),
         "versions": registry.list_versions(),
         "al_root_training": str(training_store.root),
         "al_root_models": str(registry.root),
@@ -419,6 +426,7 @@ def al_status(
         ),
         "has_trained_payload": ctx.has_trained_payload,
     }
+
 
 
 def build_prioritization_record(
@@ -487,17 +495,22 @@ def resolve_al_context(
     """Resolve training set + registry roots and active prediction context.
 
     Default layout: ``<al_root>/training_set`` and ``<al_root>/models``.
-    If *al_root* is None: ``<store_dir>/al`` when store is given, else ``./al_state``.
+
+    *al_root* resolution (shared across campaigns — do **not** bury under
+    each campaign output directory)::
+
+        explicit al_root → $SISC_AL_ROOT → ./al_state
+
+    *store_dir* is accepted for API compatibility and pointer writes by the
+    caller; it does **not** change the default AL root location.
     """
-    base: Path
-    if al_root is not None:
-        base = Path(al_root)
-    elif store_dir is not None:
-        base = Path(store_dir) / "al"
-    else:
-        base = Path("al_state")
-    tstore = TrainingSetStore(base / "training_set")
-    registry = SurrogateRegistry(base / "models")
+    from siscforge.active_learning.paths import al_subroots
+
+    _ = store_dir  # reserved for callers writing campaign-local pointers
+    base, train_root, model_root = al_subroots(al_root)
+    tstore = TrainingSetStore(train_root)
+    registry = SurrogateRegistry(model_root)
     n = tstore.summary()["n_examples"]
     ctx = registry.active_context(n_labels=n)
     return tstore, registry, ctx
+

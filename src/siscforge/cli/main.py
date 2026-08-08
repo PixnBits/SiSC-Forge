@@ -803,10 +803,11 @@ def run_cmd(
     al_root: Path | None = typer.Option(
         None,
         "--al-root",
-        help="AL state root (training_set/ + models/). Default: <output_dir>/al "
-        "or ./al_state when no store yet.",
+        help="Shared AL state root (training_set/ + models/). Default: "
+        "$SISC_AL_ROOT or ./al_state (not under the campaign output dir).",
     ),
 ) -> None:
+
 
     """Load a campaign, filter, evaluate candidates, rank, persist, and export.
 
@@ -870,14 +871,31 @@ def run_cmd(
         raise typer.Exit(code=1)
 
     # 2b. λ/Tc surrogate pre-filter (optional Phase 1 stub + Phase 1.5b trained)
-    # Resolve AL registry so trained family-mean fits change predictions/rankings.
-    tstore, registry, al_ctx = resolve_al_context(al_root=al_root, store_dir=out)
+    # Shared AL registry so labels/models accumulate across campaigns.
+    from siscforge.active_learning.paths import write_al_pointer
+
+    resolved_al = _resolve_run_al_root(al_root, config.active_learning.al_root)
+    tstore, registry, al_ctx = resolve_al_context(al_root=resolved_al, store_dir=out)
+    write_al_pointer(
+        out,
+        al_root=tstore.root.parent,
+        training_set=tstore.root,
+        models=registry.root,
+        model_version=al_ctx.model_version,
+        bootstrap=al_ctx.bootstrap,
+    )
     if al_ctx.banner():
         console.print(f"[bold yellow]{al_ctx.banner()}[/bold yellow]")
         console.print(
             f"[dim]AL roots: training={tstore.root.resolve()}  "
             f"models={registry.root.resolve()}[/dim]"
         )
+    else:
+        console.print(
+            f"[dim]AL model={al_ctx.model_version} labels={al_ctx.training_set_size} "
+            f"root={tstore.root.parent.resolve()}[/dim]"
+        )
+
 
     tc_cfg = config.surrogate.tc_lambda
     tc_surrogate = TcLambdaSurrogate(
@@ -1563,11 +1581,12 @@ def run_cmd(
     for label, path in written.items():
         console.print(f"[green]Wrote[/green] {label}: {path}")
     console.print(f"[dim]Store root: {store.root.resolve()}[/dim]")
-    # Operator hint: promote eligible clean results
+    # Operator hint: promote eligible clean results into the *shared* AL root
     console.print(
         f"[dim]AL: siscforge al-promote {out} --al-root {tstore.root.parent} "
-        f"(use --dry-run first)[/dim]"
+        f"(use --dry-run first; mock/dry-run labels are refused)[/dim]"
     )
+
 
 
 
@@ -1700,9 +1719,25 @@ def _print_rank_table(
 
 
 def _default_al_roots(store_dir: Path | None, al_root: Path | None) -> tuple[Path, Path]:
-    """Resolve training-set and model-registry roots."""
-    base = al_root or (store_dir / "al" if store_dir else Path("al_state"))
-    return base / "training_set", base / "models"
+    """Resolve training-set and model-registry roots (shared across campaigns)."""
+    from siscforge.active_learning.paths import al_subroots
+
+    _ = store_dir  # store no longer embeds AL by default
+    _, train_root, model_root = al_subroots(al_root)
+    return train_root, model_root
+
+
+def _resolve_run_al_root(
+    cli_al_root: Path | None,
+    config_al_root: str | None,
+) -> Path | None:
+    """CLI flag wins, then campaign YAML, else None (paths.py defaults)."""
+    if cli_al_root is not None:
+        return cli_al_root
+    if config_al_root:
+        return Path(config_al_root)
+    return None
+
 
 
 @app.command("al-status")
@@ -1710,22 +1745,26 @@ def al_status_cmd(
     store_dir: Path | None = typer.Option(
         None,
         "--store",
-        help="Campaign store directory (optional; used only for path defaults).",
+        help="Campaign store (optional; only used if you pass --al-root from a pointer).",
     ),
     al_root: Path | None = typer.Option(
         None,
         "--al-root",
-        help="Root for training_set/ and models/ (default: <store>/al or ./al_state).",
+        help="Shared AL root (default: $SISC_AL_ROOT or ./al_state).",
     ),
 ) -> None:
     """Show active-learning bootstrap status (model version, label count, mode)."""
-    train_root, model_root = _default_al_roots(store_dir, al_root)
+    _ = store_dir
+    train_root, model_root = _default_al_roots(None, al_root)
     tstore = TrainingSetStore(train_root)
     registry = SurrogateRegistry(model_root)
     status = al_status(tstore, registry)
     console.print(status["message"])
     console.print(
-        f"labels={status['n_labels']}  bootstrap={status['bootstrap']}  "
+        f"labels={status['n_labels']}/{status['bootstrap_target_labels']} "
+        f"({status['progress_pct']}%)  "
+        f"to_exit={status['labels_to_bootstrap_exit']}  "
+        f"bootstrap={status['bootstrap']}  "
         f"model={(status['model'] or {}).get('model_version', 'none')}  "
         f"trained_payload={status.get('has_trained_payload')}"
     )
@@ -1733,12 +1772,21 @@ def al_status_cmd(
         f"[dim]training={status.get('al_root_training')}  "
         f"models={status.get('al_root_models')}[/dim]"
     )
+    if status.get("families_covered"):
+        console.print(
+            f"families={status['n_families']}: {', '.join(status['families_covered'])}"
+        )
     if status.get("training_set", {}).get("by_source"):
         console.print(f"by_source={status['training_set']['by_source']}")
-    if status.get("training_set", {}).get("by_family"):
-        console.print(f"by_family={status['training_set']['by_family']}")
     if status.get("versions"):
         console.print(f"versions={status['versions']}")
+    if status["bootstrap"] and status["n_labels"] < 20:
+        console.print(
+            "[dim]Tip: seed literature with "
+            "`al-seed --from-file docs/examples/literature_seeds.json` "
+            "then promote real EPW (not mock) results weekly.[/dim]"
+        )
+
 
 
 @app.command("al-seed")
@@ -1864,6 +1912,18 @@ def al_promote_cmd(
         f"total_labels={tstore.summary()['n_examples']}"
         + (" (dry-run)" if dry_run else "")
     )
+    if promoted == 0 and refused > 0:
+        console.print(
+            "[yellow]No labels promoted.[/yellow] Common causes:\n"
+            "  • campaign used mock / --dry-run (status=mock) — run real qe-epw first\n"
+            "  • quality_tag unknown/unreliable or EPW missing\n"
+            "  • wrong --al-root (check store al_state_pointer.json)"
+        )
+    elif not dry_run and promoted > 0:
+        console.print(
+            f"[dim]Next: siscforge al-train --al-root {tstore.root.parent}[/dim]"
+        )
+
 
 
 @app.command("al-train")

@@ -179,12 +179,72 @@ def test_promote_dry_run_eligibility_does_not_write(tmp_path: Path) -> None:
     assert store.summary()["n_examples"] == 0
 
 
-def test_resolve_al_context_defaults(tmp_path: Path) -> None:
-    tstore, registry, ctx = resolve_al_context(al_root=tmp_path / "al_state")
-    assert tstore.root == tmp_path / "al_state" / "training_set"
-    assert registry.root == tmp_path / "al_state" / "models"
+def test_resolve_al_context_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AL root is shared (./al_state or env), not buried under each campaign store."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SISC_AL_ROOT", raising=False)
+    tstore, registry, ctx = resolve_al_context(store_dir=tmp_path / "campaign_out")
+    # store_dir must NOT become the AL root
+    assert tstore.root.resolve() == (tmp_path / "al_state" / "training_set").resolve()
+    assert registry.root.resolve() == (tmp_path / "al_state" / "models").resolve()
+    assert (tmp_path / "campaign_out" / "al").exists() is False
     assert ctx.bootstrap is True
     assert ctx.model_version == "heuristic"
+
+
+
+def test_resolve_al_context_env_and_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SISC_AL_ROOT", str(tmp_path / "from_env"))
+    tstore, _, _ = resolve_al_context()
+    assert tstore.root == tmp_path / "from_env" / "training_set"
+    tstore2, _, _ = resolve_al_context(al_root=tmp_path / "explicit")
+    assert tstore2.root == tmp_path / "explicit" / "training_set"
+
+
+def test_al_status_progress_fields(tmp_path: Path) -> None:
+    from siscforge.active_learning import al_status
+
+    tstore = TrainingSetStore(tmp_path / "train")
+    seed_default_goldens(tstore)
+    registry = SurrogateRegistry(tmp_path / "models")
+    status = al_status(tstore, registry)
+    assert status["n_labels"] >= 3
+    assert status["bootstrap_target_labels"] == 150
+    assert status["labels_to_bootstrap_exit"] == 150 - status["n_labels"]
+    assert 0 < status["progress_pct"] < 100
+    assert "tm_nitride" in status["families_covered"]
+
+
+def test_trained_family_does_not_use_other_fallback() -> None:
+    """Missing family must fall back to heuristic, not launder 'other' means."""
+    family_stats = {
+        "other": {"lambda_mean": 3.0, "omega_log_mean": 100.0, "n": 5.0, "tc_std": 0.0}
+    }
+    cand = _cand("NbN")  # tm_nitride
+    pred = predict_tc_lambda(cand, family_stats=family_stats, model_version="x")
+    # Without tm_nitride key → heuristic path
+    assert pred.features.get("source") != "family_mean_fit"
+    assert pred.quality_tag == "stub"
+
+
+def test_write_al_pointer(tmp_path: Path) -> None:
+    from siscforge.active_learning.paths import write_al_pointer
+
+    p = write_al_pointer(
+        tmp_path / "out",
+        al_root=tmp_path / "al_state",
+        training_set=tmp_path / "al_state" / "training_set",
+        models=tmp_path / "al_state" / "models",
+        model_version="heuristic",
+        bootstrap=True,
+    )
+    assert p.is_file()
+    data = __import__("json").loads(p.read_text())
+    assert "al_root" in data
+    assert data["model_version"] == "heuristic"
+
 
 
 def test_rollback_sets_current(tmp_path: Path) -> None:

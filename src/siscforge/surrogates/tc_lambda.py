@@ -105,10 +105,15 @@ def _family_stats_baseline(
     family: str,
     family_stats: Mapping[str, Mapping[str, Any]] | None,
 ) -> tuple[float, float, float, dict[str, Any]] | None:
-    """Return (lam, wlog, unc, features) from trained family means, or None."""
+    """Return (lam, wlog, unc, features) from trained family means, or None.
+
+    Only exact family keys are used. Missing families fall back to the
+    heuristic path (high uncertainty), not a silent ``other`` mean that
+    could launder the wrong chemistry into rankings.
+    """
     if not family_stats:
         return None
-    st = family_stats.get(family) or family_stats.get("other")
+    st = family_stats.get(family)
     if not st:
         return None
     lam = st.get("lambda_mean")
@@ -131,6 +136,7 @@ def _family_stats_baseline(
         "source": "family_mean_fit",
     }
     return float(lam), float(wlog), float(unc), feats
+
 
 
 def predict_tc_lambda(

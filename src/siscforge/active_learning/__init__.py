@@ -21,6 +21,13 @@ from siscforge.active_learning.bootstrap import (
     retrain_from_snapshot,
     retrain_from_store,
 )
+from siscforge.active_learning.paths import (
+    DEFAULT_AL_ROOT_NAME,
+    ENV_AL_ROOT,
+    al_subroots,
+    resolve_al_root,
+    write_al_pointer,
+)
 from siscforge.active_learning.training_set import (
     DEFAULT_GOLDEN_SEEDS,
     PromotionError,
@@ -37,12 +44,15 @@ __all__ = [
     "AcquisitionPlan",
     "AcquisitionRecord",
     "ActiveSurrogateContext",
+    "DEFAULT_AL_ROOT_NAME",
     "DEFAULT_GOLDEN_SEEDS",
+    "ENV_AL_ROOT",
     "PromotionError",
     "SurrogateRegistry",
     "TrainingSetStore",
     "acquisition_score",
     "al_status",
+    "al_subroots",
     "build_prioritization_record",
     "is_bootstrap",
     "literature_example",
@@ -51,8 +61,11 @@ __all__ = [
     "promote_evaluation",
     "promotion_eligibility",
     "resolve_al_context",
+    "resolve_al_root",
     "retrain_from_snapshot",
     "retrain_from_store",
     "seed_default_goldens",
     "seed_from_literature_file",
+    "write_al_pointer",
 ]
+
