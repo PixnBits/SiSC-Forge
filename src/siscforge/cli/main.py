@@ -6,6 +6,7 @@ Subcommands:
   - ``run``       — load campaign, filter, evaluate (mock/QE/EPW), rank, export
   - ``shortlist`` — build a focused EPW campaign from an AL dry-run store
   - ``refine``    — promote store winners to denser-grid / production-tier EPW
+  - ``al-status`` / ``al-seed`` / ``al-promote`` / ``al-train`` / ``al-audit`` — Phase 1.5 flywheel
 """
 
 from __future__ import annotations
@@ -18,7 +19,16 @@ from rich.console import Console
 from rich.table import Table
 
 from siscforge import __version__
-from siscforge.active_learning import prioritize_candidates
+from siscforge.active_learning import (
+    PromotionError,
+    SurrogateRegistry,
+    TrainingSetStore,
+    al_status,
+    literature_example,
+    prioritize_candidates,
+    retrain_from_store,
+    seed_default_goldens,
+)
 from siscforge.calculators import ensure_builtins_loaded, list_calculators
 from siscforge.calculators import get as get_calculator
 from siscforge.export import (
@@ -1584,6 +1594,156 @@ def _print_rank_table(
             status,
         )
     console.print(table)
+
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.5 — AL bootstrap: promote, train, status, seed
+# ---------------------------------------------------------------------------
+
+
+def _default_al_roots(store_dir: Path | None, al_root: Path | None) -> tuple[Path, Path]:
+    """Resolve training-set and model-registry roots."""
+    base = al_root or (store_dir / "al" if store_dir else Path("al_state"))
+    return base / "training_set", base / "models"
+
+
+@app.command("al-status")
+def al_status_cmd(
+    store_dir: Path | None = typer.Option(
+        None,
+        "--store",
+        help="Campaign store directory (optional; used only for path defaults).",
+    ),
+    al_root: Path | None = typer.Option(
+        None,
+        "--al-root",
+        help="Root for training_set/ and models/ (default: <store>/al or ./al_state).",
+    ),
+) -> None:
+    """Show active-learning bootstrap status (model version, label count, mode)."""
+    train_root, model_root = _default_al_roots(store_dir, al_root)
+    tstore = TrainingSetStore(train_root)
+    registry = SurrogateRegistry(model_root)
+    status = al_status(tstore, registry)
+    console.print(status["message"])
+    console.print(
+        f"labels={status['n_labels']}  bootstrap={status['bootstrap']}  "
+        f"model={(status['model'] or {}).get('model_version', 'none')}"
+    )
+    if status.get("training_set", {}).get("by_source"):
+        console.print(f"by_source={status['training_set']['by_source']}")
+
+
+@app.command("al-seed")
+def al_seed_cmd(
+    al_root: Path | None = typer.Option(
+        None, "--al-root", help="AL state root (default ./al_state)."
+    ),
+) -> None:
+    """Seed default golden labels (NbN, MgB2, TiN) into the training set."""
+    train_root, _ = _default_al_roots(None, al_root)
+    tstore = TrainingSetStore(train_root)
+    added = seed_default_goldens(tstore)
+    console.print(f"Seeded {len(added)} golden(s); total={tstore.summary()['n_examples']}")
+
+
+@app.command("al-promote")
+def al_promote_cmd(
+    store_dir: Path = typer.Argument(..., help="Campaign store with evaluations.json"),
+    candidate_id: str | None = typer.Option(
+        None, "--id", help="Promote a single candidate_id (default: all eligible)."
+    ),
+    al_root: Path | None = typer.Option(None, "--al-root"),
+    allow_no_epw: bool = typer.Option(
+        False, "--allow-no-epw", help="Allow promotion without electron_phonon result."
+    ),
+) -> None:
+    """Explicitly promote clean campaign evaluations into the training set (AC13)."""
+    from siscforge.store import EvaluationStore
+
+    train_root, _ = _default_al_roots(store_dir, al_root)
+    tstore = TrainingSetStore(train_root)
+    estore = EvaluationStore(store_dir)
+    evaluations = estore.load_evaluations(ranked=False)
+    if not evaluations:
+        evaluations = estore.load_evaluations(ranked=True)
+    if candidate_id:
+        evaluations = [
+            e for e in evaluations if e.candidate.candidate_id == candidate_id
+        ]
+        if not evaluations:
+            raise typer.BadParameter(f"No evaluation for candidate_id={candidate_id}")
+
+    promoted = 0
+    refused = 0
+    for ev in evaluations:
+        try:
+            tstore.promote(
+                ev,
+                campaign_store=str(store_dir),
+                require_epw=not allow_no_epw,
+            )
+            promoted += 1
+            console.print(
+                f"[green]promoted[/green] {ev.candidate.formula} "
+                f"({ev.candidate.candidate_id[:8]}…)"
+            )
+        except PromotionError as exc:
+            refused += 1
+            console.print(
+                f"[yellow]refused[/yellow] {ev.candidate.formula}: {exc}"
+            )
+    console.print(f"promoted={promoted} refused={refused} total_labels={tstore.summary()['n_examples']}")
+
+
+@app.command("al-train")
+def al_train_cmd(
+    al_root: Path | None = typer.Option(None, "--al-root"),
+    notes: str = typer.Option("", "--notes", help="Snapshot notes."),
+) -> None:
+    """Snapshot the training set and run a lightweight retrain (AC17-safe)."""
+    train_root, model_root = _default_al_roots(None, al_root)
+    tstore = TrainingSetStore(train_root)
+    registry = SurrogateRegistry(model_root)
+    result = retrain_from_store(tstore, registry, snapshot_notes=notes)
+    if not result.success:
+        console.print(f"[red]retrain refused[/red]: {result.refused_reason}")
+        if result.previous_version:
+            console.print(f"kept previous model: {result.previous_version}")
+        raise typer.Exit(code=1)
+    meta = result.metadata
+    assert meta is not None
+    console.print(
+        f"[green]installed[/green] {meta.model_version}  "
+        f"labels={meta.training_set_size}  bootstrap={meta.bootstrap}  "
+        f"hash={meta.training_set_hash}"
+    )
+
+
+@app.command("al-audit")
+def al_audit_cmd(
+    al_root: Path | None = typer.Option(None, "--al-root"),
+) -> None:
+    """List every training example with origin and quality flags."""
+    train_root, _ = _default_al_roots(None, al_root)
+    tstore = TrainingSetStore(train_root)
+    rows = tstore.audit()
+    table = Table(title=f"Training set ({len(rows)} examples)")
+    for col in ("formula", "source", "quality_tag", "tc_K", "lambda_total", "literature_ref"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(
+            str(r.get("formula")),
+            str(r.get("source")),
+            str(r.get("quality_tag")),
+            "" if r.get("tc_K") is None else f"{r['tc_K']:.2f}",
+            "" if r.get("lambda_total") is None else f"{r['lambda_total']:.3f}",
+            str(r.get("literature_ref") or ""),
+        )
+    console.print(table)
+
 
 
 def run() -> None:

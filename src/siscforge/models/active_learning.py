@@ -84,28 +84,42 @@ class TrainingExample(BaseModel):
     formula: str
     material_family: str = "other"
     source: Literal["project", "literature", "golden"] = "project"
+    """Origin of the label."""
+
     quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
     status: str = "ok"
+    """Evaluation status at promotion time."""
+
+    # Labels (EPW / literature)
     lambda_total: float | None = None
     omega_log: float | None = None
     tc_K: float | None = None
     tc_source: str | None = None
+    """e.g. epw_eliashberg, epw_allen_dynes, literature."""
+
     energy_above_hull: float | None = None
     si_feasibility_total: float | None = None
     quality_flags: list[str] = Field(default_factory=list)
+
+    # Structure / context for domain awareness
     in_plane_strain: float | None = None
     composition: dict[str, float] = Field(default_factory=dict)
     structure_cif: str | None = None
+
+    # Provenance
     campaign_store: str | None = None
     literature_ref: str | None = None
     literature_notes: str = ""
     promoted_at: datetime = Field(default_factory=_utcnow)
     quality_snapshot: dict[str, Any] = Field(default_factory=dict)
+    """Frozen quality/trust fields at promotion time."""
+
     notes: str = ""
 
     @field_validator("quality_tag")
     @classmethod
     def _reject_mock_tag(cls, v: str) -> str:
+        # Soft check at model level; hard refusal is in the promotion gate.
         return v
 
 
@@ -114,15 +128,24 @@ class SurrogateModelMetadata(BaseModel):
 
     model_version: str
     method: str = "family_heuristic"
+    """e.g. family_heuristic, ridge_on_labels, alignn_head."""
+
     training_set_size: int = 0
     training_set_hash: str = ""
+    """Hash of the immutable training-set snapshot used to build this model."""
+
     created_at: datetime = Field(default_factory=_utcnow)
     bootstrap: bool = True
+    """True while label count / uncertainty still indicate bootstrap regime."""
+
     mean_uncertainty: float | None = None
     calibration_summary: dict[str, Any] = Field(default_factory=dict)
     parent_version: str | None = None
+    """Previous model version this was trained from (rollback chain)."""
+
     notes: str = ""
     weights: dict[str, float] = Field(default_factory=dict)
+    """Acquisition or model hyper-parameters recorded with the version."""
 
 
 class PrioritizationRecord(BaseModel):
@@ -141,6 +164,8 @@ class PrioritizationRecord(BaseModel):
     selected_ids: list[str] = Field(default_factory=list)
     deferred_ids: list[str] = Field(default_factory=list)
     ranked_scores: list[dict[str, Any]] = Field(default_factory=list)
+    """Compact list of {candidate_id, score, selected} for audit."""
+
     notes: str = ""
 
 
