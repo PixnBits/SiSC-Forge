@@ -1,8 +1,17 @@
 # SiSC-Forge
 ## Product Requirements Document
 
-**Version 0.3 – Workstation production path**  
-*(Extends v0.2 with incident-driven requirements from real Nb–Ti–N desktop campaigns: trust layer, resume/checkpoint, EPW coarse-k + Phase B shells, phonon-first stable_only, accurate phonon failure labels, FFT/symmetry retry, Docker QE≥7.2.)*
+**Version 0.3.1 – Active-learning flywheel & bootstrap**  
+*(Extends v0.3 with explicit intermediate LN₂+ target, interleaved active-learning bootstrap, seed-set guidance, and operator-experience requirements for the surrogate flywheel. See also `docs/design/active-learning-flywheel.md`.)*
+
+### Changelog (v0.3 → v0.3.1)
+
+| Theme | What was added |
+|-------|----------------|
+| Vision / Goals | Intermediate success criterion (Si-compatible candidates with predicted Tc ≳ 40–80 K); interleaved AL loop from small seed sets |
+| Metrics | First useful prioritization model after ≤150 high-quality labels; workstation cadence of short cycles |
+| P1 | Seed-set management, literature ingestion, explicit promotion, bootstrap-mode observability |
+| References | Design note `docs/design/active-learning-flywheel.md` |
 
 ### Changelog (v0.2 → v0.3)
 
@@ -24,20 +33,25 @@ SiSC-Forge is a modular, open-source, high-throughput computational discovery pl
 
 The software is designed to be fully productive on a single high-end workstation for method development and small campaigns, and ready to scale the moment large-scale compute becomes available.
 
+**Near-term scientific target**  
+Identify and rank silicon-compatible candidates with predicted Tc ≳ 40–80 K (above liquid-nitrogen temperature) that survive a realistic process window. Ambient-pressure room-temperature operation remains the long-term aspiration; it is not a near-term deliverable or success criterion.
+
 **Problem Statement**  
-Conventional superconducting electronics remain locked to deep cryogenic temperatures because the best industrially mature silicon-compatible superconductors (Nb, NbN, NbTiN) have \(T_c \leq 16\,\mathrm{K}\). Higher-\(T_c\) families (MgB₂ ≈ 39 K, infinite-layer nickelates, cuprates) exist but lack mature, reproducible integration pathways onto silicon that respect lattice mismatch, thermal budgets, oxygen/nitrogen chemistry, interdiffusion, and modern foundry constraints. No existing high-throughput platform simultaneously optimizes predicted \(T_c\) (phonon-mediated or unconventional) *and* quantitative silicon-integration feasibility while supporting active learning and a clear path to device-relevant metrics. SiSC-Forge closes this gap.
+Conventional superconducting electronics remain locked to deep cryogenic temperatures because the best industrially mature silicon-compatible superconductors (Nb, NbN, NbTiN) have Tc ≤ 16 K. Higher-Tc families (MgB₂ ≈ 39 K, infinite-layer nickelates, cuprates) exist but lack mature, reproducible integration pathways onto silicon that respect lattice mismatch, thermal budgets, oxygen/nitrogen chemistry, interdiffusion, and modern foundry constraints. No existing high-throughput platform simultaneously optimizes predicted Tc (phonon-mediated or unconventional) *and* quantitative silicon-integration feasibility while supporting active learning and a clear path to device-relevant metrics. SiSC-Forge closes this gap.
 
 ## 2. Goals & Non-Goals
 
 **Goals**
 - Systematically search the five priority material families with dual conventional (Eliashberg) and unconventional (DFT+U / DMFT + pairing susceptibility) pathways.
-- Deliver quantitative \(T_c\) predictions (or reliable proxies) together with a multi-objective Silicon Feasibility Score (0–100).
-- Support continuous active-learning loops that improve graph-neural-network surrogates from new high-fidelity data.
+- Deliver quantitative Tc predictions (or reliable proxies) together with a multi-objective Silicon Feasibility Score (0–100).
+- Support continuous active-learning loops that improve graph-neural-network surrogates from new high-fidelity data, **starting from a small, diverse seed set** (literature + goldens + early project EPW results).
+- Interleaved cycle: prioritize → calculate (screening or production quality) → promote clean labels → retrain/update surrogate → re-prioritize. Full batch collection of hundreds of labels is **not** a prerequisite for useful prioritization.
 - Export synthesis-relevant metadata (thermodynamic stability, thermal budgets, preferred buffer stacks, oxygen/nitrogen windows, lattice-mismatch data).
-- Provide a clear, extensible path to simple Josephson-junction device metrics (critical current, \(I_c R_n\), gap, switching energy) in later versions.
+- Provide a clear, extensible path to simple Josephson-junction device metrics (critical current, Ic Rn, gap, switching energy) in later versions.
 - Run productively on a single high-end workstation for development and validation; scale transparently to institutional clusters and cloud HPC with the same codebase and campaign YAML.
 - Maintain a fully functional open-source primary path (Quantum ESPRESSO + EPW + TRIQS + pymatgen + jobflow + ALIGNN/MatGL-style models). VASP is optional and feature-flagged.
 - **Workstation production path (must):** support multi-day DFPT and multi-candidate maps with resume, mid-step checkpoints, honest failure classification, EPW-only remediation after finished DFPT, phonon-first stability gating, and result-quality trust so pathological screening numbers do not dominate ranking.
+- **Active-learning operator experience (must for the flywheel):** observable surrogate provenance, explicit promotion into the training set, bootstrap-mode messaging, and the failure-mode behaviours described in `docs/design/active-learning-flywheel.md`.
 
 **Non-Goals**
 - Full device-level Josephson-junction circuit simulation or SPICE modeling in v0.1–v1.0 (simple estimates only; full circuit simulation is roadmap).
@@ -46,7 +60,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Primary support for non-silicon substrates in v1.0.
 - Guaranteed discovery of room-temperature superconductors.
 - Production-grade interactive GUI in early versions (CLI + Jupyter first).
-- Guaranteed quantitative absolute \(T_c\) accuracy for strongly correlated materials; the platform provides ranking, relative trends, and documented uncertainties.
+- Guaranteed quantitative absolute Tc accuracy for strongly correlated materials; the platform provides ranking, relative trends, and documented uncertainties.
 - **Guaranteed EPW success** on every strained supercell; auto-raised coarse k and `search_shells` do **not** guarantee physical λ/Tc.
 - **Automated material-specific Wannier projections** (production hand-tuning remains later).
 - **Treating coarse q=2³ phonon maps as production dynamical-stability proof** (maps are a gate only).
@@ -63,18 +77,23 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 ## 4. Success Metrics
 
 **Scientific / Discovery**
-- Recover literature \(T_c\) (or accepted proxy) for reference systems within documented tolerances: NbN and MgB₂ within 15–20 % under production-quality settings; qualitative recovery of metallicity and low-\(T_c\) scale for heavily B-doped Si; correct orbital occupancy and leading pairing tendency for infinite-layer NdNiO₂ under standard \(U,J\).
+- Recover literature Tc (or accepted proxy) for reference systems within documented tolerances: NbN and MgB₂ within 15–20 % under production-quality settings; qualitative recovery of metallicity and low-Tc scale for heavily B-doped Si; correct orbital occupancy and leading pairing tendency for infinite-layer NdNiO₂ under standard U, J.
 - Produce ranked candidate lists for nitride alloy + strain campaigns in which known experimentally successful films appear in the top 15 % by composite score.
 - Demonstrate that the Silicon Feasibility Score correlates qualitatively with published growth success rates.
 - Pathological screening EPW results (inflated λ/Tc with imaginary modes or bad Wannier) **must not dominate ranking** without quality flags / penalties (“do not cite” semantics).
 - (Later) Simple Josephson metrics for top candidates are consistent with order-of-magnitude experimental values where available.
+
+**Active-learning / Surrogate**
+- A first usable λ/Tc (or performance) prioritization surrogate exists after ≤150 high-quality project + literature labels and demonstrably improves shortlist quality over pure heuristics.
+- Active-learning cycles of 5–15 new EPW evaluations can be completed and folded back on a workstation cadence of weeks, not years.
+- Ranking continues to respect the trust layer and Silicon Feasibility Score; high predicted Tc alone never overrides poor process compatibility.
 
 **Software / Operational**
 - End-to-end nitride campaign (50–200 candidates) completes on a 16–32-core workstation with real Quantum ESPRESSO phonon calculations and produces a ranked list + synthesis-metadata export.
 - Multi-candidate and multi-day QE jobs **resume** on re-launch of the same campaign command for the common cases (finished candidates skipped; mid-step DFPT/EPW recoverable per Technical Specs).
 - Remediable EPW failures after finished DFPT (`kmesh_get_bvector`, stale NSCF after nkc raise) are **classified correctly**, retried **EPW-only** (phonon/dyn sacred), and do not require full DFPT redo.
 - Remediable phonon **setup** failures (`phq_setup` / FFT–symmetry, d_matrix) are classified as phonon (never as EPW), retried once with nosym/noinv when enabled, and are **not** reported as dynamical instability.
-- ML pre-filter reduces the number of expensive DFPT/EPW calculations by ≥10× while retaining known high-\(T_c\) examples in the top decile (when surrogates are trained).
+- ML pre-filter reduces the number of expensive DFPT/EPW calculations by ≥10× while retaining known high-Tc examples in the top decile (when surrogates are trained).
 - A new Calculator plugin can be added and exercised in a campaign with <1–2 days of developer effort.
 - 100 % of v0.1 features pass unit + integration tests; a golden-system regression suite exists.
 - Reproducible environment: Docker (or equivalent) image with QE ≥ 7.2 + EPW + SSSP + package install for a second machine.
@@ -85,6 +104,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Exported synthesis metadata judged “actionable” by at least one experimental collaborator.
 - CLI primary failure reasons **match the failing step** (phonon vs EPW vs SCF) for known fingerprints.
 - Progress heartbeats and walltime expectation bands are available for long QE steps so multi-hour DFPT is not silent.
+- Surrogate provenance (model version, training-set size, acquisition weights) is visible in status and synthesis cards.
 
 ## 5. High-Level Features (Prioritized)
 
@@ -106,9 +126,12 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - **Docker image** bundling QE ≥ 7.2 + EPW + SSSP + package.
 
 **P1 – Core for First Production Campaigns**
-- Automated EPW + isotropic Eliashberg \(T_c\) pipeline (base shipped; denser production grids + hand projs remain operator-driven).
-- Multi-task or dedicated GNN surrogates for \(\lambda\), \(\omega_{\log}\), and \(T_c\) proxy with calibrated uncertainty.
-- Active-learning loop with uncertainty-driven prioritization (**prioritization shipped**; full retrain later).
+- Automated EPW + isotropic Eliashberg Tc pipeline (base shipped; denser production grids + hand projs remain operator-driven).
+- Multi-task or dedicated GNN (or simpler) surrogates for λ, ω_log, and Tc proxy with calibrated uncertainty.
+- Seed-set management + literature ingestion path.
+- Explicit promotion of clean results into the training set (never silent).
+- Active-learning prioritization (already shipped) **plus** a lightweight retrain/update path that can be triggered after each shortlist cycle.
+- Bootstrap-mode observability and the operator-experience requirements in `docs/design/active-learning-flywheel.md`.
 - Improved buffer-layer recommendation engine and thermal-budget scoring (v0.2 scorer + buffers shipped; multi-layer stacks later).
 - MgB₂ and simple boride support.
 - Screening-quality vs production-quality calculation tags.
@@ -121,7 +144,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - **Material-specific Wannier projections** automation beyond `proj=random` screening template.
 
 **P3 – Device-Aware Ranking & Later**
-- Simple Josephson-junction device modeling (critical current \(I_c\), \(I_c R_n\), gap \(\Delta\), switching energy, basic BdG/Usadel estimates).
+- Simple Josephson-junction device modeling (critical current Ic, Ic Rn, gap Δ, switching energy, basic BdG/Usadel estimates).
 - Anisotropic Eliashberg / SCDFT.
 - Proximity-effect modeling refinements.
 - Generative structure models, web dashboard, community data contribution.
@@ -132,7 +155,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 As a computational materials scientist, I want to define a single YAML campaign that explores Nb₁₋ₓTiₓN compositions under epitaxial strain on Si(001), so that the system enumerates cells, filters by ML stability and Si-feasibility, runs phonon (and later EPW) calculations on the most promising candidates, and returns a ranked list with recommended buffers and synthesis metadata.
 
 **US2 – Unconventional Superconductivity Specialist**  
-As a theorist focused on nickelates, I want the same ranking framework to accept either Eliashberg \(T_c\) or DMFT leading pairing eigenvalues as the performance metric, so that conventional and unconventional candidates can be compared on equal footing with a consistent Silicon Feasibility Score.
+As a theorist focused on nickelates, I want the same ranking framework to accept either Eliashberg Tc or DMFT leading pairing eigenvalues as the performance metric, so that conventional and unconventional candidates can be compared on equal footing with a consistent Silicon Feasibility Score.
 
 **US3 – Process / Device Engineer**  
 As a superconducting-electronics process engineer, I want every high-ranking candidate accompanied by a clear synthesis metadata card (max thermal budget, preferred buffer stack, lattice mismatch, oxygen/nitrogen window, membrane-transfer notes), so that I can assess foundry compatibility immediately.
@@ -151,6 +174,9 @@ As an operator mapping composition × strain, I want a broad **phonon-only** cam
 
 **US8 – Failure-reason trust**  
 As a user of 40+ candidate maps, I want CLI one-liners and evaluation notes to name the real failure class (`phq_setup` FFT/symmetry, d_matrix, EPW kmesh_get_bvector, frozen window)—never an EPW label on a phonon-only job—so that I can decide retry vs skip without opening multi-MB logs.
+
+**US9 – Active-learning operator**  
+As a desktop operator running the surrogate flywheel, I want every shortlist and ranking to record which model version produced it, how many labels it was trained on, and whether the system is still in bootstrap mode, so that I never treat an under-trained model as authoritative. I also want explicit promotion of clean EPW results into the training set and clear refusal when a retrain would pollute the model.
 
 **Key v0.1 / desktop workflows**
 
@@ -171,6 +197,13 @@ As a user of 40+ candidate maps, I want CLI one-liners and evaluation notes to n
 2. EPW fails `kmesh_get_bvector` → Phase A denser nkc (re-NSCF); if exhausted → Phase B `search_shells`.  
 3. User is told when ladders are exhausted; phonon remains usable for ranking/gating.  
 4. Terminal state **phonon-complete / EPW-blocked** is valid and actionable.
+
+*D. Active-learning cycle (target)*  
+1. Seed or update training set (goldens + promoted labels).  
+2. Train / fine-tune surrogate (or fall back to heuristic).  
+3. Acquisition → shortlist.  
+4. Phonon-first → EPW on shortlist.  
+5. Promote clean results; retrain; repeat.
 
 ## 7. Constraints & Assumptions
 
@@ -197,11 +230,12 @@ As a user of 40+ candidate maps, I want CLI one-liners and evaluation notes to n
 - Imaginary phonons / dynamical instability under epitaxial strain → Automatic detection, soft-mode flags, trust-layer penalties; phonon-first maps + `stable_only` shortlist before expensive EPW; denser q later for production stability claims.
 - **Pathological screening EPW λ/Tc** (often with soft/imaginary modes or random Wannier) → Result-quality flags (`imaginary_modes`, `high_lambda`, …), ranking penalties, explicit “do not cite Tc until trust flags improve” in refine docs and cards.
 - Poor Wannierization / `kmesh_get_bvector` after multi-day DFPT → Pre-DFPT coarse-k minima by tier; EPW-only nkc ladder; Phase B `search_shells`; never redo DFPT for this class; material-specific projections **later**.
-- Extreme sensitivity of nickelates/cuprates to \(U, J\), double-counting, and oxygen stoichiometry → Treat \(U,J\) as campaign parameters; oxygen-vacancy enumeration as first-class later; clear process-window metadata.
+- Extreme sensitivity of nickelates/cuprates to U, J, double-counting, and oxygen stoichiometry → Treat U,J as campaign parameters; oxygen-vacancy enumeration as first-class later; clear process-window metadata.
 - ML domain shift on highly strained or doped films → Continuous active learning with strain-augmented data; uncertainty quantification; human review of high-uncertainty high-ranking candidates.
 - Over-optimistic Si-feasibility scores → Transparent component breakdown; conservative defaults; versioned scoring rules; experimental collaborator re-weighting.
 - Josephson estimates are highly approximate → Clearly labeled as order-of-magnitude / ranking aids only; never presented as quantitative device design values in early versions.
 - Coarse q=2³ phonon maps mis-label stability → Document as **gate only**, not production dynamical-stability proof; denser DFPT for shortlisted cells.
+- Premature trust in under-trained surrogates → Bootstrap-mode messaging, higher exploration weight early, explicit provenance on every ranking.
 
 **Software / Engineering Risks**
 - High failure rate of expensive EPW/DMFT jobs → Robust error classification, quality tags, EPW-only auto-remediation, acquisition that can avoid known-failure regions.
@@ -213,12 +247,13 @@ As a user of 40+ candidate maps, I want CLI one-liners and evaluation notes to n
 - Database schema evolution → Versioned models; store raw files alongside structured data; file-based store acceptable on workstation.
 - Performance cliffs on HPC (I/O, queue latency) → Early containerization (Docker with QE≥7.2), staged scaling tests, local caching of pseudopotentials and models.
 - Scope creep → Explicit Non-Goals and hard Phase 0/1 exit criteria focused on materials ranking + workstation operability.
+- Training-set pollution or untraceable model versions → Explicit promotion gate, immutable training-set snapshots, surrogate provenance on every decision (see design note).
 
 ## 9. Future Roadmap
 
 - **v0.1 (Workstation Foundation)** — Structure gen (nitrides + B:Si), formation-energy surrogate, QE phonon, heuristic Si-score, ranking, store, CLI, dry-run. Exit: validated NbN phonon + small nitride campaign on workstation.
 - **v0.1+ / desktop production path (shipped alongside Phase 1)** — EPW + isotropic Tc, trust layer, resume/checkpoint, shortlist/refine, phonon-first + stable_only, EPW coarse-k + Phase B shells, phonon FFT/symmetry retry, Docker QE≥7.2, Si 45°/buffers.
-- **v0.5 (Conventional Production polish)** — Trained λ/Tc GNNs, full AL retrain, hand-tuned Wannier for production shortlists, denser automated grid policies with stronger validation.
+- **v0.5 (Conventional Production polish + AL bootstrap)** — Seed-set management, first trained λ/Tc surrogates, interleaved retrain cycles, bootstrap observability, hand-tuned Wannier for production shortlists, denser automated grid policies with stronger validation.
 - **v1.0 (Dual Pathway + Advanced Si)** — DMFT + pairing for nickelates, full interface/membrane modeling, multi-objective ranking, synthesis cards.
 - **v1.x+** — Simple Josephson device metrics, anisotropic/SCDFT, proximity refinements, generative models, web UI, community contributions.
 
@@ -228,10 +263,10 @@ As a user of 40+ candidate maps, I want CLI one-liners and evaluation notes to n
 |------|--------|
 | Material-specific Wannier projections | Still required for reliable production λ/Tc |
 | Guaranteed EPW success on all strained cells | Terminal phonon-complete / EPW-blocked is valid |
-| Full AL retrain on EPW labels | Prioritization exists; retrain later |
+| Full mature AL retrain on large EPW corpora | Prioritization + lightweight retrain first; mature loops later |
 | DMFT / Josephson | Phases 2–3+ |
 | Room-temperature SC discovery | Non-goal |
 
 ---
 
-*This PRD (v0.3) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document and the companion Technical Specifications. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28); this PRD states the requirements those slices satisfy.*
+*This PRD (v0.3.1) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document, the companion Technical Specifications, and the design note `docs/design/active-learning-flywheel.md`. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28); this PRD states the requirements those slices satisfy.*

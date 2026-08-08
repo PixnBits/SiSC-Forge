@@ -1,7 +1,7 @@
 # SiSC-Forge Development Roadmap
 
-**Version 0.3 – Practical Implementation Plan**  
-Aligned with [PRD v0.3](PRD/SiSC-Forge-PRD.md) and [Technical Specifications v0.4](specs/SiSC-Forge-Technical-Specifications.md).
+**Version 0.3.1 – Active-learning flywheel**  
+Aligned with [PRD v0.3.1](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.4.1](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
 
 Workstation production-path features (resume, trust layer, EPW coarse-k + Phase B,
 phonon-first stable_only, phonon FFT/symmetry retry, Docker QE≥7.2) are **required
@@ -19,6 +19,7 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 - **Open-source primary path**: Quantum ESPRESSO + EPW + TRIQS + pymatgen + jobflow + ALIGNN/MatGL remain the default; VASP is optional.
 - **Spec-driven**: Every deliverable maps to an acceptance criterion in the Technical Specifications.
 - **Fail fast on known systems**: NbN, MgB₂ and (later) NdNiO₂ are the golden references used at every stage.
+- **Interleaved active learning**: prioritize → calculate → promote → retrain in short cycles; do not wait for a large static label set before the first useful surrogate.
 
 ---
 
@@ -68,13 +69,26 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 ### Key Deliverables
 - Full EPW integration (coarse → fine grids) + isotropic Eliashberg Tc solver.
 - `ElectronPhononResult` fully populated (λ, ω_log, α²F, Tc_allen_dynes, Tc_eliashberg, quality_tag).
-- Multi-task or dedicated GNN heads for λ / ω_log / Tc proxy with uncertainty (**stub prioritization shipped; trained GNN later**).
-- Active-learning loop (uncertainty sampling or simple UCB) that prioritizes expensive jobs (**retrain later**).
+- Multi-task or dedicated GNN heads for λ / ω_log / Tc proxy with uncertainty (**stub prioritization shipped; trained GNN + bootstrap later**).
+- Active-learning loop (uncertainty sampling or simple UCB) that prioritizes expensive jobs (**prioritization shipped; lightweight retrain + seed management in residual / Phase 1.5**).
 - Screening vs production quality tags and automatic fallbacks for Wannierization failures.
 - **Desktop operability (must):** campaign resume + mid-step QE checkpoints; EPW nproc/npool; coarse-k preflight + EPW-only remediation (nkc ladder + search_shells Phase B); trust/result_quality layer; phonon-first maps + `stable_only` shortlist; phonon-specific diagnose + FFT/symmetry nosym retry; refine-from-store; Docker QE≥7.2.
 - MgB₂ prototype support and basic boride enumeration.
 - Improved buffer-layer suggestions and thermal-budget scoring inside the Silicon Integration module (45°/buffers shipped).
 - Campaign YAML fully operational for nitride and MgB₂ families.
+
+### Phase 1 residual / Phase 1.5 — AL Bootstrap (workstation cadence)
+**Goal**: Make the interleaved flywheel real on desktop hardware.
+
+- Seed-set management (goldens + literature ingestion + early project labels).
+- Explicit promotion gate into the training set.
+- First trained or fine-tuned λ/Tc (or performance) surrogate with uncertainty and model metadata.
+- Acquisition function that records model version, training-set size, and weights with every decision.
+- Lightweight retrain/update trigger after shortlist cycles.
+- Bootstrap-mode observability and the operator-experience requirements in `docs/design/active-learning-flywheel.md`.
+- Dry-run path that exercises the full prioritize → shortlist → mock-calculate → promote → retrain loop.
+
+**Workstation cadence note**: aim for a steady trickle of a few high-quality labels per week. Most candidates die at the phonon-first gate; screening-quality labels are acceptable early; production-quality is reserved for shortlist winners. A first useful prioritization model should appear after a few months of steady work, not after serial collection of 100+ full-production EPW results.
 
 ### Dependencies
 - Phase 0 complete (especially data models, jobflow skeleton, ranking, Si-score).
@@ -89,14 +103,16 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 6. MgB₂ structure generation and golden-system test.
 7. Buffer library expansion and tighter Si-feasibility integration.
 8. End-to-end nitride + MgB₂ campaigns with real EPW on shortlists.
+9. (Residual) Seed management, promotion, first trained surrogate, bootstrap UX.
 
 ### What Can Be Validated Without Large-Scale Compute
 - Bulk NbN and MgB₂ recover literature Tc (within 15–20 %) under production settings on a workstation (small cells).
 - A shortlist of 5–10 strained nitride candidates completes full EPW + Eliashberg on a high-end workstation or small departmental cluster.
 - Active-learning loop demonstrably improves surrogate predictions on held-out data when new DFT/EPW results are injected.
 - Quality tags correctly distinguish screening vs production runs and surface failures.
+- Full mock AL cycle (prioritize → shortlist → promote → retrain) is green.
 
-**Exit criteria**: Automated recovery of MgB₂ Tc; AL loop working; 50–200 candidate nitride campaign can be driven with intelligent prioritization on modest resources.
+**Exit criteria**: Automated recovery of MgB₂ Tc; AL prioritization working; 50–200 candidate nitride campaign can be driven with intelligent prioritization on modest resources; AL bootstrap milestone (seed + first surrogate + one complete cycle) demonstrated.
 
 ---
 
@@ -148,7 +164,7 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 - Basic bilayer nickelate and early cuprate prototypes (optional at this stage).
 
 ### Dependencies
-- Phase 1 (Calculator registry, ranking, AL skeleton) and Phase 2 (Si-feasibility mature).
+- Phase 1 (Calculator registry, ranking, AL skeleton + bootstrap) and Phase 2 (Si-feasibility mature).
 - External: Wannier90, TRIQS, solid_dmft, CTHYB solver, additional training data for correlated systems.
 
 ### Suggested Order of Module Implementation
@@ -214,6 +230,7 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 - Container images (Docker/Apptainer) for QE+EPW and TRIQS.
 - CI that runs unit + fast integration tests on every PR; optional self-hosted runner with QE for scientific regressions.
 - Community contribution guidelines once Phase 1 is solid.
+- Maintenance of the active-learning design note and its acceptance criteria as the flywheel matures.
 
 ---
 
@@ -222,7 +239,8 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 | Phase | Focus                              | Typical Duration | Compute Need          |
 |-------|------------------------------------|------------------|-----------------------|
 | 0     | Foundation & local validation      | 4–8 weeks        | Workstation only      |
-| 1     | Conventional EPW + AL              | 6–10 weeks       | Workstation + small cluster |
+| 1     | Conventional EPW + AL prioritization | 6–10 weeks     | Workstation + small cluster |
+| 1.5   | AL bootstrap (seed, first surrogate, interleaved cycles) | ongoing / parallel | Workstation |
 | 2     | Silicon Integration + ranking      | 3–6 weeks        | Workstation           |
 | 3     | Unconventional (DMFT) + AL maturity| 3–4 months       | Small → medium HPC    |
 | 4     | Josephson device metrics           | 2–4 months       | Mostly shortlist / analytic |
@@ -231,4 +249,4 @@ Phases 0–2 can (and should) be completed and scientifically validated before a
 
 ---
 
-*This roadmap is the operational companion to the PRD and Technical Specifications. When in doubt, the acceptance criteria in the Technical Specifications take precedence.*
+*This roadmap is the operational companion to the PRD, Technical Specifications, and `docs/design/active-learning-flywheel.md`. When in doubt, the acceptance criteria in the Technical Specifications take precedence.*
