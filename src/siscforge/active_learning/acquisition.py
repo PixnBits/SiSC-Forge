@@ -47,6 +47,10 @@ class AcquisitionRecord(BaseModel):
     si_feasibility: float | None = None
     energy_above_hull_proxy: float | None = None
     strategy: str = "uncertainty_si_tc"
+    model_version: str = "heuristic"
+    """Surrogate model version used for this score (AC14)."""
+    training_set_size: int = 0
+    bootstrap: bool = True
     notes: str = ""
 
 
@@ -63,11 +67,19 @@ class AcquisitionPlan:
 
     strategy: str = "uncertainty_si_tc"
     enabled: bool = False
+    model_version: str = "heuristic"
+    training_set_size: int = 0
+    bootstrap: bool = True
+    prioritization_record_id: str | None = None
 
     def summary(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
             "strategy": self.strategy,
+            "model_version": self.model_version,
+            "training_set_size": self.training_set_size,
+            "bootstrap": self.bootstrap,
+            "prioritization_record_id": self.prioritization_record_id,
             "n_selected": len(self.selected),
             "n_deferred": len(self.deferred),
             "ranked": [r.model_dump(mode="json") for r in self.ranked],
@@ -132,6 +144,9 @@ def prioritize_candidates(
     config: ActiveLearningConfig | None = None,
     si_scores: dict[str, SiFeasibilityScore] | None = None,
     predictions: dict[str, TcLambdaPrediction] | None = None,
+    model_version: str = "heuristic",
+    training_set_size: int = 0,
+    bootstrap: bool = True,
 ) -> AcquisitionPlan:
     """Order *candidates* by acquisition score and split top-k vs deferred.
 
@@ -143,7 +158,13 @@ def prioritize_candidates(
         candidate_id → TcLambdaPrediction (from surrogate; if missing, predict).
     """
     cfg = config or ActiveLearningConfig()
-    plan = AcquisitionPlan(strategy=cfg.strategy, enabled=cfg.enabled)
+    plan = AcquisitionPlan(
+        strategy=cfg.strategy,
+        enabled=cfg.enabled,
+        model_version=model_version,
+        training_set_size=training_set_size,
+        bootstrap=bootstrap,
+    )
     si_scores = si_scores or {}
     predictions = dict(predictions or {})
 
@@ -177,6 +198,9 @@ def prioritize_candidates(
                     si_feasibility=si_tot,
                     energy_above_hull_proxy=cand.energy_above_hull_proxy,
                     strategy=cfg.strategy,
+                    model_version=model_version,
+                    training_set_size=training_set_size,
+                    bootstrap=bootstrap,
                     notes="AL disabled — all candidates selected for calculator",
                 )
             )
@@ -214,6 +238,9 @@ def prioritize_candidates(
                 si_feasibility=si_tot,
                 energy_above_hull_proxy=cand.energy_above_hull_proxy,
                 strategy=cfg.strategy,
+                model_version=model_version,
+                training_set_size=training_set_size,
+                bootstrap=bootstrap,
             )
         )
 
