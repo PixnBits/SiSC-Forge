@@ -1,8 +1,18 @@
 # SiSC-Forge
 ## Technical Specifications
 
-**Version 0.4 – Workstation production path**  
-*(Extends v0.3 Josephson contracts with DFT/EPW/phonon operability, trust layer, remediation, CLI, and acceptance criteria learned from real desktop campaigns. Josephson module remains Phase 3+ and inert until enabled.)*
+**Version 0.4.1 – Active-learning flywheel**  
+*(Extends v0.4 with Surrogate Training & Active Learning Manager contracts, seed/promotion rules, bootstrap observability, and new acceptance criteria. See `docs/design/active-learning-flywheel.md`. Josephson module remains Phase 3+ and inert until enabled.)*
+
+### Changelog (v0.4 → v0.4.1)
+
+| Area | Added / tightened |
+|------|-------------------|
+| §2.2 ML Surrogate Layer | Seed set, promotion gate, model metadata, bootstrap mode, acquisition provenance |
+| §2.7 Active Learning | Lightweight retrain trigger, training-set hygiene, failure modes |
+| §3 Models | SurrogatePrediction, TrainingExample, PrioritisationRecord (notes) |
+| §9 Acceptance Criteria | AC13–AC18 for AL bootstrap & operator experience |
+| References | Design note `docs/design/active-learning-flywheel.md` |
 
 ### Changelog (v0.3 → v0.4)
 
@@ -32,7 +42,7 @@ User / Config Layer (YAML campaigns, CLI, Jupyter)
 Structure Generation & Enumeration
         │ StructureCandidate[]
 ML Surrogate Layer (ALIGNN / MatGL + custom heads / stubs)
-        │ Filtered + scored candidates
+        │ Filtered + scored candidates + SurrogatePrediction
 Workflow Engine & Active Learning Manager (jobflow + sequential QE path)
         │
    ┌────┴────┐
@@ -44,11 +54,11 @@ DFT/DFPT/EPW  DMFT / Pairing
         │ CalculationResult hierarchy
 Silicon Integration & Interface Module
         │
-Candidate Ranking & Reporting (+ result_quality)
+Candidate Ranking & Reporting (+ result_quality + surrogate provenance)
         │
 Josephson Junction Device Modeling Module  ← §2.8 (Phase 3+)
         │
-Provenance Store + Active-Learning Feedback
+Provenance Store + Active-Learning Feedback (promotion → training set → retrain)
 ```
 
 **Design principles**
@@ -58,12 +68,16 @@ Provenance Store + Active-Learning Feedback
 - Extensible Calculator registry.
 - Identical code path from workstation to HPC.
 - **Finished DFPT is sacred** relative to remediable EPW electronic failures.
+- **Training-set hygiene is sacred** relative to silent promotion of low-quality or mock labels.
 
 **v0.1 Must-Have (foundation)**  
 Structure generation → formation-energy filter → QE-SCF + DFPT phonon → heuristic Si-score → store + ranking + dry-run.
 
 **Workstation production path (required alongside Phase 1 EPW)**  
 Resume / mid-step checkpoint · EPW topology + coarse-k safety · EPW-only remediation · trust layer · phonon-first + stable_only · phonon diagnose/retry · Docker QE≥7.2.
+
+**Active-learning bootstrap (Phase 1 residual / 1.5)**  
+Seed-set management · explicit promotion · first trained surrogate with uncertainty · acquisition provenance · bootstrap-mode observability · full mock cycle.
 
 ---
 
@@ -74,9 +88,38 @@ P0 for TM nitrides (binary + ordered ternary) and B-doped Si with epitaxial stra
 **Shipped:** cube-on-cube and **45°** epitaxial matching helpers; strain series in campaign YAML.
 
 ### 2.2 ML Surrogate Layer
-P0 = formation energy + uncertainty (heuristic stub acceptable).  
-P1 = λ / ω_log / Tc proxies (family-heuristic stub shipped; trained GNN later).  
-Active-learning **prioritization** (top-k expensive path) is in scope; full retrain loop is later.
+
+**P0** = formation energy + uncertainty (heuristic stub acceptable; pre-trained GNN fine-tune preferred).  
+**P1** = λ / ω_log / Tc (or performance) proxies with calibrated uncertainty.  
+Family-heuristic stub is already shipped; trained models and the bootstrap contracts below are the next step.
+
+#### 2.2.1 Seed set & literature ingestion
+- A versioned SeedSet contains goldens (NbN family, MgB₂, hyperdoped-Si examples), clean literature EPW results, and early project labels.
+- Literature entries carry provenance (source, settings, notes).
+- Target size for a first useful prioritisation surrogate: roughly 50–150 high-quality labels (diversity over raw count).
+
+#### 2.2.2 Promotion gate
+- Only results whose `quality_tag` and trust-layer flags pass a configurable allow-list may become permanent TrainingExamples.
+- Promotion is an **explicit** step (CLI or API). Silent inclusion is forbidden.
+- Mock / dry-run labels must never enter a real training set.
+- Each training-set snapshot used for a model version is immutable and hashed.
+
+#### 2.2.3 Model metadata & provenance
+Every surrogate version records:
+- training-set size and composition hash,
+- timestamp,
+- uncertainty calibration summary,
+- whether it is still in bootstrap regime.
+
+Every prioritisation / shortlist decision records the model version (or “heuristic”), acquisition weights, and a short provenance string suitable for CLI status and synthesis cards.
+
+#### 2.2.4 Bootstrap mode
+- Distinct operating regime (or continuous confidence score) while label count is low or average uncertainty remains high.
+- Default acquisition weights emphasise exploration.
+- CLI and cards must surface bootstrap status so operators do not treat early rankings as authoritative.
+
+#### 2.2.5 Acquisition function
+Configurable combination of predicted performance, model uncertainty, Silicon Feasibility Score, and optional diversity terms. Weights are YAML-configurable and stored with each decision.
 
 ### 2.3 DFT / DFPT / EPW Orchestration
 
@@ -168,6 +211,7 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 - **Phonon-aware ranking:**
   - `rank --stable-first` prefers dynamically stable phonons.
   - Setup failures are not “stable.”
+- Surrogate provenance (model version, training-set size, acquisition weights, bootstrap flag) appears in status and synthesis cards.
 - JosephsonMetrics optional secondary ranking when module enabled (Phase 3+).
 
 ### 2.7 Workflow Engine, CLI & Active Learning
@@ -183,8 +227,15 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 | `siscforge refine` | Denser EPW from store winners; separate `output_dir`; `quality_tag` production / workstation_dense grids |
 | `siscforge rank` | Table export; `--stable-first` |
 
-**Active learning**  
-Minimal prioritization (top-k expensive path) shipped; full retrain later.
+**Active learning (bootstrap contracts)**  
+- Minimal prioritisation (top-k expensive path) already shipped.
+- Lightweight retrain / update trigger after shortlist cycles (or explicit CLI).
+- Explicit promotion of clean results into the training set.
+- Training-set audit command.
+- Failure modes (retrain NaNs, over-confidence, empty shortlist, mode collapse, mock-data refusal) must be classified and reported with the same honesty as phonon vs EPW failures.
+- Full prioritise → shortlist → (mock) calculate → promote → retrain cycle must be exercisable in dry-run / mock mode.
+
+Human overrides (pin candidates, exclude subspaces, roll back model version, export training set) are first-class operations.
 
 ### 2.8 Josephson Junction Device Modeling Module  ← Phase 3+
 
@@ -240,6 +291,7 @@ Screening results may be present with **quality flags** that ranking must honor.
 | `status` | ok \| failed \| mock \| … |
 | `errors`, `notes` | **Primary failure reason first**; workdir; diagnose; retry log |
 | `result_quality` / flags | Trust layer (tier, flags, penalties) when present |
+| `surrogate_prediction` | Optional; λ / ω_log / Tc proxy + uncertainty + model version |
 | `josephson` | Optional; Phase 3+ |
 
 ### 3.4 Remediation attempt record (workdir sidecar)
@@ -274,6 +326,13 @@ NSCF mesh fingerprint sidecar (`siscforge_nscf_kmesh.json`) records requested co
 
 ### 3.5 JosephsonMetrics
 As in v0.3 (optional nested object; approximate / ranking only).
+
+### 3.6 Active-learning objects (notes for implementers)
+- `TrainingExample` — links a CandidateEvaluation (or literature record) that has been explicitly promoted, with quality snapshot.
+- `SurrogateModelMetadata` — version, training-set hash/size, timestamp, bootstrap flag, calibration summary.
+- `PrioritisationRecord` — model version, acquisition weights, shortlist, timestamp; attached to ranking/export.
+
+Exact field lists may evolve; the contracts above (immutable snapshots, explicit promotion, provenance on every decision) are mandatory.
 
 ---
 
@@ -358,6 +417,7 @@ josephson:
 
 - CandidateEvaluation JSON, CSV summary, Markdown synthesis cards, optional CIF/POSCAR.
 - Quality flags and primary failure reasons appear in notes/errors.
+- Surrogate provenance appears in status and cards.
 - Josephson section only when module enabled (labeled approximate).
 - File-based store is first-class on workstation; MongoDB optional.
 
@@ -384,6 +444,8 @@ josephson:
 - Failed/empty phonon → not dynamically stable; `stable_only` filter empty.
 - Trust layer penalties for high-λ + imag modes (existing tests).
 - Mock dry-run campaigns green; Docker verify script for image builds.
+- Full mock AL cycle (prioritise → shortlist → promote → retrain) is green.
+- Promotion of mock labels into a real training set is refused.
 
 **Golden / optional real QE**
 - NbN / MgB₂ screening EPW recovery under documented tolerances when binaries available.
@@ -406,6 +468,12 @@ josephson:
 | AC10 | Docker image provides QE≥7.2 + `epw.x` + SSSP + `siscforge` on PATH with verify suite | Yes |
 | AC11 | EPW may still fail after Phase A+B → terminal **phonon-complete / EPW-blocked** with actionable notes | Yes |
 | AC12 | Coarse q=2³ map is a **gate**, not production dynamical-stability certification | Yes (docs + ranking caveats) |
+| AC13 | Promotion of a result into the training set is an explicit step; mock / disallowed quality tags are refused | Yes |
+| AC14 | Every shortlist / ranking records surrogate model version (or heuristic), training-set size, and acquisition weights | Yes |
+| AC15 | Bootstrap / low-data regime is visible in CLI status and synthesis cards | Yes |
+| AC16 | Full prioritise → shortlist → mock-calculate → promote → retrain cycle succeeds in dry-run / mock mode | Yes |
+| AC17 | Retrain that produces NaNs or absurd metrics keeps the previous model and surfaces diagnostics | Yes |
+| AC18 | Attempt to train on mock data is hard-refused | Yes |
 
 ---
 
@@ -417,6 +485,7 @@ josephson:
 - Screening q=2³ phonon stability can false-positive/false-negative; denser DFPT required before citing dynamical stability.
 - Resume covers common cases; exotic partial files or external manual edits may still need operator intervention (documented in implementation-notes).
 - Room-temperature superconductor discovery is **not** promised.
+- Early surrogates are prioritisation aids, not quantitative predictors; bootstrap messaging exists precisely for this reason.
 
 ---
 
@@ -428,10 +497,13 @@ josephson:
 **Phase 1 (conventional EPW + desktop operability)** — EPW + isotropic Tc, quality tags, shortlist/refine, trust layer, resume/checkpoint, EPW parallel + coarse-k + Phase B, phonon-first + stable_only, phonon diagnose/retry, Docker.  
 **Exit**: golden NbN/MgB₂ path (mock always; real optional); desktop remediation ACs green; see `docs/phase1-exit.md`.
 
+**Phase 1 residual / 1.5 (AL bootstrap)** — Seed-set management, explicit promotion, first trained surrogate, acquisition provenance, bootstrap observability, full mock cycle.  
+**Exit**: AC13–AC18 green; one complete interleaved cycle demonstrated on workstation.
+
 **Phase 2** — DMFT + pairing, advanced Si integration (membranes/interfaces), multi-objective ranking, production Wannier automation.
 
 **Phase 3** — Josephson Tier-1 analytic estimates on shortlist; later Usadel/BdG.
 
 ---
 
-*This document (v0.4) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28). Josephson remains fully specified but inert until Phase 3. PRD v0.3 is the product authority; this file is the engineering contract.*
+*This document (v0.4.1) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28). Active-learning bootstrap contracts are specified here and detailed in `docs/design/active-learning-flywheel.md`. Josephson remains fully specified but inert until Phase 3. PRD v0.3.1 is the product authority; this file is the engineering contract.*
