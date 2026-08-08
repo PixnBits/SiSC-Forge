@@ -110,6 +110,14 @@ def _family_stats_baseline(
     Only exact family keys are used. Missing families fall back to the
     heuristic path (high uncertainty), not a silent ``other`` mean that
     could launder the wrong chemistry into rankings.
+
+    Label modes:
+
+    - λ and/or ω_log present → use those moments (fill missing from family base).
+    - Only ``tc_mean`` present → use family-base moments for structure, but set
+      ``tc_override`` so predicted Tc comes from the labels (not Allen–Dynes on
+      hardcoded λ/ω).
+    - Neither moments nor Tc → not a trained baseline (return None).
     """
     if not family_stats:
         return None
@@ -118,23 +126,33 @@ def _family_stats_baseline(
         return None
     lam = st.get("lambda_mean")
     wlog = st.get("omega_log_mean")
-    if lam is None and wlog is None and st.get("tc_mean") is None:
+    tc_mean = st.get("tc_mean")
+    has_moments = lam is not None or wlog is not None
+    if not has_moments and tc_mean is None:
         return None
-    # Fall back within family stats
+
+    base_lam, base_wlog, _base_unc = _FAMILY_BASE.get(family, _FAMILY_BASE["other"])
     if lam is None:
-        lam = _FAMILY_BASE.get(family, _FAMILY_BASE["other"])[0]
+        lam = base_lam
     if wlog is None:
-        wlog = _FAMILY_BASE.get(family, _FAMILY_BASE["other"])[1]
+        wlog = base_wlog
+
     n = float(st.get("n") or 1.0)
     tc_std = float(st.get("tc_std") or 0.0)
     # More labels → lower floor uncertainty; high within-family scatter → higher
     unc = max(0.12, min(0.85, 0.55 / (n**0.5) + min(0.25, tc_std / 40.0)))
-    feats = {
+    feats: dict[str, Any] = {
         "trained_family": family,
         "n_labels_family": n,
         "tc_std": tc_std,
         "source": "family_mean_fit",
     }
+    if not has_moments and tc_mean is not None:
+        # Tc-only labels: do not pretend hardcoded λ/ω produced Tc
+        feats["tc_override"] = float(tc_mean)
+        feats["source"] = "family_tc_mean"
+        feats["moments_from"] = "family_base_placeholder"
+        unc = max(unc, 0.40)
     return float(lam), float(wlog), float(unc), feats
 
 
@@ -167,16 +185,26 @@ def predict_tc_lambda(
     }
 
     quality_tag: Literal["stub", "screening", "production", "trained"] = "stub"
-    used_method = method or "family_heuristic"
+    # Always start heuristic; only claim a fit method when family stats apply.
+    used_method = "family_heuristic"
     used_version = model_version or MODEL_VERSION
 
     if trained is not None:
         lam, wlog, unc, tfeats = trained
         features.update(tfeats)
         quality_tag = "trained"
-        used_method = method or "family_mean_fit"
+        src = str(tfeats.get("source") or "family_mean_fit")
+        if src == "family_tc_mean":
+            used_method = "family_tc_mean"
+        else:
+            used_method = (
+                method
+                if method and method not in {"family_heuristic", "heuristic"}
+                else "family_mean_fit"
+            )
         # Formula anchors still gently bias toward known compounds when present
-        if formula in _FORMULA_ANCHOR:
+        # (skip for tc-only override — labels own the Tc).
+        if formula in _FORMULA_ANCHOR and "tc_override" not in tfeats:
             a_lam, a_wlog, a_unc = _FORMULA_ANCHOR[formula]
             # Blend 70% trained family mean, 30% formula anchor
             lam = 0.7 * lam + 0.3 * a_lam
@@ -218,11 +246,18 @@ def predict_tc_lambda(
     lam = max(0.05, float(lam))
     wlog = max(50.0, float(wlog))
     unc = float(min(1.0, max(0.05, unc)))
-    tc = allen_dynes_tc(lam, wlog, mu_star)
+    if features.get("tc_override") is not None:
+        # Label Tc owns the prediction when moments were placeholders only.
+        tc = float(features["tc_override"])
+        strain = float(features.get("strain") or 0.0)
+        if strain > 0:
+            tc *= max(0.4, 1.0 - 8.0 * (strain**2))
+    else:
+        tc = allen_dynes_tc(lam, wlog, mu_star)
 
     if quality_tag == "trained":
         notes = (
-            f"Phase-1.5 family-mean fit ({used_version}; "
+            f"Phase-1.5 {used_method} ({used_version}; "
             f"{training_set_size} labels). Prioritization aid — not experimental Tc."
         )
     else:
@@ -362,11 +397,17 @@ class TcLambdaSurrogate:
                 continue
             survivors.append((c, pred))
 
+        # Always rank by surrogate score when the filter is enabled (not only
+        # when keep_top_n truncates) so calculator order is score-ordered.
+        survivors.sort(key=lambda x: x[1].score_for_ranking(), reverse=True)
+
         if cfg.keep_top_n is not None and len(survivors) > cfg.keep_top_n:
-            survivors.sort(key=lambda x: x[1].score_for_ranking(), reverse=True)
-            for c, _ in survivors[cfg.keep_top_n :]:
+            for c, drop_p in survivors[cfg.keep_top_n :]:
                 result.rejected.append(c)
-                result.reasons[c.candidate_id] = f"outside keep_top_n={cfg.keep_top_n}"
+                result.reasons[c.candidate_id] = (
+                    f"outside keep_top_n={cfg.keep_top_n} "
+                    f"(score={drop_p.score_for_ranking():.2f})"
+                )
             survivors = survivors[: cfg.keep_top_n]
 
         result.kept = [c for c, _ in survivors]

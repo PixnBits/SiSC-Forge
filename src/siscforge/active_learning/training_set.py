@@ -256,6 +256,12 @@ class TrainingSetStore:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / self.SNAPSHOTS_DIR).mkdir(parents=True, exist_ok=True)
+        self._last_warnings: list[str] = []
+
+    @property
+    def last_warnings(self) -> list[str]:
+        """Warnings from the most recent ``add_example`` / ``promote`` call."""
+        return list(self._last_warnings)
 
     def _examples_path(self) -> Path:
         return self.root / self.EXAMPLES
@@ -280,11 +286,11 @@ class TrainingSetStore:
         example: TrainingExample,
         *,
         replace_same_candidate: bool = True,
-    ) -> tuple[TrainingExample, list[str]]:
+    ) -> TrainingExample:
         """Append one example; optionally replace prior entry with same candidate_id.
 
-        Returns ``(example, warnings)`` so operators can see quality regressions
-        (e.g. screening overwriting production).
+        Quality-regression warnings are stored on :attr:`last_warnings` (does not
+        change the return type — remains ``TrainingExample`` for API stability).
         """
         warnings: list[str] = []
         current = self.load_examples()
@@ -307,21 +313,23 @@ class TrainingSetStore:
         current = [e for e in current if e.example_id != example.example_id]
         current.append(example)
         self.save_examples(current)
-        return example, warnings
+        self._last_warnings = warnings
+        return example
 
     def promote(
         self,
         evaluation: CandidateEvaluation,
         **kwargs: Any,
-    ) -> tuple[TrainingExample, list[str]]:
+    ) -> TrainingExample:
         """Promote evaluation and persist into the working set."""
         example = promote_evaluation(evaluation, **kwargs)
         return self.add_example(example)
 
-    def add_literature(self, example: TrainingExample) -> tuple[TrainingExample, list[str]]:
+    def add_literature(self, example: TrainingExample) -> TrainingExample:
         if example.source not in {"literature", "golden"}:
             raise PromotionError("add_literature requires source=literature or golden")
         return self.add_example(example)
+
 
     def snapshot(self, *, notes: str = "") -> TrainingSetSnapshot:
         """Freeze the current working set into an immutable hashed snapshot."""
@@ -514,25 +522,43 @@ def seed_from_literature_file(
     *,
     default_source: Literal["literature", "golden"] = "literature",
 ) -> list[TrainingExample]:
-    """Bulk-ingest literature / golden labels from a file."""
+    """Bulk-ingest literature / golden labels from a file.
+
+    Each record requires ``formula``, ``literature_ref``, and **at least one**
+    of ``tc_K`` / ``lambda_total`` / ``omega_log`` so empty rows cannot inflate
+    bootstrap label counts or produce target-free "trained" models.
+    """
     records = load_literature_records(path)
     added: list[TrainingExample] = []
     for i, rec in enumerate(records):
+        # Skip documentation-only keys / records
+        if set(rec.keys()) <= {"_comment", "comment", "notes"} and not rec.get("formula"):
+            continue
         formula = str(rec.get("formula") or "").strip()
+        if formula.startswith("_"):
+            continue
         lit_ref = str(rec.get("literature_ref") or rec.get("ref") or "").strip()
         if not formula or not lit_ref:
             raise PromotionError(
                 f"Record {i}: formula and literature_ref are required "
                 f"(got formula={formula!r}, literature_ref={lit_ref!r})"
             )
+        tc_K = _parse_float(rec.get("tc_K") if "tc_K" in rec else rec.get("tc"))
+        lambda_total = _parse_float(rec.get("lambda_total") or rec.get("lambda"))
+        omega_log = _parse_float(rec.get("omega_log"))
+        if tc_K is None and lambda_total is None and omega_log is None:
+            raise PromotionError(
+                f"Record {i} ({formula}): at least one of tc_K, lambda_total, "
+                f"omega_log is required"
+            )
         source = rec.get("source") or default_source
         if source not in {"literature", "golden"}:
             source = default_source
         ex = literature_example(
             formula=formula,
-            tc_K=_parse_float(rec.get("tc_K") if "tc_K" in rec else rec.get("tc")),
-            lambda_total=_parse_float(rec.get("lambda_total") or rec.get("lambda")),
-            omega_log=_parse_float(rec.get("omega_log")),
+            tc_K=tc_K,
+            lambda_total=lambda_total,
+            omega_log=omega_log,
             material_family=str(rec.get("material_family") or "other"),
             literature_ref=lit_ref,
             literature_notes=str(rec.get("literature_notes") or rec.get("notes") or ""),
@@ -542,3 +568,4 @@ def seed_from_literature_file(
         store.add_literature(ex)
         added.append(ex)
     return added
+

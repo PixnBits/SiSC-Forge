@@ -1888,7 +1888,7 @@ def al_promote_cmd(
                 )
             continue
         try:
-            _ex, warnings = tstore.promote(
+            tstore.promote(
                 ev,
                 campaign_store=str(store_dir),
                 require_epw=not allow_no_epw,
@@ -1899,9 +1899,10 @@ def al_promote_cmd(
                 f"[green]promoted[/green] {ev.candidate.formula} "
                 f"({ev.candidate.candidate_id[:8]}…)"
             )
-            for w in warnings:
+            for w in tstore.last_warnings:
                 console.print(f"[yellow]warning[/yellow] {w}")
         except PromotionError as exc:
+
             refused += 1
             console.print(
                 f"[yellow]refused[/yellow] {ev.candidate.formula}: {exc}"

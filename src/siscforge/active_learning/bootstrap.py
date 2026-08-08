@@ -59,9 +59,11 @@ class ActiveSurrogateContext:
     def has_trained_payload(self) -> bool:
         return bool(self.family_stats) and self.method in {
             "family_mean_fit",
+            "family_tc_mean",
             "ridge_on_labels",
             "alignn_head",
         }
+
 
     def predict(
         self,
@@ -272,10 +274,12 @@ def _validate_fit(family_stats: dict[str, dict[str, float]]) -> tuple[bool, str,
     diag: dict[str, Any] = {"families": family_stats}
     if not family_stats:
         return False, "no family statistics (empty training set)", diag
+    any_target = False
     for fam, st in family_stats.items():
         for key in ("lambda_mean", "omega_log_mean", "tc_mean"):
             if key not in st:
                 continue
+            any_target = True
             val = st[key]
             if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
                 return False, f"NaN/Inf in {fam}.{key}", diag
@@ -285,7 +289,10 @@ def _validate_fit(family_stats: dict[str, dict[str, float]]) -> tuple[bool, str,
                 return False, f"absurd tc_mean={val} K for {fam}", diag
             if key == "omega_log_mean" and (val < 1.0 or val > 2000.0):
                 return False, f"absurd omega_log_mean={val} for {fam}", diag
+    if not any_target:
+        return False, "no target values (need λ, ω_log, or Tc on at least one family)", diag
     return True, "ok", diag
+
 
 
 def retrain_from_snapshot(
