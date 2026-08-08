@@ -18,6 +18,13 @@ from siscforge.models.config import (
     SurrogateConfig,
     TcLambdaSurrogateConfig,
 )
+from siscforge.models.active_learning import (
+    PrioritizationRecord,
+    SurrogateModelMetadata,
+    SurrogatePrediction,
+    TrainingExample,
+    TrainingSetSnapshot,
+)
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
     ElectronPhononResult,
@@ -29,6 +36,11 @@ from siscforge.models.results import (
 
 __all__ = [
     "ActiveLearningConfig",
+    "PrioritizationRecord",
+    "SurrogateModelMetadata",
+    "SurrogatePrediction",
+    "TrainingExample",
+    "TrainingSetSnapshot",
     "ActiveLearningWeights",
     "CalculatorConfig",
     "CampaignConfig",
