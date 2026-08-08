@@ -1,0 +1,40 @@
+[
+  {
+    "formula": "NbN",
+    "tc_K": 16.0,
+    "lambda_total": 1.05,
+    "omega_log": 280.0,
+    "material_family": "tm_nitride",
+    "literature_ref": "example:NbN",
+    "source": "literature",
+    "literature_notes": "Rocksalt NbN literature midpoint for bootstrap seed packs."
+  },
+  {
+    "formula": "ZrN",
+    "tc_K": 10.0,
+    "lambda_total": 0.80,
+    "omega_log": 300.0,
+    "material_family": "tm_nitride",
+    "literature_ref": "example:ZrN",
+    "source": "literature"
+  },
+  {
+    "formula": "VN",
+    "tc_K": 8.5,
+    "lambda_total": 0.90,
+    "omega_log": 310.0,
+    "material_family": "tm_nitride",
+    "literature_ref": "example:VN",
+    "source": "literature"
+  },
+  {
+    "formula": "MgB2",
+    "tc_K": 39.0,
+    "lambda_total": 0.85,
+    "omega_log": 700.0,
+    "material_family": "mgb2_boride",
+    "literature_ref": "example:MgB2",
+    "source": "literature",
+    "literature_notes": "Isotropic average of two-gap character."
+  }
+]

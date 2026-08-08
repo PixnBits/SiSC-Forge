@@ -80,6 +80,15 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 ### Phase 1 residual / Phase 1.5 — AL Bootstrap (workstation cadence)
 **Goal**: Make the interleaved flywheel real on desktop hardware.
 
+**1.5a (shipped):** seed-set management, explicit promotion gate, immutable
+snapshots, lightweight retrain with AC17 safety, bootstrap status CLI, unit
+tests AC13–AC18. See `docs/phase15-exit.md`.
+
+**1.5b (in progress):** trained family-mean predictions **change** acquisition
+rankings; `siscforge run --al-root` loads the registry and writes prioritization
+provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
+`al-seed --from-file`; `al-rollback`. See `docs/phase15b-exit.md`.
+
 - Seed-set management (goldens + literature ingestion + early project labels).
 - Explicit promotion gate into the training set.
 - First trained or fine-tuned λ/Tc (or performance) surrogate with uncertainty and model metadata.
@@ -89,6 +98,7 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 - Dry-run path that exercises the full prioritize → shortlist → mock-calculate → promote → retrain loop.
 
 **Workstation cadence note**: aim for a steady trickle of a few high-quality labels per week. Most candidates die at the phonon-first gate; screening-quality labels are acceptable early; production-quality is reserved for shortlist winners. A first useful prioritization model should appear after a few months of steady work, not after serial collection of 100+ full-production EPW results.
+
 
 ### Dependencies
 - Phase 0 complete (especially data models, jobflow skeleton, ranking, Si-score).

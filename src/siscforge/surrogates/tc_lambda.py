@@ -1,24 +1,20 @@
-"""Lightweight λ / ω_log / Tc surrogate stub (Phase 1).
+"""Lightweight λ / ω_log / Tc surrogate (Phase 1 / 1.5).
 
-**Not** a trained production GNN. Family-aware heuristics anchored on known
-references (NbN, MgB₂, TiN, …) provide:
+**Not** a trained production GNN. Two modes:
 
-- predicted_lambda
-- predicted_omega_log (K)
-- predicted_Tc (Allen–Dynes from those moments)
-- uncertainty (relative, 0–1 scale; higher = less trusted)
+1. **Family-heuristic stub** (default) — fixed anchors (NbN, MgB₂, TiN, …).
+2. **Family-mean fit** (Phase 1.5) — when a trained registry payload supplies
+   per-family statistics from promoted EPW / literature labels, those means
+   override the hardcoded baselines so prioritization **moves** after retrain.
 
 Real EPW remains the source of truth. This module only pre-filters and, when
 no ElectronPhononResult exists, may supply a weak ranking signal.
-
-Future ALIGNN/MatGL heads should implement the same :class:`TcLambdaPrediction`
-shape without changing campaign YAML keys.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
@@ -68,7 +64,7 @@ class TcLambdaPrediction(BaseModel):
     """Relative uncertainty (0 = high confidence, 1 = pure guess)."""
 
     model_version: str = MODEL_VERSION
-    quality_tag: Literal["stub", "screening", "production"] = "stub"
+    quality_tag: Literal["stub", "screening", "production", "trained"] = "stub"
     method: str = "family_heuristic"
     """Implementation tag; future models use e.g. ``alignn_head``."""
 
@@ -79,6 +75,8 @@ class TcLambdaPrediction(BaseModel):
         "Phase-1 stub surrogate — not trained on large EPW data. "
         "Real EPW ElectronPhononResult overrides this when present."
     )
+    training_set_size: int = 0
+    bootstrap: bool = True
 
     def score_for_ranking(self) -> float:
         """Tc demoted by uncertainty (higher uncertainty → lower score)."""
@@ -103,18 +101,57 @@ def _n_metal_like(candidate: StructureCandidate) -> int:
     return sum(1 for el in candidate.composition if el not in skip)
 
 
+def _family_stats_baseline(
+    family: str,
+    family_stats: Mapping[str, Mapping[str, Any]] | None,
+) -> tuple[float, float, float, dict[str, Any]] | None:
+    """Return (lam, wlog, unc, features) from trained family means, or None."""
+    if not family_stats:
+        return None
+    st = family_stats.get(family) or family_stats.get("other")
+    if not st:
+        return None
+    lam = st.get("lambda_mean")
+    wlog = st.get("omega_log_mean")
+    if lam is None and wlog is None and st.get("tc_mean") is None:
+        return None
+    # Fall back within family stats
+    if lam is None:
+        lam = _FAMILY_BASE.get(family, _FAMILY_BASE["other"])[0]
+    if wlog is None:
+        wlog = _FAMILY_BASE.get(family, _FAMILY_BASE["other"])[1]
+    n = float(st.get("n") or 1.0)
+    tc_std = float(st.get("tc_std") or 0.0)
+    # More labels → lower floor uncertainty; high within-family scatter → higher
+    unc = max(0.12, min(0.85, 0.55 / (n**0.5) + min(0.25, tc_std / 40.0)))
+    feats = {
+        "trained_family": family,
+        "n_labels_family": n,
+        "tc_std": tc_std,
+        "source": "family_mean_fit",
+    }
+    return float(lam), float(wlog), float(unc), feats
+
+
 def predict_tc_lambda(
     candidate: StructureCandidate,
     *,
     mu_star: float = 0.10,
+    family_stats: Mapping[str, Mapping[str, Any]] | None = None,
+    model_version: str | None = None,
+    method: str | None = None,
+    training_set_size: int = 0,
+    bootstrap: bool | None = None,
 ) -> TcLambdaPrediction:
     """Predict λ, ω_log, Tc and uncertainty for *candidate*.
 
-    Deterministic, pure-Python, no network / GPU. Safe for unit tests and CI.
+    When *family_stats* is provided (from a Phase 1.5 retrain payload), family
+    means override hardcoded baselines so the acquisition queue **changes**
+    after ``al-train``. Deterministic, pure-Python, no network / GPU.
     """
     family = candidate.material_family
     formula = _normalize_formula(candidate.formula)
-    base_lam, base_wlog, base_unc = _FAMILY_BASE.get(family, _FAMILY_BASE["other"])
+    trained = _family_stats_baseline(family, family_stats)
 
     features: dict[str, Any] = {
         "family": family,
@@ -123,20 +160,35 @@ def predict_tc_lambda(
         "n_elements": len(candidate.composition) or 1,
     }
 
-    if formula in _FORMULA_ANCHOR:
+    quality_tag: Literal["stub", "screening", "production", "trained"] = "stub"
+    used_method = method or "family_heuristic"
+    used_version = model_version or MODEL_VERSION
+
+    if trained is not None:
+        lam, wlog, unc, tfeats = trained
+        features.update(tfeats)
+        quality_tag = "trained"
+        used_method = method or "family_mean_fit"
+        # Formula anchors still gently bias toward known compounds when present
+        if formula in _FORMULA_ANCHOR:
+            a_lam, a_wlog, a_unc = _FORMULA_ANCHOR[formula]
+            # Blend 70% trained family mean, 30% formula anchor
+            lam = 0.7 * lam + 0.3 * a_lam
+            wlog = 0.7 * wlog + 0.3 * a_wlog
+            unc = min(1.0, 0.7 * unc + 0.3 * a_unc)
+            features["anchor_blend"] = formula
+    elif formula in _FORMULA_ANCHOR:
         lam, wlog, unc = _FORMULA_ANCHOR[formula]
         features["anchor"] = formula
     else:
-        lam, wlog, unc = base_lam, base_wlog, base_unc
+        lam, wlog, unc = _FAMILY_BASE.get(family, _FAMILY_BASE["other"])
         # Soft ternary / multi-metal demotion for nitrides
         if family == "tm_nitride":
             n_met = _n_metal_like(candidate)
             features["n_metals"] = n_met
             if n_met >= 2:
-                # Alloy: slightly lower λ, higher unc
                 lam *= 0.92
                 unc = min(1.0, unc + 0.08)
-            # Prefer Nb-rich among common TM nitrides (very soft heuristic)
             comp = candidate.composition or {}
             if comp.get("Nb", 0) >= 0.4:
                 lam *= 1.05
@@ -148,14 +200,12 @@ def predict_tc_lambda(
     # Strain softens Tc / increases uncertainty
     strain = features["strain"]
     if strain > 0:
-        # ~20% Tc drop at |ε|=0.05 (quadratic-ish via λ, wlog)
         factor = max(0.4, 1.0 - 8.0 * (strain**2))
         lam *= factor
         wlog *= max(0.7, 1.0 - 4.0 * (strain**2))
         unc = min(1.0, unc + 3.0 * strain)
         features["strain_factor"] = round(factor, 4)
 
-    # Known unstable families for conventional e-ph: high unc
     if family in {"nickelate", "cuprate"}:
         features["conventional_proxy_only"] = True
 
@@ -164,23 +214,35 @@ def predict_tc_lambda(
     unc = float(min(1.0, max(0.05, unc)))
     tc = allen_dynes_tc(lam, wlog, mu_star)
 
-    notes = (
-        "Phase-1 family-heuristic stub (not a trained GNN). "
-        "Use only for pre-filtering; real EPW overrides ranking when present."
-    )
+    if quality_tag == "trained":
+        notes = (
+            f"Phase-1.5 family-mean fit ({used_version}; "
+            f"{training_set_size} labels). Prioritization aid — not experimental Tc."
+        )
+    else:
+        notes = (
+            "Phase-1 family-heuristic stub (not a trained GNN). "
+            "Use only for pre-filtering; real EPW overrides ranking when present."
+        )
     if family == "mgb2_boride":
         notes += " MgB2: isotropic average of two-gap character."
+
+    boot = True if bootstrap is None else bool(bootstrap)
+    if bootstrap is None and quality_tag == "trained" and training_set_size >= 150:
+        boot = False
 
     return TcLambdaPrediction(
         predicted_lambda=round(lam, 4),
         predicted_omega_log=round(wlog, 2),
         predicted_Tc=round(tc, 2),
         uncertainty=round(unc, 3),
-        model_version=MODEL_VERSION,
-        quality_tag="stub",
-        method="family_heuristic",
+        model_version=used_version,
+        quality_tag=quality_tag,
+        method=used_method,
         features=features,
         notes=notes,
+        training_set_size=int(training_set_size),
+        bootstrap=boot,
     )
 
 
@@ -219,11 +281,33 @@ class TcLambdaFilterResult:
 class TcLambdaSurrogate:
     """Predict + optional pre-filter using :func:`predict_tc_lambda`."""
 
-    def __init__(self, config: TcLambdaSurrogateConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TcLambdaSurrogateConfig | None = None,
+        *,
+        family_stats: Mapping[str, Mapping[str, Any]] | None = None,
+        model_version: str | None = None,
+        method: str | None = None,
+        training_set_size: int = 0,
+        bootstrap: bool = True,
+    ) -> None:
         self.config = config or TcLambdaSurrogateConfig()
+        self.family_stats = family_stats
+        self.model_version = model_version
+        self.method = method
+        self.training_set_size = training_set_size
+        self.bootstrap = bootstrap
 
     def predict(self, candidate: StructureCandidate) -> TcLambdaPrediction:
-        return predict_tc_lambda(candidate, mu_star=self.config.mu_star)
+        return predict_tc_lambda(
+            candidate,
+            mu_star=self.config.mu_star,
+            family_stats=self.family_stats,
+            model_version=self.model_version or self.config.version,
+            method=self.method,
+            training_set_size=self.training_set_size,
+            bootstrap=self.bootstrap,
+        )
 
     def annotate(self, candidate: StructureCandidate) -> tuple[StructureCandidate, TcLambdaPrediction]:
         """Attach surrogate prediction to candidate metadata."""
@@ -242,7 +326,8 @@ class TcLambdaSurrogate:
     ) -> TcLambdaFilterResult:
         """Annotate all candidates; optionally drop low-Tc / high-unc / outside top-k."""
         cfg = self.config
-        result = TcLambdaFilterResult(config_version=cfg.version or MODEL_VERSION)
+        version = self.model_version or cfg.version or MODEL_VERSION
+        result = TcLambdaFilterResult(config_version=version)
 
         annotated: list[tuple[StructureCandidate, TcLambdaPrediction]] = []
         for cand in candidates:
@@ -250,44 +335,35 @@ class TcLambdaSurrogate:
             result.predictions[c.candidate_id] = pred
             annotated.append((c, pred))
 
+        # Apply filters only when enabled
         if not cfg.enabled:
             result.kept = [c for c, _ in annotated]
             return result
 
-        kept_pairs: list[tuple[StructureCandidate, TcLambdaPrediction]] = []
+        survivors: list[tuple[StructureCandidate, TcLambdaPrediction]] = []
         for c, pred in annotated:
             if cfg.min_predicted_tc_K is not None and pred.predicted_Tc < cfg.min_predicted_tc_K:
                 result.rejected.append(c)
                 result.reasons[c.candidate_id] = (
-                    f"surrogate_Tc {pred.predicted_Tc:.2f} K < "
-                    f"min {cfg.min_predicted_tc_K}"
+                    f"predicted_Tc={pred.predicted_Tc} < min {cfg.min_predicted_tc_K}"
                 )
                 continue
-            if (
-                cfg.max_uncertainty is not None
-                and pred.uncertainty > cfg.max_uncertainty
-            ):
+            if cfg.max_uncertainty is not None and pred.uncertainty > cfg.max_uncertainty:
                 result.rejected.append(c)
                 result.reasons[c.candidate_id] = (
-                    f"surrogate_uncertainty {pred.uncertainty:.3f} > "
-                    f"max {cfg.max_uncertainty}"
+                    f"uncertainty={pred.uncertainty} > max {cfg.max_uncertainty}"
                 )
                 continue
-            kept_pairs.append((c, pred))
+            survivors.append((c, pred))
 
-        # Prefer higher score_for_ranking (Tc demoted by unc)
-        kept_pairs.sort(key=lambda pair: pair[1].score_for_ranking(), reverse=True)
+        if cfg.keep_top_n is not None and len(survivors) > cfg.keep_top_n:
+            survivors.sort(key=lambda x: x[1].score_for_ranking(), reverse=True)
+            for c, _ in survivors[cfg.keep_top_n :]:
+                result.rejected.append(c)
+                result.reasons[c.candidate_id] = f"outside keep_top_n={cfg.keep_top_n}"
+            survivors = survivors[: cfg.keep_top_n]
 
-        if cfg.keep_top_n is not None and len(kept_pairs) > cfg.keep_top_n:
-            for drop_c, drop_p in kept_pairs[cfg.keep_top_n :]:
-                result.rejected.append(drop_c)
-                result.reasons[drop_c.candidate_id] = (
-                    f"outside surrogate keep_top_n={cfg.keep_top_n} "
-                    f"(score={drop_p.score_for_ranking():.2f})"
-                )
-            kept_pairs = kept_pairs[: cfg.keep_top_n]
-
-        result.kept = [c for c, _ in kept_pairs]
+        result.kept = [c for c, _ in survivors]
         return result
 
 
@@ -295,5 +371,5 @@ def filter_by_tc_lambda(
     candidates: list[StructureCandidate],
     config: TcLambdaSurrogateConfig | None = None,
 ) -> TcLambdaFilterResult:
-    """Convenience wrapper."""
+    """Convenience wrapper around :class:`TcLambdaSurrogate.filter`."""
     return TcLambdaSurrogate(config).filter(candidates)

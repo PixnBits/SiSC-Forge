@@ -4,11 +4,13 @@ Contracts (Technical Specs AC13, AC18; design note §4):
 
 - Promotion is an **explicit** step; silent inclusion is forbidden.
 - Mock / dry-run / disallowed quality tags are hard-refused.
+- ``quality_tag=unknown`` is refused by default (opt-in via allow_unknown).
 - Each training-set snapshot used for a model version is immutable and hashed.
 """
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -57,6 +59,7 @@ def promotion_eligibility(
     allowed_quality_tags: Iterable[str] | None = None,
     allowed_status: Iterable[str] | None = None,
     require_epw: bool = True,
+    allow_unknown_quality: bool = False,
 ) -> tuple[bool, str]:
     """Return (ok, reason). Does not raise."""
     tags = frozenset(allowed_quality_tags or DEFAULT_ALLOWED_QUALITY_TAGS)
@@ -74,6 +77,8 @@ def promotion_eligibility(
         qtag = evaluation.electron_phonon.quality_tag or qtag
     if qtag == "mock":
         return False, "quality_tag=mock refused"
+    if qtag == "unknown" and not allow_unknown_quality:
+        return False, "quality_tag=unknown refused (pass allow_unknown_quality to opt in)"
     if qtag not in tags and qtag != "unknown":
         return False, f"quality_tag={qtag!r} not in allow-list {sorted(tags)}"
 
@@ -108,6 +113,7 @@ def promote_evaluation(
     literature_notes: str = "",
     allowed_quality_tags: Iterable[str] | None = None,
     require_epw: bool = True,
+    allow_unknown_quality: bool = False,
     notes: str = "",
 ) -> TrainingExample:
     """Explicitly promote a clean evaluation into a TrainingExample.
@@ -118,6 +124,7 @@ def promote_evaluation(
         evaluation,
         allowed_quality_tags=allowed_quality_tags,
         require_epw=require_epw,
+        allow_unknown_quality=allow_unknown_quality,
     )
     if not ok:
         raise PromotionError(reason)
@@ -268,27 +275,50 @@ class TrainingSetStore:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         return path
 
-    def add_example(self, example: TrainingExample, *, replace_same_candidate: bool = True) -> TrainingExample:
-        """Append one example; optionally replace prior entry with same candidate_id."""
+    def add_example(
+        self,
+        example: TrainingExample,
+        *,
+        replace_same_candidate: bool = True,
+    ) -> tuple[TrainingExample, list[str]]:
+        """Append one example; optionally replace prior entry with same candidate_id.
+
+        Returns ``(example, warnings)`` so operators can see quality regressions
+        (e.g. screening overwriting production).
+        """
+        warnings: list[str] = []
         current = self.load_examples()
         if replace_same_candidate:
+            for prev in current:
+                if prev.candidate_id != example.candidate_id:
+                    continue
+                if prev.quality_tag == "production" and example.quality_tag == "screening":
+                    warnings.append(
+                        f"replacing production label for {example.candidate_id} "
+                        f"({prev.formula}) with screening — verify intent"
+                    )
+                if prev.tc_K is not None and example.tc_K is not None:
+                    if abs(prev.tc_K - example.tc_K) > 5.0:
+                        warnings.append(
+                            f"Tc changed {prev.tc_K:.1f} → {example.tc_K:.1f} K "
+                            f"for {example.formula}"
+                        )
             current = [e for e in current if e.candidate_id != example.candidate_id]
-        # Also refuse duplicate example_id
         current = [e for e in current if e.example_id != example.example_id]
         current.append(example)
         self.save_examples(current)
-        return example
+        return example, warnings
 
     def promote(
         self,
         evaluation: CandidateEvaluation,
         **kwargs: Any,
-    ) -> TrainingExample:
+    ) -> tuple[TrainingExample, list[str]]:
         """Promote evaluation and persist into the working set."""
         example = promote_evaluation(evaluation, **kwargs)
         return self.add_example(example)
 
-    def add_literature(self, example: TrainingExample) -> TrainingExample:
+    def add_literature(self, example: TrainingExample) -> tuple[TrainingExample, list[str]]:
         if example.source not in {"literature", "golden"}:
             raise PromotionError("add_literature requires source=literature or golden")
         return self.add_example(example)
@@ -355,8 +385,10 @@ class TrainingSetStore:
     def summary(self) -> dict[str, Any]:
         examples = self.load_examples()
         by_source: dict[str, int] = {}
+        by_family: dict[str, int] = {}
         for e in examples:
             by_source[e.source] = by_source.get(e.source, 0) + 1
+            by_family[e.material_family] = by_family.get(e.material_family, 0) + 1
         cur = None
         cur_path = self.root / self.CURRENT
         if cur_path.is_file():
@@ -364,6 +396,7 @@ class TrainingSetStore:
         return {
             "n_examples": len(examples),
             "by_source": by_source,
+            "by_family": by_family,
             "current_snapshot": cur,
             "root": str(self.root),
         }
@@ -416,6 +449,95 @@ def seed_default_goldens(store: TrainingSetStore) -> list[TrainingExample]:
             material_family=spec.get("material_family", "other"),
             literature_ref=spec["literature_ref"],
             source=spec.get("source", "golden"),  # type: ignore[arg-type]
+        )
+        store.add_literature(ex)
+        added.append(ex)
+    return added
+
+
+def _parse_float(val: Any) -> float | None:
+    if val is None or val == "":
+        return None
+    return float(val)
+
+
+def load_literature_records(path: str | Path) -> list[dict[str, Any]]:
+    """Load literature seed records from JSON, JSONL, or CSV.
+
+    Required fields: ``formula``, ``literature_ref``.
+    Optional: ``tc_K``, ``lambda_total``, ``omega_log``, ``material_family``,
+    ``source`` (literature|golden), ``literature_notes``, ``candidate_id``.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    text = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+
+    records: list[dict[str, Any]] = []
+    if suffix == ".jsonl":
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+    elif suffix == ".json":
+        raw = json.loads(text)
+        if isinstance(raw, list):
+            records = list(raw)
+        elif isinstance(raw, dict) and "examples" in raw:
+            records = list(raw["examples"])
+        else:
+            raise ValueError("JSON literature file must be a list or {examples: [...]}")
+    elif suffix == ".csv":
+        reader = csv.DictReader(text.splitlines())
+        records = [dict(row) for row in reader]
+    else:
+        # Try JSON then JSONL
+        try:
+            raw = json.loads(text)
+            if isinstance(raw, list):
+                records = list(raw)
+            else:
+                raise ValueError("not a list")
+        except json.JSONDecodeError:
+            for line in text.splitlines():
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+    return records
+
+
+def seed_from_literature_file(
+    store: TrainingSetStore,
+    path: str | Path,
+    *,
+    default_source: Literal["literature", "golden"] = "literature",
+) -> list[TrainingExample]:
+    """Bulk-ingest literature / golden labels from a file."""
+    records = load_literature_records(path)
+    added: list[TrainingExample] = []
+    for i, rec in enumerate(records):
+        formula = str(rec.get("formula") or "").strip()
+        lit_ref = str(rec.get("literature_ref") or rec.get("ref") or "").strip()
+        if not formula or not lit_ref:
+            raise PromotionError(
+                f"Record {i}: formula and literature_ref are required "
+                f"(got formula={formula!r}, literature_ref={lit_ref!r})"
+            )
+        source = rec.get("source") or default_source
+        if source not in {"literature", "golden"}:
+            source = default_source
+        ex = literature_example(
+            formula=formula,
+            tc_K=_parse_float(rec.get("tc_K") if "tc_K" in rec else rec.get("tc")),
+            lambda_total=_parse_float(rec.get("lambda_total") or rec.get("lambda")),
+            omega_log=_parse_float(rec.get("omega_log")),
+            material_family=str(rec.get("material_family") or "other"),
+            literature_ref=lit_ref,
+            literature_notes=str(rec.get("literature_notes") or rec.get("notes") or ""),
+            candidate_id=rec.get("candidate_id"),
+            source=source,  # type: ignore[arg-type]
         )
         store.add_literature(ex)
         added.append(ex)

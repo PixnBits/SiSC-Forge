@@ -6,7 +6,8 @@ Subcommands:
   - ``run``       — load campaign, filter, evaluate (mock/QE/EPW), rank, export
   - ``shortlist`` — build a focused EPW campaign from an AL dry-run store
   - ``refine``    — promote store winners to denser-grid / production-tier EPW
-  - ``al-status`` / ``al-seed`` / ``al-promote`` / ``al-train`` / ``al-audit`` — Phase 1.5 flywheel
+  - ``al-status`` / ``al-seed`` / ``al-promote`` / ``al-train`` / ``al-audit`` / ``al-rollback`` — Phase 1.5 flywheel
+
 """
 
 from __future__ import annotations
@@ -24,11 +25,15 @@ from siscforge.active_learning import (
     SurrogateRegistry,
     TrainingSetStore,
     al_status,
-    literature_example,
+    build_prioritization_record,
     prioritize_candidates,
+    resolve_al_context,
     retrain_from_store,
     seed_default_goldens,
+    seed_from_literature_file,
 )
+
+
 from siscforge.calculators import ensure_builtins_loaded, list_calculators
 from siscforge.calculators import get as get_calculator
 from siscforge.export import (
@@ -795,7 +800,14 @@ def run_cmd(
         "pw.x/ph.x/epw.x steps (default: run.heartbeat_seconds=900). 0 disables.",
         min=0,
     ),
+    al_root: Path | None = typer.Option(
+        None,
+        "--al-root",
+        help="AL state root (training_set/ + models/). Default: <output_dir>/al "
+        "or ./al_state when no store yet.",
+    ),
 ) -> None:
+
     """Load a campaign, filter, evaluate candidates, rank, persist, and export.
 
     Resume/checkpoint (default): re-running the same ``output_dir`` skips
@@ -857,10 +869,38 @@ def run_cmd(
         console.print("[red]No candidates left after filtering.[/red]")
         raise typer.Exit(code=1)
 
-    # 2b. λ/Tc surrogate pre-filter (optional Phase 1 stub)
+    # 2b. λ/Tc surrogate pre-filter (optional Phase 1 stub + Phase 1.5b trained)
+    # Resolve AL registry so trained family-mean fits change predictions/rankings.
+    tstore, registry, al_ctx = resolve_al_context(al_root=al_root, store_dir=out)
+    if al_ctx.banner():
+        console.print(f"[bold yellow]{al_ctx.banner()}[/bold yellow]")
+        console.print(
+            f"[dim]AL roots: training={tstore.root.resolve()}  "
+            f"models={registry.root.resolve()}[/dim]"
+        )
+
     tc_cfg = config.surrogate.tc_lambda
-    tc_surrogate = TcLambdaSurrogate(tc_cfg)
+    tc_surrogate = TcLambdaSurrogate(
+        tc_cfg,
+        family_stats=al_ctx.family_stats if al_ctx.has_trained_payload else None,
+        model_version=al_ctx.model_version if al_ctx.has_trained_payload else None,
+        method=al_ctx.method if al_ctx.has_trained_payload else None,
+        training_set_size=al_ctx.training_set_size,
+        bootstrap=al_ctx.bootstrap,
+    )
     tc_fres = tc_surrogate.filter(candidates)
+    # Prefer context predictions (ensures retrain moves scores even when
+    # filter path used stub config.version).
+    if al_ctx.has_trained_payload:
+        tc_fres.predictions = al_ctx.predict_many(
+            candidates, mu_star=tc_cfg.mu_star
+        )
+        # Re-annotate kept/rejected lists' prediction map keys
+        for c in list(tc_fres.kept) + list(tc_fres.rejected):
+            if c.candidate_id not in tc_fres.predictions:
+                tc_fres.predictions[c.candidate_id] = al_ctx.predict(
+                    c, mu_star=tc_cfg.mu_star
+                )
     candidates = tc_fres.kept
     store.save_json(
         "tc_lambda_surrogate.json",
@@ -868,14 +908,25 @@ def run_cmd(
             **tc_fres.summary(),
             "enabled": tc_cfg.enabled,
             "config": tc_cfg.model_dump(mode="json"),
+            "al_model_version": al_ctx.model_version,
+            "al_bootstrap": al_ctx.bootstrap,
+            "al_training_set_size": al_ctx.training_set_size,
+            "al_method": al_ctx.method,
+            "has_trained_payload": al_ctx.has_trained_payload,
         },
     )
     if tc_cfg.enabled:
         console.print(
             f"[bold]λ/Tc surrogate[/bold] kept {tc_fres.n_kept} "
-            f"(rejected {tc_fres.n_rejected}, model={tc_cfg.version})"
+            f"(rejected {tc_fres.n_rejected}, model={tc_fres.config_version})"
         )
         store.save_candidates(candidates)
+    elif al_ctx.has_trained_payload:
+        console.print(
+            f"[bold]λ/Tc surrogate[/bold] trained model={al_ctx.model_version} "
+            f"({al_ctx.training_set_size} labels, bootstrap={al_ctx.bootstrap}) "
+            "— used for AL prioritization"
+        )
     # When disabled, filter() still annotates predictions on all kept candidates
     # without dropping any (export can show stub values if present).
 
@@ -886,17 +937,43 @@ def run_cmd(
     # 2c. Si-feasibility (cheap) + active-learning prioritization
     si_by_id = {c.candidate_id: score_si_feasibility(c) for c in candidates}
     al_cfg = config.active_learning
+    # Ensure predictions carry trained model provenance
+    predictions = dict(tc_fres.predictions)
+    if al_ctx.has_trained_payload:
+        predictions = al_ctx.predict_many(candidates, mu_star=tc_cfg.mu_star)
     al_plan = prioritize_candidates(
         candidates,
         config=al_cfg,
         si_scores=si_by_id,
-        predictions=tc_fres.predictions,
+        predictions=predictions,
+        model_version=al_ctx.model_version,
+        training_set_size=al_ctx.training_set_size,
+        bootstrap=al_ctx.bootstrap,
     )
+    # Persist prioritization provenance (AC14)
+    pri_rec = build_prioritization_record(
+        model=al_ctx.metadata,
+        strategy=al_plan.strategy,
+        weights=al_cfg.weights.model_dump(),
+        ranked=al_plan.ranked,
+        selected_ids=[c.candidate_id for c in al_plan.selected],
+        deferred_ids=[c.candidate_id for c in al_plan.deferred],
+        notes=f"campaign={config.name}",
+        context=al_ctx,
+    )
+    registry.record_prioritization(pri_rec)
+    al_plan.prioritization_record_id = pri_rec.record_id
     store.save_json(
         "active_learning.json",
         {
             **al_plan.summary(),
             "config": al_cfg.model_dump(mode="json"),
+            "bootstrap_banner": al_ctx.banner(),
+            "prioritization_record_id": pri_rec.record_id,
+            "al_roots": {
+                "training_set": str(tstore.root.resolve()),
+                "models": str(registry.root.resolve()),
+            },
         },
     )
     acq_by_id = {r.candidate_id: r for r in al_plan.ranked}
@@ -904,7 +981,8 @@ def run_cmd(
         console.print(
             f"[bold]Active learning[/bold] strategy={al_cfg.strategy} "
             f"selected {len(al_plan.selected)}/{len(candidates)} for expensive path "
-            f"(max_epw_jobs={al_cfg.max_epw_jobs})"
+            f"(max_epw_jobs={al_cfg.max_epw_jobs}) "
+            f"model={al_ctx.model_version} labels={al_ctx.training_set_size}"
         )
         _print_acquisition_table(al_plan.ranked, max_rows=15)
         expensive_candidates = list(al_plan.selected)
@@ -914,6 +992,7 @@ def run_cmd(
     else:
         expensive_candidates = list(candidates)
         deferred_candidates = []
+
 
     # 3. Select calculator
     calc_name = _resolve_calculator_name(
@@ -1392,7 +1471,7 @@ def run_cmd(
     for cand in deferred_candidates:
         pred = tc_fres.predictions.get(cand.candidate_id)
         if pred is None:
-            pred = TcLambdaSurrogate(tc_cfg).predict(cand)
+            pred = al_ctx.predict(cand, mu_star=tc_cfg.mu_star)
         si = si_by_id[cand.candidate_id]
         result = CandidateEvaluation(
             candidate=cand,
@@ -1409,12 +1488,13 @@ def run_cmd(
             provenance=Provenance(
                 source="active_learning_deferred",
                 software={"siscforge": __version__},
-                notes="Phase-1 AL prioritization first cut",
+                notes="Phase-1.5 AL prioritization",
             ),
         )
         result = _finalize_eval(result, cand, selected=False)
         evaluations.append(result)
         store.append_evaluation(result)
+
 
     console.print(
         f"[bold]Checkpoint summary[/bold] (expensive path): "
@@ -1463,16 +1543,32 @@ def run_cmd(
         formats=formats,
         campaign_name=config.name,
         candidates=candidates,
+        bootstrap=al_ctx.bootstrap,
+        bootstrap_message=al_ctx.banner(),
+        model_version=al_ctx.model_version,
+        training_set_size=al_ctx.training_set_size,
     )
     # Always write synthesis cards for Phase 0 polish
     if "markdown" not in formats and "md" not in formats:
         cards = write_synthesis_cards(
-            ranked, out / "synthesis_cards.md", campaign_name=config.name
+            ranked,
+            out / "synthesis_cards.md",
+            campaign_name=config.name,
+            bootstrap=al_ctx.bootstrap,
+            bootstrap_message=al_ctx.banner(),
+            model_version=al_ctx.model_version,
+            training_set_size=al_ctx.training_set_size,
         )
         written["markdown"] = cards
     for label, path in written.items():
         console.print(f"[green]Wrote[/green] {label}: {path}")
     console.print(f"[dim]Store root: {store.root.resolve()}[/dim]")
+    # Operator hint: promote eligible clean results
+    console.print(
+        f"[dim]AL: siscforge al-promote {out} --al-root {tstore.root.parent} "
+        f"(use --dry-run first)[/dim]"
+    )
+
 
 
 def _print_acquisition_table(
@@ -1599,7 +1695,7 @@ def _print_rank_table(
 
 
 # ---------------------------------------------------------------------------
-# Phase 1.5 — AL bootstrap: promote, train, status, seed
+# Phase 1.5 — AL bootstrap: promote, train, status, seed, rollback
 # ---------------------------------------------------------------------------
 
 
@@ -1630,10 +1726,19 @@ def al_status_cmd(
     console.print(status["message"])
     console.print(
         f"labels={status['n_labels']}  bootstrap={status['bootstrap']}  "
-        f"model={(status['model'] or {}).get('model_version', 'none')}"
+        f"model={(status['model'] or {}).get('model_version', 'none')}  "
+        f"trained_payload={status.get('has_trained_payload')}"
+    )
+    console.print(
+        f"[dim]training={status.get('al_root_training')}  "
+        f"models={status.get('al_root_models')}[/dim]"
     )
     if status.get("training_set", {}).get("by_source"):
         console.print(f"by_source={status['training_set']['by_source']}")
+    if status.get("training_set", {}).get("by_family"):
+        console.print(f"by_family={status['training_set']['by_family']}")
+    if status.get("versions"):
+        console.print(f"versions={status['versions']}")
 
 
 @app.command("al-seed")
@@ -1641,12 +1746,36 @@ def al_seed_cmd(
     al_root: Path | None = typer.Option(
         None, "--al-root", help="AL state root (default ./al_state)."
     ),
+    from_file: Path | None = typer.Option(
+        None,
+        "--from-file",
+        help="Bulk literature JSON/JSONL/CSV (formula + literature_ref required).",
+    ),
+    goldens: bool = typer.Option(
+        True,
+        "--goldens/--no-goldens",
+        help="Also inject default NbN/MgB2/TiN goldens (default: yes).",
+    ),
 ) -> None:
-    """Seed default golden labels (NbN, MgB2, TiN) into the training set."""
+    """Seed golden and/or literature labels into the training set."""
     train_root, _ = _default_al_roots(None, al_root)
     tstore = TrainingSetStore(train_root)
-    added = seed_default_goldens(tstore)
-    console.print(f"Seeded {len(added)} golden(s); total={tstore.summary()['n_examples']}")
+    n_added = 0
+    if goldens:
+        added = seed_default_goldens(tstore)
+        n_added += len(added)
+        console.print(f"Seeded {len(added)} golden(s)")
+    if from_file is not None:
+        added_lit = seed_from_literature_file(tstore, from_file)
+        n_added += len(added_lit)
+        console.print(f"Ingested {len(added_lit)} literature record(s) from {from_file}")
+    if not goldens and from_file is None:
+        console.print("[yellow]Nothing to seed — pass --from-file or leave goldens on.[/yellow]")
+    summary = tstore.summary()
+    console.print(
+        f"total_labels={summary['n_examples']}  by_family={summary.get('by_family')}  "
+        f"root={summary['root']}"
+    )
 
 
 @app.command("al-promote")
@@ -1659,8 +1788,19 @@ def al_promote_cmd(
     allow_no_epw: bool = typer.Option(
         False, "--allow-no-epw", help="Allow promotion without electron_phonon result."
     ),
+    allow_unknown: bool = typer.Option(
+        False,
+        "--allow-unknown",
+        help="Allow quality_tag=unknown (refused by default).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview eligible/refused without writing the training set.",
+    ),
 ) -> None:
     """Explicitly promote clean campaign evaluations into the training set (AC13)."""
+    from siscforge.active_learning.training_set import promotion_eligibility
     from siscforge.store import EvaluationStore
 
     train_root, _ = _default_al_roots(store_dir, al_root)
@@ -1676,26 +1816,54 @@ def al_promote_cmd(
         if not evaluations:
             raise typer.BadParameter(f"No evaluation for candidate_id={candidate_id}")
 
+    if dry_run:
+        console.print("[bold]Promotion dry-run[/bold] (no writes)")
     promoted = 0
     refused = 0
     for ev in evaluations:
+        ok, reason = promotion_eligibility(
+            ev,
+            require_epw=not allow_no_epw,
+            allow_unknown_quality=allow_unknown,
+        )
+        if dry_run:
+            if ok:
+                promoted += 1
+                console.print(
+                    f"[green]eligible[/green] {ev.candidate.formula} "
+                    f"({ev.candidate.candidate_id[:8]}…)"
+                )
+            else:
+                refused += 1
+                console.print(
+                    f"[yellow]would refuse[/yellow] {ev.candidate.formula}: {reason}"
+                )
+            continue
         try:
-            tstore.promote(
+            _ex, warnings = tstore.promote(
                 ev,
                 campaign_store=str(store_dir),
                 require_epw=not allow_no_epw,
+                allow_unknown_quality=allow_unknown,
             )
             promoted += 1
             console.print(
                 f"[green]promoted[/green] {ev.candidate.formula} "
                 f"({ev.candidate.candidate_id[:8]}…)"
             )
+            for w in warnings:
+                console.print(f"[yellow]warning[/yellow] {w}")
         except PromotionError as exc:
             refused += 1
             console.print(
                 f"[yellow]refused[/yellow] {ev.candidate.formula}: {exc}"
             )
-    console.print(f"promoted={promoted} refused={refused} total_labels={tstore.summary()['n_examples']}")
+    verb = "eligible" if dry_run else "promoted"
+    console.print(
+        f"{verb}={promoted} refused={refused} "
+        f"total_labels={tstore.summary()['n_examples']}"
+        + (" (dry-run)" if dry_run else "")
+    )
 
 
 @app.command("al-train")
@@ -1719,6 +1887,30 @@ def al_train_cmd(
         f"[green]installed[/green] {meta.model_version}  "
         f"labels={meta.training_set_size}  bootstrap={meta.bootstrap}  "
         f"hash={meta.training_set_hash}"
+    )
+    console.print(
+        "[dim]Next campaign `siscforge run --al-root …` will use this model "
+        "for prioritization scores.[/dim]"
+    )
+
+
+@app.command("al-rollback")
+def al_rollback_cmd(
+    version: str = typer.Argument(..., help="Installed model version to activate."),
+    al_root: Path | None = typer.Option(None, "--al-root"),
+) -> None:
+    """Point the active surrogate at a previously installed model version."""
+    _, model_root = _default_al_roots(None, al_root)
+    registry = SurrogateRegistry(model_root)
+    try:
+        meta = registry.set_current(version)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print(f"Available: {registry.list_versions()}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]current[/green] → {meta.model_version} "
+        f"(labels={meta.training_set_size}, bootstrap={meta.bootstrap})"
     )
 
 

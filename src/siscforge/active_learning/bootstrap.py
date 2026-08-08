@@ -1,10 +1,11 @@
-"""Bootstrap regime, lightweight retrain, and AL status (Phase 1.5).
+"""Bootstrap regime, lightweight retrain, and AL status (Phase 1.5 / 1.5b).
 
 Implements design-note failure modes and Specs AC15–AC17:
 
 - Bootstrap mode visible when label count is low
 - Retrain that produces NaNs / absurd metrics keeps the previous model
 - Model metadata records training-set hash and size
+- Active registry context drives predictions so retrain **changes rankings**
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from siscforge.models.active_learning import (
     PrioritizationRecord,
@@ -21,7 +22,9 @@ from siscforge.models.active_learning import (
     TrainingExample,
     TrainingSetSnapshot,
 )
+from siscforge.models.candidate import StructureCandidate
 from siscforge.active_learning.training_set import TrainingSetStore, hash_examples
+from siscforge.surrogates.tc_lambda import TcLambdaPrediction, predict_tc_lambda
 
 # Bootstrap thresholds (design note §6 / Specs §2.2.4)
 DEFAULT_BOOTSTRAP_MAX_LABELS: int = 150
@@ -38,6 +41,61 @@ class RetrainResult:
     refused_reason: str | None = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
     model_path: Path | None = None
+
+
+@dataclass
+class ActiveSurrogateContext:
+    """Resolved active model for prediction + prioritization provenance."""
+
+    model_version: str = "heuristic"
+    method: str = "family_heuristic"
+    training_set_size: int = 0
+    bootstrap: bool = True
+    family_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
+    metadata: SurrogateModelMetadata | None = None
+    mean_uncertainty: float | None = None
+
+    @property
+    def has_trained_payload(self) -> bool:
+        return bool(self.family_stats) and self.method in {
+            "family_mean_fit",
+            "ridge_on_labels",
+            "alignn_head",
+        }
+
+    def predict(
+        self,
+        candidate: StructureCandidate,
+        *,
+        mu_star: float = 0.10,
+    ) -> TcLambdaPrediction:
+        """Predict using trained family means when available."""
+        return predict_tc_lambda(
+            candidate,
+            mu_star=mu_star,
+            family_stats=self.family_stats if self.has_trained_payload else None,
+            model_version=self.model_version,
+            method=self.method,
+            training_set_size=self.training_set_size,
+            bootstrap=self.bootstrap,
+        )
+
+    def predict_many(
+        self,
+        candidates: Sequence[StructureCandidate],
+        *,
+        mu_star: float = 0.10,
+    ) -> dict[str, TcLambdaPrediction]:
+        return {c.candidate_id: self.predict(c, mu_star=mu_star) for c in candidates}
+
+    def banner(self) -> str | None:
+        """Operator-facing bootstrap warning, or None when mature."""
+        if self.bootstrap or not self.has_trained_payload:
+            return (
+                "BOOTSTRAP MODE — rankings are prioritization aids, not quantitative "
+                "predictions. Promote clean EPW results and retrain to improve."
+            )
+        return None
 
 
 class SurrogateRegistry:
@@ -96,20 +154,31 @@ class SurrogateRegistry:
         }
         path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         if make_current:
-            (self.root / "current.json").write_text(
-                json.dumps(
-                    {
-                        "model_version": metadata.model_version,
-                        "training_set_size": metadata.training_set_size,
-                        "bootstrap": metadata.bootstrap,
-                        "method": metadata.method,
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
+            self._write_current_pointer(metadata)
         return path
+
+    def _write_current_pointer(self, metadata: SurrogateModelMetadata) -> None:
+        (self.root / "current.json").write_text(
+            json.dumps(
+                {
+                    "model_version": metadata.model_version,
+                    "training_set_size": metadata.training_set_size,
+                    "bootstrap": metadata.bootstrap,
+                    "method": metadata.method,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def set_current(self, version: str) -> SurrogateModelMetadata:
+        """Point current.json at an existing installed version (rollback)."""
+        meta = self.load(version)
+        if meta is None:
+            raise FileNotFoundError(f"No installed model version {version!r}")
+        self._write_current_pointer(meta)
+        return meta
 
     def record_prioritization(self, record: PrioritizationRecord) -> Path:
         path = self.root / "prioritization" / f"{record.record_id}.json"
@@ -121,6 +190,40 @@ class SurrogateRegistry:
 
     def list_versions(self) -> list[str]:
         return sorted(p.stem for p in (self.root / "models").glob("*.json"))
+
+    def active_context(
+        self,
+        *,
+        n_labels: int | None = None,
+    ) -> ActiveSurrogateContext:
+        """Resolve the active model into a prediction context.
+
+        When no model is installed, returns the heuristic stub context.
+        """
+        meta = self.current()
+        if meta is None:
+            n = int(n_labels or 0)
+            return ActiveSurrogateContext(
+                model_version="heuristic",
+                method="family_heuristic",
+                training_set_size=n,
+                bootstrap=is_bootstrap(n),
+            )
+        payload = self.load_payload(meta.model_version)
+        family_stats = dict((payload.get("payload") or {}).get("family_stats") or {})
+        n = meta.training_set_size if n_labels is None else int(n_labels)
+        boot = bool(meta.bootstrap) or is_bootstrap(
+            n, mean_uncertainty=meta.mean_uncertainty
+        )
+        return ActiveSurrogateContext(
+            model_version=meta.model_version,
+            method=meta.method,
+            training_set_size=meta.training_set_size,
+            bootstrap=boot,
+            family_stats=family_stats,
+            metadata=meta,
+            mean_uncertainty=meta.mean_uncertainty,
+        )
 
 
 def is_bootstrap(
@@ -287,10 +390,8 @@ def al_status(
     ts = training_store.summary()
     current = registry.current()
     n = int(ts.get("n_examples") or 0)
-    bootstrap = is_bootstrap(
-        n,
-        mean_uncertainty=current.mean_uncertainty if current else None,
-    )
+    ctx = registry.active_context(n_labels=n)
+    bootstrap = ctx.bootstrap
     return {
         "training_set": ts,
         "model": (
@@ -306,15 +407,17 @@ def al_status(
             if current
             else None
         ),
-        "bootstrap": bootstrap or (current.bootstrap if current else True),
+        "bootstrap": bootstrap,
         "n_labels": n,
         "versions": registry.list_versions(),
+        "al_root_training": str(training_store.root),
+        "al_root_models": str(registry.root),
         "message": (
-            "BOOTSTRAP MODE — rankings are prioritization aids, not quantitative "
-            "predictions. Promote clean EPW results and retrain to improve."
+            ctx.banner()
             if bootstrap or not current
             else f"Active model {current.model_version} ({current.training_set_size} labels)."
         ),
+        "has_trained_payload": ctx.has_trained_payload,
     }
 
 
@@ -327,6 +430,7 @@ def build_prioritization_record(
     selected_ids: Sequence[str],
     deferred_ids: Sequence[str],
     notes: str = "",
+    context: ActiveSurrogateContext | None = None,
 ) -> PrioritizationRecord:
     """Attach provenance to a prioritization decision (AC14)."""
     scores = []
@@ -344,11 +448,26 @@ def build_prioritization_record(
             )
         elif isinstance(r, dict):
             scores.append(r)
+    if context is not None:
+        model_version = context.model_version
+        method = context.method
+        training_set_size = context.training_set_size
+        bootstrap = context.bootstrap
+    elif model is not None:
+        model_version = model.model_version
+        method = model.method
+        training_set_size = model.training_set_size
+        bootstrap = model.bootstrap
+    else:
+        model_version = "heuristic"
+        method = "family_heuristic"
+        training_set_size = 0
+        bootstrap = True
     return PrioritizationRecord(
-        model_version=model.model_version if model else "heuristic",
-        method=model.method if model else "family_heuristic",
-        training_set_size=model.training_set_size if model else 0,
-        bootstrap=model.bootstrap if model else True,
+        model_version=model_version,
+        method=method,
+        training_set_size=training_set_size,
+        bootstrap=bootstrap,
         strategy=strategy,
         acquisition_weights=dict(weights),
         n_candidates=len(ranked),
@@ -358,3 +477,27 @@ def build_prioritization_record(
         ranked_scores=scores,
         notes=notes,
     )
+
+
+def resolve_al_context(
+    *,
+    al_root: str | Path | None = None,
+    store_dir: str | Path | None = None,
+) -> tuple[TrainingSetStore, SurrogateRegistry, ActiveSurrogateContext]:
+    """Resolve training set + registry roots and active prediction context.
+
+    Default layout: ``<al_root>/training_set`` and ``<al_root>/models``.
+    If *al_root* is None: ``<store_dir>/al`` when store is given, else ``./al_state``.
+    """
+    base: Path
+    if al_root is not None:
+        base = Path(al_root)
+    elif store_dir is not None:
+        base = Path(store_dir) / "al"
+    else:
+        base = Path("al_state")
+    tstore = TrainingSetStore(base / "training_set")
+    registry = SurrogateRegistry(base / "models")
+    n = tstore.summary()["n_examples"]
+    ctx = registry.active_context(n_labels=n)
+    return tstore, registry, ctx
