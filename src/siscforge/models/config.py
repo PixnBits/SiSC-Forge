@@ -134,10 +134,12 @@ class ActiveLearningWeights(BaseModel):
 
 
 class ActiveLearningConfig(BaseModel):
-    """Minimal AL prioritization for expensive EPW jobs (Phase 1 first cut).
+    """Active-learning prioritization + Phase 1.5 flywheel hooks.
 
-    Disabled by default. This coordinator **orders** the queue and selects a
-    top-k subset for the real calculator; it does **not** retrain surrogates.
+    Disabled by default. When enabled, orders the queue and selects a top-k
+    subset for the expensive calculator. Surrogate retrain is **not** automatic
+    inside ``run`` — promote clean labels with ``al-promote`` then
+    ``al-train``. Shared state lives under ``al_root`` (default ``./al_state``).
     """
 
     enabled: bool = False
@@ -155,7 +157,12 @@ class ActiveLearningConfig(BaseModel):
     """If True, non-selected candidates still get surrogate-only evaluations
     so the final ranked table includes the full shortlist pool."""
 
-    version: str = "0.1-priority-queue"
+    al_root: str | None = None
+    """Shared AL state root (training_set/ + models/). None → ``$SISC_AL_ROOT``
+    or ``./al_state``. Do not point this at a campaign output directory."""
+
+    version: str = "0.2-flywheel"
+
 
 
 class CandidateSpec(BaseModel):

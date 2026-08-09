@@ -1,0 +1,43 @@
+[
+  {
+    "_comment": "EXAMPLE seed pack only — illustrative midpoints for bootstrap demos, NOT curated experimental citations. Replace literature_ref with real DOIs/bibkeys before production training.",
+    "formula": "NbN",
+    "tc_K": 16.0,
+    "lambda_total": 1.05,
+    "omega_log": 280.0,
+    "material_family": "tm_nitride",
+    "literature_ref": "example:NbN-NOT-A-CITATION",
+    "source": "literature",
+    "literature_notes": "EXAMPLE midpoint for rocksalt NbN — replace with a real reference before promoting to production training."
+  },
+  {
+    "formula": "ZrN",
+    "tc_K": 10.0,
+    "lambda_total": 0.80,
+    "omega_log": 300.0,
+    "material_family": "tm_nitride",
+    "literature_ref": "example:ZrN-NOT-A-CITATION",
+    "source": "literature",
+    "literature_notes": "EXAMPLE only."
+  },
+  {
+    "formula": "VN",
+    "tc_K": 8.5,
+    "lambda_total": 0.90,
+    "omega_log": 310.0,
+    "material_family": "tm_nitride",
+    "literature_ref": "example:VN-NOT-A-CITATION",
+    "source": "literature",
+    "literature_notes": "EXAMPLE only."
+  },
+  {
+    "formula": "MgB2",
+    "tc_K": 39.0,
+    "lambda_total": 0.85,
+    "omega_log": 700.0,
+    "material_family": "mgb2_boride",
+    "literature_ref": "example:MgB2-NOT-A-CITATION",
+    "source": "literature",
+    "literature_notes": "EXAMPLE isotropic average of two-gap character — not a citation."
+  }
+]

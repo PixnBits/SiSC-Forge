@@ -40,6 +40,8 @@ In short: the search is for the missing manufacturing link that would let an alr
 |-------|-------|--------|
 | **0** | Foundation, mock dry-run, QE phonon | **Done** — [phase0-exit](docs/phase0-exit.md) |
 | **1** | EPW + isotropic Eliashberg, goldens, λ/Tc stub, AL prioritization | **Done** — [phase1-exit](docs/phase1-exit.md) |
+| **1.5a** | AL bootstrap data hygiene (promotion gate, snapshots, retrain CLI) | **Done** — [phase15-exit](docs/phase15-exit.md) |
+| **1.5b** | Trained predictions change rankings; run-loop provenance; operator UX | **In progress** — [phase15b-exit](docs/phase15b-exit.md) |
 | 2 | Si-integration maturity (45° epitaxy, buffers, …) | In progress |
 | 3 | DMFT / unconventional | Future |
 | 4 | Josephson device metrics | Future |
@@ -50,10 +52,35 @@ In short: the search is for the missing manufacturing link that would let an alr
 - Isotropic Allen–Dynes / Eliashberg Tc → `performance_score` ranking
 - NbN & MgB₂ golden examples (mock always; real EPW optional)
 - Family-heuristic λ/Tc **surrogate stub** for pre-filtering
-- Minimal **active-learning** top-k prioritization (not a retrain loop)
+- Minimal **active-learning** top-k prioritization
 - File store, CSV/Markdown export, synthesis cards
 
+### Phase 1.5 active-learning flywheel (workstation)
+
+Shared AL state lives in **`./al_state`** (or `$SISC_AL_ROOT` / `--al-root`), **not** under each campaign `output_dir`, so labels and models accumulate across runs.
+
+```bash
+# 1. Seed goldens (+ optional literature pack — example midpoints only)
+siscforge al-seed --al-root ./al_state
+siscforge al-seed --al-root ./al_state --from-file docs/examples/literature_seeds.json --no-goldens
+
+# 2. Campaign — prioritization uses the active model when present
+siscforge run campaign.yaml -o ./outputs/my_campaign --al-root ./al_state
+
+# 3. After *real* EPW (not --dry-run / mock): preview then promote
+siscforge al-promote ./outputs/my_campaign --al-root ./al_state --dry-run
+siscforge al-promote ./outputs/my_campaign --al-root ./al_state
+siscforge al-train --al-root ./al_state
+siscforge al-status --al-root ./al_state   # progress toward ~150 labels
+
+# 4. Next campaign reuses the trained family-mean fit for ranking
+siscforge run next.yaml -o ./outputs/next --al-root ./al_state
+```
+
+Mock / dry-run evaluations are **hard-refused** by the promotion gate so junk never enters the training set. See [docs/design/active-learning-flywheel.md](docs/design/active-learning-flywheel.md).
+
 Validation: [docs/validation-phase1.md](docs/validation-phase1.md).
+
 
 ## Quick start (Python only — no QE)
 
