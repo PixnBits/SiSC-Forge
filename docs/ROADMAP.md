@@ -84,7 +84,7 @@ This roadmap turns the specifications into an ordered, workstation-first sequenc
 snapshots, lightweight retrain with AC17 safety, bootstrap status CLI, unit
 tests AC13–AC18. See `docs/phase15-exit.md`.
 
-**1.5b (in progress):** trained family-mean predictions **change** acquisition
+**1.5b (shipped):** trained family-mean predictions **change** acquisition
 rankings; `siscforge run --al-root` loads the registry and writes prioritization
 provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 `al-seed --from-file`; `al-rollback`. See `docs/phase15b-exit.md`.

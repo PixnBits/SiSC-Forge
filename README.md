@@ -34,14 +34,14 @@ In short: the search is for the missing manufacturing link that would let an alr
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Setup | [`docs/SETUP.md`](docs/SETUP.md) |
 
-## Current status — **Phase 1 complete** (`v0.1.0`)
+## Current status — **Phase 1 + 1.5 complete** (`v0.1.0`)
 
 | Phase | Focus | Status |
 |-------|-------|--------|
 | **0** | Foundation, mock dry-run, QE phonon | **Done** — [phase0-exit](docs/phase0-exit.md) |
 | **1** | EPW + isotropic Eliashberg, goldens, λ/Tc stub, AL prioritization | **Done** — [phase1-exit](docs/phase1-exit.md) |
 | **1.5a** | AL bootstrap data hygiene (promotion gate, snapshots, retrain CLI) | **Done** — [phase15-exit](docs/phase15-exit.md) |
-| **1.5b** | Trained predictions change rankings; run-loop provenance; operator UX | **In progress** — [phase15b-exit](docs/phase15b-exit.md) |
+| **1.5b** | Trained predictions change rankings; run-loop provenance; operator UX | **Done** — [phase15b-exit](docs/phase15b-exit.md) |
 | 2 | Si-integration maturity (45° epitaxy, buffers, …) | In progress |
 | 3 | DMFT / unconventional | Future |
 | 4 | Josephson device metrics | Future |
@@ -55,7 +55,9 @@ In short: the search is for the missing manufacturing link that would let an alr
 - Minimal **active-learning** top-k prioritization
 - File store, CSV/Markdown export, synthesis cards
 
-### Phase 1.5 active-learning flywheel (workstation)
+### Phase 1.5 active-learning flywheel (workstation) — complete
+
+**1.5a** (data hygiene) and **1.5b** (trained predictions + run-loop wiring + operator UX) are both shipped. The trained surrogate is a **family-mean fit**, not an ALIGNN/MatGL production GNN. Exit notes: [phase15-exit](docs/phase15-exit.md), [phase15b-exit](docs/phase15b-exit.md).
 
 Shared AL state lives in **`./al_state`** (or `$SISC_AL_ROOT` / `--al-root`), **not** under each campaign `output_dir`, so labels and models accumulate across runs.
 
