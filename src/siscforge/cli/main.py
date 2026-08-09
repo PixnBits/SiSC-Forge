@@ -184,7 +184,7 @@ def enumerate_cmd(
             else "—",
         ]
         if score_si:
-            si = score_si_feasibility(c)
+            si = score_si_feasibility(c, config=config.si_feasibility)
             row.append(f"{si.total:.1f}")
         table.add_row(*row)
     console.print(table)
@@ -953,7 +953,11 @@ def run_cmd(
         raise typer.Exit(code=1)
 
     # 2c. Si-feasibility (cheap) + active-learning prioritization
-    si_by_id = {c.candidate_id: score_si_feasibility(c) for c in candidates}
+    # Component weights from CampaignConfig.si_feasibility (P2.1 YAML-overridable).
+    si_by_id = {
+        c.candidate_id: score_si_feasibility(c, config=config.si_feasibility)
+        for c in candidates
+    }
     al_cfg = config.active_learning
     # Ensure predictions carry trained model provenance
     predictions = dict(tc_fres.predictions)

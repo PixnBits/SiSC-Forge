@@ -5,12 +5,16 @@
 #
 # Compare Si-score notes to cube-on-cube-only scoring (v0.1 used ~53 total
 # dominated by ~24% cube-on-cube mismatch).
+#
+# P2.1: component weights are YAML-overridable under si_feasibility.weights
+# (defaults match COMPONENT_WEIGHTS; omit the block for unchanged behaviour).
 
 name: nbn_si_45deg
 description: >
   Single NbN candidate with auto epitaxy (45° and buffer options) so
-  Si-feasibility v0.2 can score beyond cube-on-cube pessimism.
-version: "0.2"
+  Si-feasibility v0.3 can score beyond cube-on-cube pessimism with a
+  transparent, weight-auditable component breakdown.
+version: "0.3"
 dry_run: true
 
 enumeration:
@@ -31,6 +35,16 @@ calculators:
 
 formation_filter:
   enabled: false
+
+# P2.1 — first-class Si-feasibility component weights (optional; defaults shown).
+si_feasibility:
+  weights:
+    lattice_mismatch: 0.35
+    thermal_budget: 0.20
+    chemical_compatibility: 0.20
+    buffer_availability: 0.10
+    process_maturity: 0.15
+  cmos_limit_c: 450.0
 
 ranking:
   performance_weight: 0.5

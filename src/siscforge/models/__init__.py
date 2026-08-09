@@ -1,5 +1,12 @@
 """Pydantic v2 data models for SiSC-Forge."""
 
+from siscforge.models.active_learning import (
+    PrioritizationRecord,
+    SurrogateModelMetadata,
+    SurrogatePrediction,
+    TrainingExample,
+    TrainingSetSnapshot,
+)
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import (
     ActiveLearningConfig,
@@ -15,15 +22,10 @@ from siscforge.models.config import (
     QualityConfig,
     RankingConfig,
     RunConfig,
+    SiFeasibilityConfig,
+    SiFeasibilityWeights,
     SurrogateConfig,
     TcLambdaSurrogateConfig,
-)
-from siscforge.models.active_learning import (
-    PrioritizationRecord,
-    SurrogateModelMetadata,
-    SurrogatePrediction,
-    TrainingExample,
-    TrainingSetSnapshot,
 )
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
@@ -59,7 +61,9 @@ __all__ = [
     "RunConfig",
     "SCFResult",
     "SiFeasibilityComponents",
+    "SiFeasibilityConfig",
     "SiFeasibilityScore",
+    "SiFeasibilityWeights",
     "StructureCandidate",
     "SurrogateConfig",
     "TcLambdaSurrogateConfig",

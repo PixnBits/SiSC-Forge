@@ -5,17 +5,24 @@ is always populated. Scores are 0–100 (higher = more Si-process friendly).
 
 v0.2 adds rocksalt **45° epitaxy** matching and a minimal **buffer library**
 so nitride cube-on-cube pessimism can be improved when scientifically justified.
+
+v0.3 (P2.1) makes component **weights first-class and YAML-overridable** via
+``CampaignConfig.si_feasibility.weights`` (keys: lattice_mismatch,
+thermal_budget, chemical_compatibility, buffer_availability, process_maturity).
+Active weights and scorer version are stored on every
+:class:`~siscforge.models.results.SiFeasibilityScore` for auditability.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from siscforge.models.candidate import StructureCandidate
+from siscforge.models.config import SiFeasibilityConfig, SiFeasibilityWeights
 from siscforge.models.results import SiFeasibilityComponents, SiFeasibilityScore
 from siscforge.silicon.buffers import (
-    BUFFER_LIBRARY,
     list_buffers_for_family,
 )
 from siscforge.structure.strain import (
@@ -26,9 +33,10 @@ from siscforge.structure.strain import (
     substrate_in_plane_spacing,
 )
 
-SCORER_VERSION = "0.2"
+SCORER_VERSION = "0.3"
 
 # Default weights for the composite total (must sum to 1.0).
+# Override via CampaignConfig.si_feasibility.weights or score_si_feasibility(weights=…).
 COMPONENT_WEIGHTS: dict[str, float] = {
     "lattice_mismatch": 0.35,
     "thermal_budget": 0.20,
@@ -36,6 +44,14 @@ COMPONENT_WEIGHTS: dict[str, float] = {
     "buffer_availability": 0.10,
     "process_maturity": 0.15,
 }
+
+COMPONENT_KEYS: tuple[str, ...] = (
+    "lattice_mismatch",
+    "thermal_budget",
+    "chemical_compatibility",
+    "buffer_availability",
+    "process_maturity",
+)
 
 # Heuristic process temperatures (°C) by family — lower is easier on CMOS backend.
 _FAMILY_PROCESS_TEMP_C: dict[str, float] = {
@@ -67,9 +83,35 @@ _FAMILY_MATURITY: dict[str, float] = {
 
 EpitaxyMode = Literal["auto", "cube_on_cube", "45deg"]
 
+WeightsLike = Mapping[str, float] | SiFeasibilityWeights | SiFeasibilityConfig | None
+
 
 def _clamp(score: float) -> float:
     return float(max(0.0, min(100.0, score)))
+
+
+def normalize_component_weights(
+    weights: WeightsLike = None,
+) -> dict[str, float]:
+    """Return a full, non-negative weight vector normalized to sum 1.0.
+
+    Accepts a partial dict, :class:`SiFeasibilityWeights`, or
+    :class:`SiFeasibilityConfig`. Missing keys fall back to
+    :data:`COMPONENT_WEIGHTS`. Unknown keys are ignored.
+    """
+    base = dict(COMPONENT_WEIGHTS)
+    if weights is None:
+        raw = base
+    elif isinstance(weights, SiFeasibilityConfig):
+        raw = {**base, **weights.weights.as_dict()}
+    elif isinstance(weights, SiFeasibilityWeights):
+        raw = {**base, **weights.as_dict()}
+    else:
+        raw = {**base, **{k: float(v) for k, v in weights.items() if k in base}}
+    # Keep only known component keys, non-negative
+    cleaned = {k: max(0.0, float(raw.get(k, base[k]))) for k in COMPONENT_KEYS}
+    w_sum = sum(cleaned.values()) or 1.0
+    return {k: cleaned[k] / w_sum for k in COMPONENT_KEYS}
 
 
 def _mismatch_score_from_percent(mismatch_pct: float) -> float:
@@ -238,19 +280,41 @@ def _raw_mismatch_percent(candidate: StructureCandidate) -> float | None:
 def score_si_feasibility(
     candidate: StructureCandidate,
     *,
-    weights: dict[str, float] | None = None,
-    cmos_limit_c: float = 450.0,
+    weights: WeightsLike = None,
+    cmos_limit_c: float | None = None,
+    config: SiFeasibilityConfig | None = None,
 ) -> SiFeasibilityScore:
     """Compute a transparent Silicon Feasibility Score for *candidate*.
 
     All component fields are always filled. Missing structural data falls back
     to family-level heuristics so scoring never crashes on partial candidates.
+
+    Parameters
+    ----------
+    weights
+        Optional override of component weights (dict / ``SiFeasibilityWeights`` /
+        ``SiFeasibilityConfig``). Defaults match :data:`COMPONENT_WEIGHTS`.
+        Campaign YAML path: ``si_feasibility.weights.<component>``.
+    cmos_limit_c
+        CMOS backend thermal limit (°C). Defaults to 450 or
+        ``config.cmos_limit_c`` when a config is supplied.
+    config
+        Optional :class:`SiFeasibilityConfig` (weights + cmos limit). Equivalent
+        to passing ``weights=config`` when only config is available.
     """
-    w = dict(COMPONENT_WEIGHTS)
-    if weights:
-        w.update(weights)
-    w_sum = sum(w.values()) or 1.0
-    w = {k: v / w_sum for k, v in w.items()}
+    # Resolve config / weights / cmos limit (config is a convenience alias).
+    if config is not None and weights is None:
+        weights = config
+    if isinstance(weights, SiFeasibilityConfig):
+        if cmos_limit_c is None:
+            cmos_limit_c = float(weights.cmos_limit_c)
+        w = normalize_component_weights(weights)
+    else:
+        w = normalize_component_weights(weights)
+        if cmos_limit_c is None and config is not None:
+            cmos_limit_c = float(config.cmos_limit_c)
+    if cmos_limit_c is None:
+        cmos_limit_c = 450.0
 
     family = candidate.material_family
     notes: list[str] = []
@@ -331,15 +395,46 @@ def score_si_feasibility(
         + ("; ".join(notes) if notes else "all components from family + lattice rules")
     )
 
+    # Round weights for stable JSON / CSV provenance
+    weights_out = {k: round(w[k], 6) for k in COMPONENT_KEYS}
+
     return SiFeasibilityScore(
         total=total,
         components=components,
+        weights=weights_out,
         lattice_mismatch_pct=None if mismatch_pct is None else round(mismatch_pct, 3),
         recommended_buffers=buffers,
         recommended_thickness_nm=thickness,
         notes=note_str,
         version=SCORER_VERSION,
     )
+
+
+def rank_by_si_feasibility(
+    candidates: list[StructureCandidate],
+    *,
+    weights: WeightsLike = None,
+    cmos_limit_c: float | None = None,
+    config: SiFeasibilityConfig | None = None,
+) -> list[tuple[StructureCandidate, SiFeasibilityScore]]:
+    """Score candidates and sort by Si-feasibility ``total`` (descending).
+
+    Lightweight helper for P2.1 weight-sensitivity checks and for callers that
+    want a pure Si ordering without the full performance composite. Ranking of
+    campaign evaluations still uses ``si_feasibility.total`` via
+    :mod:`siscforge.ranking`.
+    """
+    scored = [
+        (
+            c,
+            score_si_feasibility(
+                c, weights=weights, cmos_limit_c=cmos_limit_c, config=config
+            ),
+        )
+        for c in candidates
+    ]
+    scored.sort(key=lambda pair: pair[1].total, reverse=True)
+    return scored
 
 
 def scorer_debug_info(candidate: StructureCandidate) -> dict[str, Any]:
@@ -352,6 +447,8 @@ def scorer_debug_info(candidate: StructureCandidate) -> dict[str, Any]:
         "si_a": SI_LATTICE_CONSTANT,
         "epitaxy_mode": _resolve_epitaxy_mode(candidate),
         "options": evaluate_mismatch_options(candidate),
+        "default_weights": dict(COMPONENT_WEIGHTS),
+        "scorer_version": SCORER_VERSION,
     }
     try:
         info["substrate_target_a"] = substrate_in_plane_spacing(substrate)

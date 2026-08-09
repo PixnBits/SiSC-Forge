@@ -137,7 +137,8 @@ class SiFeasibilityComponents(BaseModel):
     """Individual terms that feed the composite Silicon Feasibility Score.
 
     Each component is on a 0–100 scale (higher = more feasible). Weights are
-    applied in :class:`SiFeasibilityScore` / the scoring module (later).
+    applied in :class:`SiFeasibilityScore` / ``silicon.feasibility`` and are
+    YAML-overridable via ``CampaignConfig.si_feasibility.weights`` (P2.1).
     """
 
     lattice_mismatch: float = Field(default=50.0, ge=0.0, le=100.0)
@@ -168,6 +169,16 @@ class SiFeasibilityComponents(BaseModel):
             raise ValueError("Si-feasibility component scores must be in [0, 100]")
         return float(v)
 
+    def as_dict(self) -> dict[str, float]:
+        """Return component scores as a plain dict (stable key order)."""
+        return {
+            "lattice_mismatch": float(self.lattice_mismatch),
+            "thermal_budget": float(self.thermal_budget),
+            "chemical_compatibility": float(self.chemical_compatibility),
+            "buffer_availability": float(self.buffer_availability),
+            "process_maturity": float(self.process_maturity),
+        }
+
 
 class SiFeasibilityScore(BaseModel):
     """Composite Silicon Feasibility Score (0–100) with component breakdown."""
@@ -177,6 +188,13 @@ class SiFeasibilityScore(BaseModel):
 
     components: SiFeasibilityComponents = Field(default_factory=SiFeasibilityComponents)
     """Per-term breakdown for transparency and re-weighting."""
+
+    weights: dict[str, float] = Field(default_factory=dict)
+    """Active component weights used to form ``total`` (normalized; sum ≈ 1).
+
+    Keys match :class:`SiFeasibilityComponents`. Empty only for legacy scores
+    created before P2.1; the scorer always populates this field.
+    """
 
     lattice_mismatch_pct: float | None = None
     """Raw lattice mismatch percentage vs Si (or vs chosen buffer)."""
@@ -191,7 +209,7 @@ class SiFeasibilityScore(BaseModel):
     """Human-readable rationale or caveats."""
 
     version: str = "0.1"
-    """Scoring-rule version for provenance."""
+    """Scoring-rule version for provenance (see ``silicon.feasibility.SCORER_VERSION``)."""
 
     @field_validator("total")
     @classmethod

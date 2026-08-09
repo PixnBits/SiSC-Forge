@@ -143,13 +143,14 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 - Elastic constants (DFT or ML) for strain-energy calculations.
 
 ### Suggested Order of Module Implementation
-1. Expand SiFeasibilityComponents and make every term first-class in the data model and exports.
+1. Expand SiFeasibilityComponents and make every term first-class in the data model and exports. **(P2.1 — done: YAML weights + export provenance)**
 2. Buffer library + stack suggestor with chemical-compatibility flags.
 3. Thermal-budget and oxygen/nitrogen window estimators.
 4. Membrane and critical-thickness helpers.
 5. Ranking engine upgrades (configurable weights, Pareto, acquisition score).
 6. Synthesis-card generator and CSV/JSON schema freeze.
 7. (Optional) Automated slab builder for interface DFT on shortlist.
+
 
 ### What Can Be Validated Without Large-Scale Compute
 - Known successful systems (NbN on Si, MgB₂ on buffered Si) receive high, well-explained Si-feasibility scores.

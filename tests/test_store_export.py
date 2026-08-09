@@ -8,6 +8,7 @@ from siscforge.calculators import get
 from siscforge.export import (
     CSV_FIELDNAMES,
     write_evaluations_csv,
+    write_evaluations_json,
     write_synthesis_cards,
 )
 from siscforge.models.config import CampaignConfig, EnumerationConfig
@@ -63,11 +64,39 @@ def test_csv_has_required_columns(tmp_path: Path) -> None:
         "material_family",
         "si_feasibility_total",
         "si_lattice_mismatch",
+        "si_thermal_budget",
+        "si_chemical",
+        "si_buffer",
+        "si_process_maturity",
+        "si_scorer_version",
+        "si_w_lattice_mismatch",
+        "si_w_thermal_budget",
+        "si_w_chemical",
+        "si_w_buffer",
+        "si_w_process_maturity",
         "status",
         "composition",
     ):
-        assert col in header
+        assert col in header, col
     assert "rank" in CSV_FIELDNAMES
+    # Weight columns populated for scored rows
+    assert "0.35" in text or "0.3" in text
+
+
+def test_json_includes_si_weights_and_components(tmp_path: Path) -> None:
+    evals = rank_evaluations(_tiny_evaluations())
+    path = write_evaluations_json(evals, tmp_path / "out.json")
+    data = path.read_text()
+    assert "lattice_mismatch" in data
+    assert "weights" in data
+    assert "thermal_budget" in data
+    # Full component breakdown present
+    for key in (
+        "chemical_compatibility",
+        "buffer_availability",
+        "process_maturity",
+    ):
+        assert key in data
 
 
 def test_synthesis_cards(tmp_path: Path) -> None:
@@ -77,6 +106,9 @@ def test_synthesis_cards(tmp_path: Path) -> None:
     assert "Synthesis cards" in text
     assert "Silicon feasibility" in text
     assert "Phonon summary" in text
+    assert "weights" in text
+    assert "lattice mismatch" in text
+    assert "process maturity" in text
 
 
 def test_campaign_config_formation_filter_yaml(tmp_path: Path) -> None:

@@ -45,6 +45,49 @@ class QualityConfig(BaseModel):
     version: str = "0.1"
 
 
+class SiFeasibilityWeights(BaseModel):
+    """YAML-overridable component weights for the Silicon Feasibility Score.
+
+    Defaults match ``siscforge.silicon.feasibility.COMPONENT_WEIGHTS`` so
+    behaviour is unchanged when this block is omitted. Weights need not sum
+    to 1.0 — they are normalized at score time.
+
+    Config path: ``si_feasibility.weights.<component>`` (campaign YAML).
+    Component keys match :class:`~siscforge.models.results.SiFeasibilityComponents`.
+    """
+
+    lattice_mismatch: float = Field(default=0.35, ge=0.0)
+    thermal_budget: float = Field(default=0.20, ge=0.0)
+    chemical_compatibility: float = Field(default=0.20, ge=0.0)
+    buffer_availability: float = Field(default=0.10, ge=0.0)
+    process_maturity: float = Field(default=0.15, ge=0.0)
+
+    def as_dict(self) -> dict[str, float]:
+        """Return weights as a plain dict (stable key order)."""
+        return {
+            "lattice_mismatch": float(self.lattice_mismatch),
+            "thermal_budget": float(self.thermal_budget),
+            "chemical_compatibility": float(self.chemical_compatibility),
+            "buffer_availability": float(self.buffer_availability),
+            "process_maturity": float(self.process_maturity),
+        }
+
+
+class SiFeasibilityConfig(BaseModel):
+    """Campaign-level Silicon Feasibility scoring knobs (Phase 2 / P2.1).
+
+    Override component weights so experimental collaborators can re-weight
+    the breakdown without reading source. Ranking still uses the composite
+    ``total``; multi-objective / Pareto ranking is a later package (P2.4).
+    """
+
+    weights: SiFeasibilityWeights = Field(default_factory=SiFeasibilityWeights)
+    """Component weights for the Si-feasibility composite (see COMPONENT_WEIGHTS)."""
+
+    cmos_limit_c: float = Field(default=450.0, ge=0.0)
+    """Backend thermal-budget limit (°C) for the thermal_budget component."""
+
+
 class RankingConfig(BaseModel):
     """Weights and options for multi-objective ranking."""
 
@@ -609,6 +652,24 @@ class CampaignConfig(BaseModel):
     """Optional top-k prioritization for expensive EPW jobs."""
 
     ranking: RankingConfig = Field(default_factory=RankingConfig)
+    """Composite ranking (performance vs Si-total). Component weights live under
+    ``si_feasibility`` (P2.1), not here."""
+
+    si_feasibility: SiFeasibilityConfig = Field(default_factory=SiFeasibilityConfig)
+    """Silicon Feasibility scorer knobs — component weights + CMOS limit (P2.1).
+
+    YAML::
+
+        si_feasibility:
+          weights:
+            lattice_mismatch: 0.35
+            thermal_budget: 0.20
+            chemical_compatibility: 0.20
+            buffer_availability: 0.10
+            process_maturity: 0.15
+          cmos_limit_c: 450.0
+    """
+
     josephson: JosephsonConfig = Field(default_factory=JosephsonConfig)
 
     run: RunConfig = Field(default_factory=RunConfig)
