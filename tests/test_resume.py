@@ -14,13 +14,14 @@ from siscforge.cli.main import app
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import CampaignConfig, RunConfig
 from siscforge.models.provenance import Provenance
-from siscforge.models.results import ElectronPhononResult
+from siscforge.models.results import ElectronPhononResult, SiFeasibilityScore
 from siscforge.resume import (
     find_resumable_evaluation,
     index_evaluations,
     is_successful_evaluation,
     resume_fingerprint,
 )
+from siscforge.silicon.feasibility import SCORER_VERSION
 from siscforge.store import EvaluationStore
 from siscforge.structure.generator import structure_to_candidate
 from siscforge.structure.nitrides import build_binary_nitride
@@ -173,6 +174,68 @@ def test_cli_resume_skips_finished(tmp_path: Path) -> None:
     # 3 expensive + no deferred
     okish = [e for e in evals if e.status in {"ok", "mock"}]
     assert len(okish) >= 3
+
+
+def test_resume_refreshes_si_score_from_campaign_weights(tmp_path: Path) -> None:
+    """Resume must apply current YAML Si weights, not freeze a stale stored score.
+
+    P2.1: _finalize_eval always replaces si_feasibility with the campaign-current
+    score so changing weights/CMOS limit (or upgrading from v0.2) takes effect
+    even for candidates skipped by resume.
+    """
+    out = tmp_path / "si_refresh_out"
+    cand = _nbn(0.0)
+    # Simulate a prior run with a stale non-mock Si score (wrong version/weights).
+    stale_si = SiFeasibilityScore(
+        total=10.0,
+        version="0.2",
+        weights={},
+        notes="stale pre-P2.1 score",
+    )
+    prior = _mock_ok(cand).model_copy(
+        update={"si_feasibility": stale_si, "status": "mock"}
+    )
+    store = EvaluationStore(out)
+    store.append_evaluation(prior)
+
+    cfg = CampaignConfig(
+        name="si_refresh_resume",
+        dry_run=True,
+        enumeration={
+            "formulas": ["NbN"],
+            "strain_values": [0.0],
+            "max_candidates": 1,
+            "substrates": ["Si(001)"],
+        },
+        formation_filter={"enabled": False},
+        si_feasibility={
+            "weights": {
+                "lattice_mismatch": 0.0,
+                "thermal_budget": 0.0,
+                "chemical_compatibility": 0.0,
+                "buffer_availability": 0.0,
+                "process_maturity": 1.0,
+            }
+        },
+        run={"resume": True, "continue_on_error": True, "force_rerun": False},
+        output_dir=str(out),
+        export_formats=["json"],
+    )
+    yaml_path = tmp_path / "si_refresh.yaml"
+    cfg.to_yaml(yaml_path)
+
+    result = runner.invoke(app, ["run", "--dry-run", str(yaml_path)])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert "skip (already" in result.stdout
+
+    evals = EvaluationStore(out).load_evaluations()
+    assert len(evals) >= 1
+    si = evals[0].si_feasibility
+    assert si is not None
+    assert si.version == SCORER_VERSION
+    assert si.weights.get("process_maturity") == pytest.approx(1.0)
+    assert si.total != 10.0  # no longer the frozen stale total
+    assert abs(sum(si.weights.values()) - 1.0) < 1e-6
 
 
 def test_cli_force_rerun_recomputes(tmp_path: Path) -> None:

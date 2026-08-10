@@ -47,6 +47,16 @@ def write_candidates_json(
     return path
 
 
+def _si_weight(si, key: str) -> float | None:
+    """Look up a component weight from a SiFeasibilityScore (if present)."""
+    if si is None:
+        return None
+    weights = getattr(si, "weights", None) or {}
+    if key not in weights:
+        return None
+    return float(weights[key])
+
+
 def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
     """Flat row for CSV / tables with Phase-0 summary fields."""
     si = ev.si_feasibility
@@ -106,11 +116,17 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "acquisition_score": getattr(ev, "acquisition_score", None),
         "al_selected_for_expensive": getattr(ev, "al_selected_for_expensive", None),
         "si_feasibility_total": si.total if si else None,
+        "si_scorer_version": si.version if si else None,
         "si_lattice_mismatch": comps.lattice_mismatch if comps else None,
         "si_thermal_budget": comps.thermal_budget if comps else None,
         "si_chemical": comps.chemical_compatibility if comps else None,
         "si_buffer": comps.buffer_availability if comps else None,
         "si_process_maturity": comps.process_maturity if comps else None,
+        "si_w_lattice_mismatch": _si_weight(si, "lattice_mismatch"),
+        "si_w_thermal_budget": _si_weight(si, "thermal_budget"),
+        "si_w_chemical": _si_weight(si, "chemical_compatibility"),
+        "si_w_buffer": _si_weight(si, "buffer_availability"),
+        "si_w_process_maturity": _si_weight(si, "process_maturity"),
         "composite_score": ev.composite_score,
         "result_quality": getattr(ev, "result_quality", None) or "unknown",
         "quality_flags": ";".join(getattr(ev, "quality_flags", None) or []),
@@ -163,11 +179,17 @@ CSV_FIELDNAMES = [
     "acquisition_score",
     "al_selected_for_expensive",
     "si_feasibility_total",
+    "si_scorer_version",
     "si_lattice_mismatch",
     "si_thermal_budget",
     "si_chemical",
     "si_buffer",
     "si_process_maturity",
+    "si_w_lattice_mismatch",
+    "si_w_thermal_budget",
+    "si_w_chemical",
+    "si_w_buffer",
+    "si_w_process_maturity",
     "composite_score",
     "result_quality",
     "quality_flags",
@@ -310,6 +332,13 @@ def write_candidate_onepagers(
     return written
 
 
+def _fmt_weights(weights: dict[str, float] | None) -> str:
+    if not weights:
+        return "—"
+    parts = [f"{k}={v:g}" for k, v in weights.items()]
+    return ", ".join(parts)
+
+
 def _card_markdown(ev: CandidateEvaluation) -> list[str]:
     c = ev.candidate
     si = ev.si_feasibility
@@ -383,17 +412,35 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         )
 
     if si is not None:
-
+        w = getattr(si, "weights", None) or {}
         lines.extend(
             [
                 "",
                 "### Silicon feasibility",
                 f"- **total**: {si.total:.1f} / 100 (v{si.version})",
-                f"- lattice mismatch: {si.components.lattice_mismatch:.1f}",
-                f"- thermal budget: {si.components.thermal_budget:.1f}",
-                f"- chemical compatibility: {si.components.chemical_compatibility:.1f}",
-                f"- buffer availability: {si.components.buffer_availability:.1f}",
-                f"- process maturity: {si.components.process_maturity:.1f}",
+                f"- **weights**: {_fmt_weights(w)}",
+                f"- lattice mismatch: {si.components.lattice_mismatch:.1f}"
+                + (f" (w={w['lattice_mismatch']:g})" if "lattice_mismatch" in w else ""),
+                f"- thermal budget: {si.components.thermal_budget:.1f}"
+                + (f" (w={w['thermal_budget']:g})" if "thermal_budget" in w else ""),
+                f"- chemical compatibility: {si.components.chemical_compatibility:.1f}"
+                + (
+                    f" (w={w['chemical_compatibility']:g})"
+                    if "chemical_compatibility" in w
+                    else ""
+                ),
+                f"- buffer availability: {si.components.buffer_availability:.1f}"
+                + (
+                    f" (w={w['buffer_availability']:g})"
+                    if "buffer_availability" in w
+                    else ""
+                ),
+                f"- process maturity: {si.components.process_maturity:.1f}"
+                + (
+                    f" (w={w['process_maturity']:g})"
+                    if "process_maturity" in w
+                    else ""
+                ),
                 f"- recommended buffers: {', '.join(si.recommended_buffers) or '—'}",
                 f"- notes: {si.notes or '—'}",
             ]
@@ -424,10 +471,12 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- Tc Eliashberg (K): {eph.Tc_eliashberg}",
                 f"- converged: {eph.converged}",
                 f"- status / engine quality_tag: {eph.status} / {eph.quality_tag}",
-                f"- result_quality (trust): "
-                f"{getattr(eph, 'result_quality', None) or getattr(ev, 'result_quality', 'unknown')}",
             ]
         )
+        eph_rq = getattr(eph, "result_quality", None) or getattr(
+            ev, "result_quality", "unknown"
+        )
+        lines.append(f"- result_quality (trust): {eph_rq}")
         if getattr(ev, "result_quality", None) in {
             "screening_suspect",
             "unreliable",

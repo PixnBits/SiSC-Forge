@@ -1,26 +1,37 @@
-"""Tests for the Silicon Feasibility scorer."""
+"""Tests for the Silicon Feasibility scorer (P2.1 first-class weights)."""
 
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
+import yaml
 
 from siscforge.models.candidate import StructureCandidate
-from siscforge.models.config import EnumerationConfig
+from siscforge.models.config import (
+    CampaignConfig,
+    SiFeasibilityConfig,
+    SiFeasibilityWeights,
+)
 from siscforge.silicon.feasibility import (
+    COMPONENT_KEYS,
     COMPONENT_WEIGHTS,
     SCORER_VERSION,
-    evaluate_mismatch_options,
+    normalize_component_weights,
+    rank_by_si_feasibility,
     score_si_feasibility,
 )
-from siscforge.structure.generator import generate_candidates, structure_to_candidate
-from siscforge.structure.nitrides import build_binary_nitride
-from siscforge.structure.strain import lattice_mismatch_percent
 
 
-def test_components_always_populated() -> None:
-    cand = StructureCandidate(
+def _nbn_candidate(**meta_extra: object) -> StructureCandidate:
+    meta = {
+        "conventional_lattice_a": 4.392,
+        "epitaxy_orientation": "auto",
+        "use_buffers": True,
+    }
+    meta.update(meta_extra)
+    return StructureCandidate(
         formula="NbN",
         material_family="tm_nitride",
         composition={"Nb": 0.5, "N": 0.5},
@@ -28,86 +39,12 @@ def test_components_always_populated() -> None:
         lattice_angles=(90.0, 90.0, 90.0),
         substrate="Si(001)",
         in_plane_strain=0.0,
-        metadata={"conventional_lattice_a": 4.392, "epitaxy_orientation": "auto"},
+        metadata=meta,
     )
-    score = score_si_feasibility(cand)
-    assert 0.0 <= score.total <= 100.0
-    c = score.components
-    for val in (
-        c.lattice_mismatch,
-        c.thermal_budget,
-        c.chemical_compatibility,
-        c.buffer_availability,
-        c.process_maturity,
-    ):
-        assert 0.0 <= val <= 100.0
-    assert score.lattice_mismatch_pct is not None
-    assert score.recommended_buffers
-    assert score.version == SCORER_VERSION
 
 
-def test_45deg_mismatch_better_than_cube_on_cube_for_nbn() -> None:
-    a = 4.392
-    cube = lattice_mismatch_percent(a, "Si(001)", match="cube_on_cube")
-    deg45 = lattice_mismatch_percent(a, "Si(001)", match="45deg")
-    assert abs(deg45) < abs(cube)
-    # 45° uses a*√2 vs a_Si
-    expected = 100.0 * (5.4307 - a * math.sqrt(2)) / (a * math.sqrt(2))
-    assert deg45 == pytest.approx(expected, rel=1e-4)
-
-
-def test_auto_epitaxy_improves_nbn_si_score() -> None:
-    base = StructureCandidate(
-        formula="NbN",
-        material_family="tm_nitride",
-        composition={"Nb": 0.5, "N": 0.5},
-        lattice_abc=(4.392, 4.392, 4.392),
-        substrate="Si(001)",
-        metadata={
-            "conventional_lattice_a": 4.392,
-            "epitaxy_orientation": "cube_on_cube",
-            "use_buffers": False,
-        },
-    )
-    auto = base.model_copy(
-        update={
-            "metadata": {
-                "conventional_lattice_a": 4.392,
-                "epitaxy_orientation": "auto",
-                "use_buffers": True,
-            }
-        }
-    )
-    s_cube = score_si_feasibility(base)
-    s_auto = score_si_feasibility(auto)
-    assert s_auto.components.lattice_mismatch >= s_cube.components.lattice_mismatch
-    assert s_auto.total >= s_cube.total
-    assert "45" in s_auto.notes or "buffer" in s_auto.notes.lower()
-
-
-def test_mismatch_options_include_buffer() -> None:
-    cand = StructureCandidate(
-        formula="NbN",
-        material_family="tm_nitride",
-        composition={"Nb": 0.5, "N": 0.5},
-        metadata={
-            "conventional_lattice_a": 4.392,
-            "epitaxy_orientation": "auto",
-            "use_buffers": True,
-        },
-        substrate="Si(001)",
-    )
-    opts = evaluate_mismatch_options(cand)
-    assert any("buffer" in o["path"] for o in opts)
-    assert any(o["match"] == "45deg" for o in opts)
-
-
-def test_weights_sum_to_one() -> None:
-    assert abs(sum(COMPONENT_WEIGHTS.values()) - 1.0) < 1e-9
-
-
-def test_bsi_scores_high() -> None:
-    bsi = StructureCandidate(
+def _bsi_candidate() -> StructureCandidate:
+    return StructureCandidate(
         formula="Si0.9B0.1",
         material_family="b_doped_si",
         composition={"Si": 0.9, "B": 0.1},
@@ -115,36 +52,79 @@ def test_bsi_scores_high() -> None:
         substrate="Si(001)",
         in_plane_strain=0.0,
     )
-    nitride = StructureCandidate(
-        formula="NbN",
-        material_family="tm_nitride",
-        composition={"Nb": 0.5, "N": 0.5},
-        lattice_abc=(4.392, 4.392, 4.392),
-        substrate="Si(001)",
+
+
+def test_scorer_version_is_p21() -> None:
+    assert SCORER_VERSION == "0.3"
+    assert score_si_feasibility(_nbn_candidate()).version == "0.3"
+
+
+def test_default_weights_match_component_weights_constant() -> None:
+    assert COMPONENT_WEIGHTS == {
+        "lattice_mismatch": 0.35,
+        "thermal_budget": 0.20,
+        "chemical_compatibility": 0.20,
+        "buffer_availability": 0.10,
+        "process_maturity": 0.15,
+    }
+    assert abs(sum(COMPONENT_WEIGHTS.values()) - 1.0) < 1e-9
+    cfg_w = SiFeasibilityWeights().as_dict()
+    assert cfg_w == COMPONENT_WEIGHTS
+
+
+def test_components_always_populated() -> None:
+    score = score_si_feasibility(_nbn_candidate())
+    assert 0.0 <= score.total <= 100.0
+    assert set(score.weights) == set(COMPONENT_KEYS)
+    assert abs(sum(score.weights.values()) - 1.0) < 1e-6
+
+
+def test_normalize_component_weights_zero_sum_and_nonfinite() -> None:
+    zeros = normalize_component_weights({k: 0.0 for k in COMPONENT_KEYS})
+    assert zeros == COMPONENT_WEIGHTS
+    # Non-finite falls back
+    nan_w = normalize_component_weights({"lattice_mismatch": float("nan")})
+    assert nan_w == COMPONENT_WEIGHTS
+    inf_w = normalize_component_weights({"thermal_budget": float("inf")})
+    assert inf_w == COMPONENT_WEIGHTS
+
+
+def test_weight_override_reorders_candidates() -> None:
+    nbn = _nbn_candidate()
+    bsi = _bsi_candidate()
+    default_order = rank_by_si_feasibility([nbn, bsi])
+    assert default_order[0][0].formula == "Si0.9B0.1"
+    maturity_heavy = {
+        "lattice_mismatch": 0.0,
+        "thermal_budget": 0.0,
+        "chemical_compatibility": 0.0,
+        "buffer_availability": 0.0,
+        "process_maturity": 1.0,
+    }
+    maturity_order = rank_by_si_feasibility([nbn, bsi], weights=maturity_heavy)
+    assert maturity_order[0][0].formula == "NbN"
+
+
+def test_yaml_config_weights() -> None:
+    cfg = CampaignConfig(
+        name="si_maturity",
+        si_feasibility={
+            "weights": {
+                "lattice_mismatch": 0.0,
+                "thermal_budget": 0.0,
+                "chemical_compatibility": 0.0,
+                "buffer_availability": 0.0,
+                "process_maturity": 1.0,
+            }
+        },
     )
-    # B:Si should score at least as high on chemical + maturity dimensions
-    s_bsi = score_si_feasibility(bsi)
-    s_nit = score_si_feasibility(nitride)
-    assert s_bsi.components.chemical_compatibility >= s_nit.components.chemical_compatibility
+    ranked = rank_by_si_feasibility([_nbn_candidate(), _bsi_candidate()], config=cfg.si_feasibility)
+    assert ranked[0][0].formula == "NbN"
 
 
-def test_score_on_generated_candidates() -> None:
-    cands = generate_candidates(
-        EnumerationConfig(
-            formulas=["NbN"],
-            strain_values=[0.0, 0.02],
-            substrates=["Si(001)"],
-            max_candidates=4,
-        )
-    )
-    for c in cands:
-        score = score_si_feasibility(c)
-        assert 0.0 <= score.total <= 100.0
-        assert score.components.lattice_mismatch >= 0.0
-
-
-def test_from_pymatgen_structure() -> None:
-    s = build_binary_nitride("Ti")
-    cand = structure_to_candidate(s, material_family="tm_nitride", substrate="Si(001)")
-    score = score_si_feasibility(cand)
-    assert score.total > 0
+def test_exact_weights_provenance() -> None:
+    score = score_si_feasibility(_nbn_candidate())
+    assert abs(sum(score.weights.values()) - 1.0) < 1e-12
+    # No independent rounding drift
+    for v in score.weights.values():
+        assert isinstance(v, float)

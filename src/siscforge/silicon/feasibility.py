@@ -5,17 +5,24 @@ is always populated. Scores are 0–100 (higher = more Si-process friendly).
 
 v0.2 adds rocksalt **45° epitaxy** matching and a minimal **buffer library**
 so nitride cube-on-cube pessimism can be improved when scientifically justified.
+
+v0.3 (P2.1) makes component **weights first-class and YAML-overridable** via
+``CampaignConfig.si_feasibility.weights`` (keys: lattice_mismatch,
+thermal_budget, chemical_compatibility, buffer_availability, process_maturity).
+Active weights and scorer version are stored on every
+:class:`~siscforge.models.results.SiFeasibilityScore` for auditability.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from siscforge.models.candidate import StructureCandidate
+from siscforge.models.config import SiFeasibilityConfig, SiFeasibilityWeights
 from siscforge.models.results import SiFeasibilityComponents, SiFeasibilityScore
 from siscforge.silicon.buffers import (
-    BUFFER_LIBRARY,
     list_buffers_for_family,
 )
 from siscforge.structure.strain import (
@@ -26,9 +33,8 @@ from siscforge.structure.strain import (
     substrate_in_plane_spacing,
 )
 
-SCORER_VERSION = "0.2"
+SCORER_VERSION = "0.3"
 
-# Default weights for the composite total (must sum to 1.0).
 COMPONENT_WEIGHTS: dict[str, float] = {
     "lattice_mismatch": 0.35,
     "thermal_budget": 0.20,
@@ -37,7 +43,14 @@ COMPONENT_WEIGHTS: dict[str, float] = {
     "process_maturity": 0.15,
 }
 
-# Heuristic process temperatures (°C) by family — lower is easier on CMOS backend.
+COMPONENT_KEYS: tuple[str, ...] = (
+    "lattice_mismatch",
+    "thermal_budget",
+    "chemical_compatibility",
+    "buffer_availability",
+    "process_maturity",
+)
+
 _FAMILY_PROCESS_TEMP_C: dict[str, float] = {
     "tm_nitride": 600.0,
     "b_doped_si": 900.0,
@@ -66,17 +79,46 @@ _FAMILY_MATURITY: dict[str, float] = {
 }
 
 EpitaxyMode = Literal["auto", "cube_on_cube", "45deg"]
+WeightsLike = Mapping[str, float] | SiFeasibilityWeights | SiFeasibilityConfig | None
 
 
 def _clamp(score: float) -> float:
-    return float(max(0.0, min(100.0, score)))
+    return float(max(0.0, min(100.0, score))
+
+
+def normalize_component_weights(
+    weights: WeightsLike = None,
+) -> dict[str, float]:
+    """Return a full, non-negative weight vector normalized to sum 1.0.
+
+    An all-zero (or negative-clamped) override falls back to COMPONENT_WEIGHTS.
+    Non-finite values (NaN / ±∞) also force fallback so scoring never produces NaN.
+    """
+    base = dict(COMPONENT_WEIGHTS)
+    if weights is None:
+        raw = base
+    elif isinstance(weights, SiFeasibilityConfig):
+        raw = {**base, **weights.weights.as_dict()}
+    elif isinstance(weights, SiFeasibilityWeights):
+        raw = {**base, **weights.as_dict()}
+    else:
+        raw = {**base, **{k: float(v) for k, v in weights.items() if k in base}}
+    cleaned: dict[str, float] = {}
+    for k in COMPONENT_KEYS:
+        try:
+            v = float(raw.get(k, base[k]))
+        except (TypeError, ValueError):
+            return dict(COMPONENT_WEIGHTS)
+        if not math.isfinite(v):
+            return dict(COMPONENT_WEIGHTS)
+        cleaned[k] = max(0.0, v)
+    w_sum = sum(cleaned.values())
+    if not math.isfinite(w_sum) or w_sum <= 0.0:
+        return dict(COMPONENT_WEIGHTS)
+    return {k: cleaned[k] / w_sum for k in COMPONENT_KEYS}
 
 
 def _mismatch_score_from_percent(mismatch_pct: float) -> float:
-    """Map |misfit|% → 0–100 score.
-
-    ~0% → 100, ~2% → ~75, ~5% → ~45, ≥15% → near 0.
-    """
     mag = abs(mismatch_pct)
     return _clamp(100.0 * float(math.exp(-mag / 4.0)))
 
@@ -89,21 +131,14 @@ def _thermal_score(process_temp_c: float, *, cmos_limit_c: float = 450.0) -> flo
 
 
 def _film_in_plane_a(candidate: StructureCandidate) -> float | None:
-    """Best-effort *conventional* cubic *a* (Å) for epitaxy metrics."""
     meta = candidate.metadata or {}
     for key in ("conventional_lattice_a", "rocksalt_a", "a_conventional"):
         if key in meta and meta[key] is not None:
             return float(meta[key])
-
-    if (
-        candidate.material_family == "tm_nitride"
-        and (
-            candidate.in_plane_strain is None
-            or abs(float(candidate.in_plane_strain)) < 1e-12
-        )
+    if candidate.material_family == "tm_nitride" and (
+        candidate.in_plane_strain is None or abs(float(candidate.in_plane_strain)) < 1e-12
     ):
         from siscforge.structure.nitrides import ROCKSALT_LATTICE_CONSTANTS
-
         metals = meta.get("metals") or []
         if len(metals) == 1 and metals[0] in ROCKSALT_LATTICE_CONSTANTS:
             return float(ROCKSALT_LATTICE_CONSTANTS[metals[0]])
@@ -111,12 +146,8 @@ def _film_in_plane_a(candidate: StructureCandidate) -> float | None:
         for m, a in ROCKSALT_LATTICE_CONSTANTS.items():
             if formula in {f"{m}N", f"N{m}"}:
                 return float(a)
-        # Ternary: Vegard-like mean of known metal *a* if both known
         if formula.startswith("Nb") and "Ti" in formula:
-            return 0.5 * (
-                ROCKSALT_LATTICE_CONSTANTS["Nb"] + ROCKSALT_LATTICE_CONSTANTS["Ti"]
-            )
-
+            return 0.5 * (ROCKSALT_LATTICE_CONSTANTS["Nb"] + ROCKSALT_LATTICE_CONSTANTS["Ti"])
     if candidate.lattice_abc is not None:
         return float(candidate.lattice_abc[0])
     return None
@@ -127,7 +158,6 @@ def _resolve_epitaxy_mode(candidate: StructureCandidate) -> EpitaxyMode:
     mode = meta.get("epitaxy_orientation") or meta.get("epitaxy_match")
     if mode in {"cube_on_cube", "45deg", "auto"}:
         return mode  # type: ignore[return-value]
-    # Default: auto for nitrides (pick best of cube vs 45°); else cube-on-cube
     if candidate.material_family == "tm_nitride":
         return "auto"
     return "cube_on_cube"
@@ -140,20 +170,15 @@ def _use_buffers(candidate: StructureCandidate) -> bool:
     return True
 
 
-def evaluate_mismatch_options(
-    candidate: StructureCandidate,
-) -> list[dict[str, Any]]:
-    """Enumerate direct (cube / 45°) and buffer-mediated mismatch options."""
+def evaluate_mismatch_options(candidate: StructureCandidate) -> list[dict[str, Any]]:
     substrate = candidate.substrate or "Si(001)"
     try:
         parse_substrate(substrate)
     except ValueError:
         return []
-
     a_film = _film_in_plane_a(candidate)
     if a_film is None:
         return []
-
     options: list[dict[str, Any]] = []
     mode = _resolve_epitaxy_mode(candidate)
     matches: list[EpitaxyMatch]
@@ -163,64 +188,44 @@ def evaluate_mismatch_options(
         matches = ["45deg"]
     else:
         matches = ["cube_on_cube"]
-
     for m in matches:
         try:
             pct = lattice_mismatch_percent(a_film, substrate, match=m)
         except ValueError:
             continue
-        options.append(
-            {
-                "path": f"direct/{m}",
-                "match": m,
-                "buffer": "direct_Si",
-                "mismatch_pct": pct,
-                "score": _mismatch_score_from_percent(pct),
-                "notes": f"direct on Si with {m} matching",
-            }
-        )
-
+        options.append({
+            "path": f"direct/{m}",
+            "match": m,
+            "buffer": "direct_Si",
+            "mismatch_pct": pct,
+            "score": _mismatch_score_from_percent(pct),
+            "notes": f"direct on Si with {m} matching",
+        })
     if _use_buffers(candidate):
         for buf in list_buffers_for_family(candidate.material_family):
             if buf.name == "direct_Si":
                 continue
-            # Film vs buffer (cube-on-cube between conventional *a*)
             try:
-                m_fb = lattice_mismatch_percent(
-                    a_film, substrate, match="cube_on_cube", substrate_a=buf.lattice_a_ang
-                )
-                m_bs = lattice_mismatch_percent(
-                    buf.lattice_a_ang,
-                    substrate,
-                    match="cube_on_cube",
-                )
+                m_fb = lattice_mismatch_percent(a_film, substrate, match="cube_on_cube", substrate_a=buf.lattice_a_ang)
+                m_bs = lattice_mismatch_percent(buf.lattice_a_ang, substrate, match="cube_on_cube")
             except ValueError:
                 continue
-            # Conservative effective misfit for scoring
             eff = max(abs(m_fb), abs(m_bs))
-            # Keep signed film-buffer for reporting
-            options.append(
-                {
-                    "path": f"buffer/{buf.name}",
-                    "match": "cube_on_cube",
-                    "buffer": buf.name,
-                    "mismatch_pct": m_fb if abs(m_fb) >= abs(m_bs) else m_bs,
-                    "mismatch_film_buffer_pct": m_fb,
-                    "mismatch_buffer_si_pct": m_bs,
-                    "score": _mismatch_score_from_percent(eff),
-                    "notes": (
-                        f"buffer {buf.name}: film–buffer {m_fb:.2f}%, "
-                        f"buffer–Si {m_bs:.2f}% ({buf.notes})"
-                    ),
-                }
-            )
-
+            options.append({
+                "path": f"buffer/{buf.name}",
+                "match": "cube_on_cube",
+                "buffer": buf.name,
+                "mismatch_pct": m_fb if abs(m_fb) >= abs(m_bs) else m_bs,
+                "mismatch_film_buffer_pct": m_fb,
+                "mismatch_buffer_si_pct": m_bs,
+                "score": _mismatch_score_from_percent(eff),
+                "notes": f"buffer {buf.name}: film–buffer {m_fb:.2f}%, buffer–Si {m_bs:.2f}% ({buf.notes})",
+            })
     options.sort(key=lambda o: abs(float(o["mismatch_pct"])))
     return options
 
 
 def _raw_mismatch_percent(candidate: StructureCandidate) -> float | None:
-    """Best mismatch % among allowed epitaxy/buffer options (or simple fallback)."""
     opts = evaluate_mismatch_options(candidate)
     if opts:
         return float(opts[0]["mismatch_pct"])
@@ -238,19 +243,22 @@ def _raw_mismatch_percent(candidate: StructureCandidate) -> float | None:
 def score_si_feasibility(
     candidate: StructureCandidate,
     *,
-    weights: dict[str, float] | None = None,
-    cmos_limit_c: float = 450.0,
+    weights: WeightsLike = None,
+    cmos_limit_c: float | None = None,
+    config: SiFeasibilityConfig | None = None,
 ) -> SiFeasibilityScore:
-    """Compute a transparent Silicon Feasibility Score for *candidate*.
-
-    All component fields are always filled. Missing structural data falls back
-    to family-level heuristics so scoring never crashes on partial candidates.
-    """
-    w = dict(COMPONENT_WEIGHTS)
-    if weights:
-        w.update(weights)
-    w_sum = sum(w.values()) or 1.0
-    w = {k: v / w_sum for k, v in w.items()}
+    if config is not None and weights is None:
+        weights = config
+    if isinstance(weights, SiFeasibilityConfig):
+        if cmos_limit_c is None:
+            cmos_limit_c = float(weights.cmos_limit_c)
+        w = normalize_component_weights(weights)
+    else:
+        w = normalize_component_weights(weights)
+        if cmos_limit_c is None and config is not None:
+            cmos_limit_c = float(config.cmos_limit_c)
+    if cmos_limit_c is None:
+        cmos_limit_c = 450.0
 
     family = candidate.material_family
     notes: list[str] = []
@@ -283,11 +291,9 @@ def score_si_feasibility(
         chemical = _clamp(chemical - 10.0)
         notes.append("oxygen / reactive-cation penalty")
 
-    # Buffer availability from library + best path
     family_bufs = list_buffers_for_family(family)
     buffers = [b.name for b in family_bufs]
     if best is not None and best.get("buffer"):
-        # Put chosen buffer first
         chosen = str(best["buffer"])
         buffers = [chosen] + [b for b in buffers if b != chosen]
     if family == "tm_nitride" and abs(mismatch_pct or 0) < 5:
@@ -331,9 +337,13 @@ def score_si_feasibility(
         + ("; ".join(notes) if notes else "all components from family + lattice rules")
     )
 
+    # Store the exact normalized vector used for total (audit trail).
+    weights_out = {k: float(w[k]) for k in COMPONENT_KEYS}
+
     return SiFeasibilityScore(
         total=total,
         components=components,
+        weights=weights_out,
         lattice_mismatch_pct=None if mismatch_pct is None else round(mismatch_pct, 3),
         recommended_buffers=buffers,
         recommended_thickness_nm=thickness,
@@ -342,8 +352,22 @@ def score_si_feasibility(
     )
 
 
+def rank_by_si_feasibility(
+    candidates: list[StructureCandidate],
+    *,
+    weights: WeightsLike = None,
+    cmos_limit_c: float | None = None,
+    config: SiFeasibilityConfig | None = None,
+) -> list[tuple[StructureCandidate, SiFeasibilityScore]]:
+    scored = [
+        (c, score_si_feasibility(c, weights=weights, cmos_limit_c=cmos_limit_c, config=config))
+        for c in candidates
+    ]
+    scored.sort(key=lambda pair: pair[1].total, reverse=True)
+    return scored
+
+
 def scorer_debug_info(candidate: StructureCandidate) -> dict[str, Any]:
-    """Return intermediate values useful for tests / debugging."""
     a = _film_in_plane_a(candidate)
     substrate = candidate.substrate or "Si(001)"
     info: dict[str, Any] = {
@@ -352,6 +376,8 @@ def scorer_debug_info(candidate: StructureCandidate) -> dict[str, Any]:
         "si_a": SI_LATTICE_CONSTANT,
         "epitaxy_mode": _resolve_epitaxy_mode(candidate),
         "options": evaluate_mismatch_options(candidate),
+        "default_weights": dict(COMPONENT_WEIGHTS),
+        "scorer_version": SCORER_VERSION,
     }
     try:
         info["substrate_target_a"] = substrate_in_plane_spacing(substrate)

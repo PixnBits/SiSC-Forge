@@ -184,7 +184,7 @@ def enumerate_cmd(
             else "—",
         ]
         if score_si:
-            si = score_si_feasibility(c)
+            si = score_si_feasibility(c, config=config.si_feasibility)
             row.append(f"{si.total:.1f}")
         table.add_row(*row)
     console.print(table)
@@ -953,7 +953,11 @@ def run_cmd(
         raise typer.Exit(code=1)
 
     # 2c. Si-feasibility (cheap) + active-learning prioritization
-    si_by_id = {c.candidate_id: score_si_feasibility(c) for c in candidates}
+    # Component weights from CampaignConfig.si_feasibility (P2.1 YAML-overridable).
+    si_by_id = {
+        c.candidate_id: score_si_feasibility(c, config=config.si_feasibility)
+        for c in candidates
+    }
     al_cfg = config.active_learning
     # Ensure predictions carry trained model provenance
     predictions = dict(tc_fres.predictions)
@@ -1267,11 +1271,11 @@ def run_cmd(
         *,
         selected: bool,
     ) -> CandidateEvaluation:
+        # Always apply the campaign-current Si score (P2.1 weights / CMOS limit).
+        # Resume skips expensive DFT but must not freeze a stale v0.2 total or
+        # weights from a prior run — ranking and exports follow this config.
         si = si_by_id[cand.candidate_id]
-        if result.si_feasibility is None or str(
-            getattr(result.si_feasibility, "version", "")
-        ).endswith("mock"):
-            result = result.model_copy(update={"si_feasibility": si})
+        result = result.model_copy(update={"si_feasibility": si})
         if result.candidate.energy_above_hull_proxy is None or (
             "tc_lambda_surrogate" in cand.metadata
             and "tc_lambda_surrogate" not in result.candidate.metadata
