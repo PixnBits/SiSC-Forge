@@ -98,6 +98,10 @@ def normalize_component_weights(
     Accepts a partial dict, :class:`SiFeasibilityWeights`, or
     :class:`SiFeasibilityConfig`. Missing keys fall back to
     :data:`COMPONENT_WEIGHTS`. Unknown keys are ignored.
+
+    An all-zero (or negative-clamped) override cannot form a normalized
+    vector; those cases fall back to :data:`COMPONENT_WEIGHTS` so exported
+    provenance always sums to 1.0 and scoring stays well-defined.
     """
     base = dict(COMPONENT_WEIGHTS)
     if weights is None:
@@ -110,7 +114,9 @@ def normalize_component_weights(
         raw = {**base, **{k: float(v) for k, v in weights.items() if k in base}}
     # Keep only known component keys, non-negative
     cleaned = {k: max(0.0, float(raw.get(k, base[k]))) for k in COMPONENT_KEYS}
-    w_sum = sum(cleaned.values()) or 1.0
+    w_sum = sum(cleaned.values())
+    if w_sum <= 0.0:
+        return dict(COMPONENT_WEIGHTS)
     return {k: cleaned[k] / w_sum for k in COMPONENT_KEYS}
 
 

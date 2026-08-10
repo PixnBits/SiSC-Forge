@@ -275,13 +275,27 @@ def test_normalize_component_weights_partial_and_zero_sum() -> None:
     w = normalize_component_weights({"lattice_mismatch": 2.0})
     assert abs(sum(w.values()) - 1.0) < 1e-9
     assert w["lattice_mismatch"] > COMPONENT_WEIGHTS["lattice_mismatch"]
-    # All-zero → equal fallback via sum guard (all zeros stay 0/1 handling)
+    # All-zero cannot normalize: fall back to documented defaults (sum == 1)
     zeros = normalize_component_weights({k: 0.0 for k in COMPONENT_KEYS})
-    assert abs(sum(zeros.values()) - 1.0) < 1e-9 or all(v == 0.0 for v in zeros.values())
-    # Wait: max(0,0)=0, sum=0, then /1.0 → all zeros. That's fine for total=0.
-    # Prefer non-zero defaults when caller passes empty overrides
+    assert zeros == COMPONENT_WEIGHTS
+    assert abs(sum(zeros.values()) - 1.0) < 1e-9
+    # Empty override dict keeps defaults
     empty = normalize_component_weights({})
     assert empty == pytest.approx(COMPONENT_WEIGHTS)
+    # Config model with all-zero weights also falls back
+    zero_cfg = SiFeasibilityConfig(
+        weights=SiFeasibilityWeights(
+            lattice_mismatch=0.0,
+            thermal_budget=0.0,
+            chemical_compatibility=0.0,
+            buffer_availability=0.0,
+            process_maturity=0.0,
+        )
+    )
+    assert normalize_component_weights(zero_cfg) == COMPONENT_WEIGHTS
+    score = score_si_feasibility(_nbn_candidate(), config=zero_cfg)
+    assert abs(sum(score.weights.values()) - 1.0) < 1e-6
+    assert score.total > 0.0
 
 
 def test_45deg_mismatch_better_than_cube_on_cube_for_nbn() -> None:

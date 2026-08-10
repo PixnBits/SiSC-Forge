@@ -1271,11 +1271,11 @@ def run_cmd(
         *,
         selected: bool,
     ) -> CandidateEvaluation:
+        # Always apply the campaign-current Si score (P2.1 weights / CMOS limit).
+        # Resume skips expensive DFT but must not freeze a stale v0.2 total or
+        # weights from a prior run — ranking and exports follow this config.
         si = si_by_id[cand.candidate_id]
-        if result.si_feasibility is None or str(
-            getattr(result.si_feasibility, "version", "")
-        ).endswith("mock"):
-            result = result.model_copy(update={"si_feasibility": si})
+        result = result.model_copy(update={"si_feasibility": si})
         if result.candidate.energy_above_hull_proxy is None or (
             "tc_lambda_surrogate" in cand.metadata
             and "tc_lambda_surrogate" not in result.candidate.metadata
