@@ -17,7 +17,7 @@ class SCFResult(BaseModel):
     """Minimal self-consistent field (or total-energy) result.
 
     Populated by real QE calculators later; the mock calculator fills
-    placeholder values with ``status="mock"``.
+    placeholder values with ``status=\"mock\"``.
     """
 
     total_energy_eV: float | None = None
@@ -202,8 +202,8 @@ class SiFeasibilityScore(BaseModel):
     recommended_buffers: list[str] = Field(default_factory=list)
     """Suggested buffer-layer stacks (names / formulas; may include multi-layer e.g. AlN/TiN)."""
 
-    recommended_thickness_nm: tuple[float, float] | None = None
-    """Optional (min, max) recommended film thickness in nm (P2.3: from critical thickness)."""
+    recommended_thickness_nm: float | tuple[float, float] | None = None
+    """Recommended film thickness in nm (P2.3: scalar from critical thickness; legacy (min, max) band also accepted)."""
 
     notes: str = ""
     """Human-readable rationale or caveats."""
