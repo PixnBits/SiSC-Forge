@@ -200,7 +200,7 @@ class SiFeasibilityScore(BaseModel):
     """Raw lattice mismatch percentage vs Si (or vs chosen buffer)."""
 
     recommended_buffers: list[str] = Field(default_factory=list)
-    """Suggested buffer-layer stacks (names / formulas)."""
+    """Suggested buffer-layer stacks (names / formulas; may include multi-layer e.g. AlN/TiN)."""
 
     recommended_thickness_nm: tuple[float, float] | None = None
     """Optional (min, max) recommended film thickness in nm."""
@@ -210,6 +210,16 @@ class SiFeasibilityScore(BaseModel):
 
     version: str = "0.1"
     """Scoring-rule version for provenance (see ``silicon.feasibility.SCORER_VERSION``)."""
+
+    chemical_flags: list[str] = Field(default_factory=list)
+    """P2.2: rule-based chemical / process-window flags for the recommended path
+    (e.g. nitrogen_window, oxygen_window, interdiffusion_caution)."""
+
+    thermal_window_note: str = ""
+    """P2.2: short thermal-window note for the recommended buffer/stack path."""
+
+    process_temp_ceiling_c: float | None = None
+    """P2.2: heuristic process-temperature ceiling (°C) for film + recommended stack."""
 
     @field_validator("total")
     @classmethod

@@ -11,6 +11,10 @@ v0.3 (P2.1) makes component **weights first-class and YAML-overridable** via
 thermal_budget, chemical_compatibility, buffer_availability, process_maturity).
 Active weights and scorer version are stored on every
 :class:`~siscforge.models.results.SiFeasibilityScore` for auditability.
+
+v0.4 (P2.2) adds **multi-layer buffer stacks** and surfaces
+**chemical-compatibility / thermal-window** flags from stack metadata on the
+score and synthesis cards. Still heuristic — not CALPHAD.
 """
 
 from __future__ import annotations
@@ -23,7 +27,15 @@ from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import SiFeasibilityConfig, SiFeasibilityWeights
 from siscforge.models.results import SiFeasibilityComponents, SiFeasibilityScore
 from siscforge.silicon.buffers import (
+    BUFFER_LIBRARY,
+    BufferStack,
+    aggregate_stack_flags,
     list_buffers_for_family,
+    list_stacks_for_family,
+    resolve_stack_layers,
+    stack_from_single,
+    stack_process_temp_ceiling_c,
+    stack_window_notes,
 )
 from siscforge.structure.strain import (
     SI_LATTICE_CONSTANT,
@@ -33,7 +45,7 @@ from siscforge.structure.strain import (
     substrate_in_plane_spacing,
 )
 
-SCORER_VERSION = "0.3"
+SCORER_VERSION = "0.4"
 
 COMPONENT_WEIGHTS: dict[str, float] = {
     "lattice_mismatch": 0.35,
@@ -83,7 +95,7 @@ WeightsLike = Mapping[str, float] | SiFeasibilityWeights | SiFeasibilityConfig |
 
 
 def _clamp(score: float) -> float:
-    return float(max(0.0, min(100.0, score))
+    return float(max(0.0, min(100.0, score)))
 
 
 def normalize_component_weights(
@@ -170,7 +182,109 @@ def _use_buffers(candidate: StructureCandidate) -> bool:
     return True
 
 
+def _layer_layer_mismatch_pct(a_bottom: float, a_top: float) -> float:
+    """Percent misfit of *a_top* relative to *a_bottom* (same convention as film–sub)."""
+    if a_bottom <= 0:
+        raise ValueError("layer lattice constant must be positive")
+    return 100.0 * (a_top - a_bottom) / a_bottom
+
+
+def _option_from_stack(
+    stack: BufferStack,
+    *,
+    a_film: float,
+    substrate: str,
+) -> dict[str, Any] | None:
+    """Build a mismatch option dict for a single- or multi-layer stack."""
+    layers = resolve_stack_layers(stack)
+    if not layers:
+        return None
+    top = layers[-1]
+    bottom = layers[0]
+    try:
+        m_film_top = lattice_mismatch_percent(
+            a_film, substrate, match="cube_on_cube", substrate_a=top.lattice_a_ang
+        )
+        m_bottom_si = lattice_mismatch_percent(
+            bottom.lattice_a_ang, substrate, match="cube_on_cube"
+        )
+    except ValueError:
+        return None
+
+    interface_pcts: list[float] = [m_film_top, m_bottom_si]
+    interface_detail: list[str] = [
+        f"film–{top.name} {m_film_top:.2f}%",
+        f"{bottom.name}–Si {m_bottom_si:.2f}%",
+    ]
+    intermediate_abs: list[float] = []
+    for i in range(len(layers) - 1):
+        lo, hi = layers[i], layers[i + 1]
+        try:
+            m_ll = _layer_layer_mismatch_pct(lo.lattice_a_ang, hi.lattice_a_ang)
+        except ValueError:
+            continue
+        interface_pcts.append(m_ll)
+        intermediate_abs.append(abs(m_ll))
+        interface_detail.append(f"{lo.name}–{hi.name} {m_ll:.2f}%")
+
+    # Effective mismatch for ranking:
+    # - single layer: max(|film–buf|, |buf–Si|) (legacy behaviour)
+    # - multi-layer: film–top template match is primary; bottom–Si and interlayers
+    #   contribute a soft penalty only (stacks are process templates, not coherent
+    #   epitaxial chains — heuristic, not CALPHAD).
+    if stack.is_multilayer:
+        soft = 0.15 * abs(m_bottom_si)
+        if intermediate_abs:
+            soft += 0.10 * max(intermediate_abs)
+        eff = abs(m_film_top) + soft
+        report_pct = m_film_top
+    else:
+        eff = max(abs(p) for p in interface_pcts)
+        report_pct = m_film_top
+        for p in interface_pcts:
+            if abs(p) >= abs(report_pct):
+                report_pct = p
+
+    flags = list(aggregate_stack_flags(stack))
+    ceiling = stack_process_temp_ceiling_c(stack)
+    path_kind = "stack" if stack.is_multilayer else "buffer"
+    notes_bits = [
+        f"{'multi-layer stack' if stack.is_multilayer else 'buffer'} {stack.name}: "
+        + ", ".join(interface_detail),
+    ]
+    if stack.notes:
+        notes_bits.append(stack.notes)
+    if stack.process_note:
+        notes_bits.append(stack.process_note)
+
+    return {
+        "path": f"{path_kind}/{stack.name}",
+        "match": "cube_on_cube",
+        "buffer": stack.name,
+        "layers": list(stack.layers),
+        "is_multilayer": stack.is_multilayer,
+        "mismatch_pct": report_pct,
+        "mismatch_film_buffer_pct": m_film_top,
+        "mismatch_buffer_si_pct": m_bottom_si,
+        "mismatch_effective_abs_pct": eff,
+        "score": _mismatch_score_from_percent(eff),
+        "notes": "; ".join(notes_bits),
+        "process_note": stack.process_note,
+        "chemical_flags": flags,
+        "max_process_temp_c": ceiling,
+        "thermal_window_note": stack.thermal_window_note
+        or (layers[-1].thermal_window_note if layers else ""),
+        "window_notes": stack_window_notes(stack),
+    }
+
+
 def evaluate_mismatch_options(candidate: StructureCandidate) -> list[dict[str, Any]]:
+    """Enumerate direct epitaxy and buffer/stack paths ranked by |mismatch|.
+
+    Each option may include ``chemical_flags``, ``max_process_temp_c``,
+    ``thermal_window_note``, and ``layers`` (P2.2). Multi-layer stacks appear
+    alongside single buffers when ``use_buffers`` is enabled.
+    """
     substrate = candidate.substrate or "Si(001)"
     try:
         parse_substrate(substrate)
@@ -193,35 +307,48 @@ def evaluate_mismatch_options(candidate: StructureCandidate) -> list[dict[str, A
             pct = lattice_mismatch_percent(a_film, substrate, match=m)
         except ValueError:
             continue
+        direct = BUFFER_LIBRARY["direct_Si"]
         options.append({
             "path": f"direct/{m}",
             "match": m,
             "buffer": "direct_Si",
+            "layers": ["direct_Si"],
+            "is_multilayer": False,
             "mismatch_pct": pct,
+            "mismatch_effective_abs_pct": abs(pct),
             "score": _mismatch_score_from_percent(pct),
             "notes": f"direct on Si with {m} matching",
+            "process_note": "Direct epitaxy on Si (no buffer).",
+            "chemical_flags": list(direct.chemical_flags),
+            "max_process_temp_c": None,
+            "thermal_window_note": direct.thermal_window_note,
+            "window_notes": [direct.thermal_window_note] if direct.thermal_window_note else [],
         })
     if _use_buffers(candidate):
-        for buf in list_buffers_for_family(candidate.material_family):
+        family = candidate.material_family
+        # Single-layer buffers
+        for buf in list_buffers_for_family(family):
             if buf.name == "direct_Si":
                 continue
-            try:
-                m_fb = lattice_mismatch_percent(a_film, substrate, match="cube_on_cube", substrate_a=buf.lattice_a_ang)
-                m_bs = lattice_mismatch_percent(buf.lattice_a_ang, substrate, match="cube_on_cube")
-            except ValueError:
-                continue
-            eff = max(abs(m_fb), abs(m_bs))
-            options.append({
-                "path": f"buffer/{buf.name}",
-                "match": "cube_on_cube",
-                "buffer": buf.name,
-                "mismatch_pct": m_fb if abs(m_fb) >= abs(m_bs) else m_bs,
-                "mismatch_film_buffer_pct": m_fb,
-                "mismatch_buffer_si_pct": m_bs,
-                "score": _mismatch_score_from_percent(eff),
-                "notes": f"buffer {buf.name}: film–buffer {m_fb:.2f}%, buffer–Si {m_bs:.2f}% ({buf.notes})",
-            })
-    options.sort(key=lambda o: abs(float(o["mismatch_pct"])))
+            opt = _option_from_stack(
+                stack_from_single(buf), a_film=a_film, substrate=substrate
+            )
+            if opt is not None:
+                # Preserve legacy path prefix for single buffers
+                opt["path"] = f"buffer/{buf.name}"
+                options.append(opt)
+        # Multi-layer stacks
+        for stack in list_stacks_for_family(family, multilayer_only=True):
+            opt = _option_from_stack(stack, a_film=a_film, substrate=substrate)
+            if opt is not None:
+                options.append(opt)
+    options.sort(
+        key=lambda o: (
+            abs(float(o.get("mismatch_effective_abs_pct", o["mismatch_pct"]))),
+            0 if o.get("is_multilayer") else 1,  # prefer informative stacks on ties
+            str(o.get("buffer", "")),
+        )
+    )
     return options
 
 
@@ -238,6 +365,126 @@ def _raw_mismatch_percent(candidate: StructureCandidate) -> float | None:
     if a_film is None:
         return None
     return lattice_mismatch_percent(a_film, substrate, match="cube_on_cube")
+
+
+def _chemical_score_for_path(
+    family: str,
+    candidate: StructureCandidate,
+    best: dict[str, Any] | None,
+) -> tuple[float, list[str], list[str]]:
+    """Return (score, flags, extra_notes) using family base + stack flags."""
+    notes: list[str] = []
+    chemical = _FAMILY_CHEMICAL.get(family, 50.0)
+    flags: list[str] = []
+    if best is not None:
+        flags = list(best.get("chemical_flags") or [])
+
+    if any(el in candidate.composition for el in ("O", "Ba", "Cu")):
+        chemical = _clamp(chemical - 10.0)
+        notes.append("oxygen / reactive-cation penalty")
+        if "oxygen_window" not in flags:
+            flags.append("oxygen_window")
+
+    # Stack-driven refinements (small, documented — not full thermo)
+    if "oxide_nitride_interface" in flags:
+        chemical = _clamp(chemical - 5.0)
+        notes.append("oxide–nitride interface caution")
+    if "interdiffusion_caution" in flags:
+        chemical = _clamp(chemical - 3.0)
+        notes.append("multi-layer interdiffusion caution")
+    if "oxygen_window" in flags and family == "tm_nitride":
+        chemical = _clamp(chemical - 2.0)
+        notes.append("oxygen process window on nitride path")
+    if "nitrogen_window" in flags and family in {"tm_nitride", "mgb2_boride"}:
+        # Slight credit for known N-compatible buffer chemistry
+        chemical = _clamp(chemical + 2.0)
+    if "direct_on_si" in flags and family == "tm_nitride":
+        chemical = _clamp(chemical - 5.0)
+        notes.append("direct nitride-on-Si chemical risk")
+
+    return _clamp(chemical), flags, notes
+
+
+def _thermal_for_path(
+    family: str,
+    best: dict[str, Any] | None,
+    *,
+    cmos_limit_c: float,
+) -> tuple[float, float, str, list[str]]:
+    """Return (score, process_temp_c, thermal_window_note, extra_notes)."""
+    notes: list[str] = []
+    t_family = _FAMILY_PROCESS_TEMP_C.get(family, 700.0)
+    t_proc = t_family
+    thermal_note = ""
+    if best is not None:
+        ceiling = best.get("max_process_temp_c")
+        if ceiling is not None:
+            t_proc = max(t_family, float(ceiling))
+            notes.append(f"process temp ceiling ~{float(ceiling):.0f} °C (stack/film)")
+        thermal_note = str(best.get("thermal_window_note") or "")
+        flags = best.get("chemical_flags") or []
+        if "high_thermal_budget" in flags:
+            notes.append("high-thermal-budget buffer step (e.g. AlN)")
+    score = _thermal_score(t_proc, cmos_limit_c=cmos_limit_c)
+    return score, t_proc, thermal_note, notes
+
+
+def _buffer_availability_score(
+    family: str,
+    best: dict[str, Any] | None,
+    *,
+    n_single: int,
+    n_stacks: int,
+    mismatch_pct: float | None,
+) -> float:
+    """Richer buffer_availability using library depth (P2.2)."""
+    if family == "b_doped_si":
+        return 95.0
+    if family == "tm_nitride":
+        base = 70.0
+        if best is not None and best.get("buffer") != "direct_Si":
+            base = 80.0
+        if n_stacks > 0:
+            base = max(base, 85.0)
+        if best and best.get("is_multilayer"):
+            base = max(base, 90.0)
+        if mismatch_pct is not None and abs(mismatch_pct) < 5:
+            base = max(base, 90.0)
+        # small credit for library breadth
+        base = min(100.0, base + min(5.0, 0.5 * n_single + 1.0 * n_stacks))
+        return _clamp(base)
+    # other families: modest credit when stacks exist
+    base = 55.0
+    if n_stacks > 0:
+        base = 65.0
+    if best and best.get("is_multilayer"):
+        base = 70.0
+    return _clamp(base)
+
+
+def _recommended_buffer_list(
+    family: str,
+    options: list[dict[str, Any]],
+    best: dict[str, Any] | None,
+) -> list[str]:
+    """Ordered recommendations: best path first, then other options, then library."""
+    names: list[str] = []
+    if best is not None and best.get("buffer"):
+        names.append(str(best["buffer"]))
+    # Prefer multi-layer stacks next when present among top options
+    for opt in options:
+        b = str(opt.get("buffer") or "")
+        if b and b not in names:
+            names.append(b)
+        if len(names) >= 6:
+            break
+    for buf in list_buffers_for_family(family):
+        if buf.name not in names:
+            names.append(buf.name)
+    for stack in list_stacks_for_family(family, multilayer_only=True):
+        if stack.name not in names:
+            names.append(stack.name)
+    return names
 
 
 def score_si_feasibility(
@@ -271,9 +518,14 @@ def score_si_feasibility(
         lattice_score = float(best["score"])
         notes.append(str(best["notes"]))
         if best.get("buffer") and best["buffer"] != "direct_Si":
-            notes.append(f"assumed buffer: {best['buffer']}")
+            kind = "stack" if best.get("is_multilayer") else "buffer"
+            notes.append(f"assumed {kind}: {best['buffer']}")
+            if best.get("layers"):
+                notes.append("layers (sub→film): " + " / ".join(best["layers"]))
         if best.get("match") == "45deg":
             notes.append("assumed 45° in-plane registry vs Si(001)")
+        if best.get("process_note"):
+            notes.append(str(best["process_note"]))
     elif candidate.in_plane_strain is not None:
         mismatch_pct = abs(candidate.in_plane_strain) * 100.0
         lattice_score = _mismatch_score_from_percent(mismatch_pct)
@@ -283,27 +535,24 @@ def score_si_feasibility(
         lattice_score = _mismatch_score_from_percent(mismatch_pct)
         notes.append("mismatch defaulted (no lattice data)")
 
-    t_proc = _FAMILY_PROCESS_TEMP_C.get(family, 700.0)
-    thermal = _thermal_score(t_proc, cmos_limit_c=cmos_limit_c)
+    thermal, t_proc, thermal_window_note, thermal_notes = _thermal_for_path(
+        family, best, cmos_limit_c=cmos_limit_c
+    )
+    notes.extend(thermal_notes)
 
-    chemical = _FAMILY_CHEMICAL.get(family, 50.0)
-    if any(el in candidate.composition for el in ("O", "Ba", "Cu")):
-        chemical = _clamp(chemical - 10.0)
-        notes.append("oxygen / reactive-cation penalty")
+    chemical, chem_flags, chem_notes = _chemical_score_for_path(family, candidate, best)
+    notes.extend(chem_notes)
 
-    family_bufs = list_buffers_for_family(family)
-    buffers = [b.name for b in family_bufs]
-    if best is not None and best.get("buffer"):
-        chosen = str(best["buffer"])
-        buffers = [chosen] + [b for b in buffers if b != chosen]
-    if family == "tm_nitride" and abs(mismatch_pct or 0) < 5:
-        buffer_score = 90.0
-    elif family == "tm_nitride":
-        buffer_score = 80.0 if best and best.get("buffer") != "direct_Si" else 70.0
-    elif family == "b_doped_si":
-        buffer_score = 95.0
-    else:
-        buffer_score = 55.0
+    n_single = len([b for b in list_buffers_for_family(family) if b.name != "direct_Si"])
+    n_stacks = len(list_stacks_for_family(family, multilayer_only=True))
+    buffer_score = _buffer_availability_score(
+        family,
+        best,
+        n_single=n_single,
+        n_stacks=n_stacks,
+        mismatch_pct=mismatch_pct,
+    )
+    buffers = _recommended_buffer_list(family, options, best)
 
     maturity = _FAMILY_MATURITY.get(family, 40.0)
     formula = candidate.formula
@@ -332,13 +581,27 @@ def score_si_feasibility(
     else:
         thickness = (20.0, 100.0)
 
+    # Surface chemical / thermal window on the notes string for card visibility
+    if chem_flags:
+        notes.append("chemical flags: " + ", ".join(chem_flags))
+    if thermal_window_note:
+        notes.append("thermal window: " + thermal_window_note)
+    elif best and best.get("window_notes"):
+        # take first window note if dedicated field empty
+        wn = best["window_notes"][0]
+        if wn:
+            notes.append("thermal window: " + str(wn))
+            thermal_window_note = str(wn)
+
     note_str = (
         f"v{SCORER_VERSION} heuristic Si-feasibility; "
         + ("; ".join(notes) if notes else "all components from family + lattice rules")
     )
 
-    # Store the exact normalized vector used for total (audit trail).
     weights_out = {k: float(w[k]) for k in COMPONENT_KEYS}
+    process_ceiling = float(t_proc)
+    if best is not None and best.get("max_process_temp_c") is not None:
+        process_ceiling = max(process_ceiling, float(best["max_process_temp_c"]))
 
     return SiFeasibilityScore(
         total=total,
@@ -349,6 +612,9 @@ def score_si_feasibility(
         recommended_thickness_nm=thickness,
         notes=note_str,
         version=SCORER_VERSION,
+        chemical_flags=chem_flags,
+        thermal_window_note=thermal_window_note,
+        process_temp_ceiling_c=process_ceiling,
     )
 
 
@@ -378,6 +644,9 @@ def scorer_debug_info(candidate: StructureCandidate) -> dict[str, Any]:
         "options": evaluate_mismatch_options(candidate),
         "default_weights": dict(COMPONENT_WEIGHTS),
         "scorer_version": SCORER_VERSION,
+        "stacks_for_family": [
+            s.name for s in list_stacks_for_family(candidate.material_family)
+        ],
     }
     try:
         info["substrate_target_a"] = substrate_in_plane_spacing(substrate)

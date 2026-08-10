@@ -8,13 +8,14 @@
 #
 # P2.1: component weights are YAML-overridable under si_feasibility.weights
 # (defaults match COMPONENT_WEIGHTS; omit the block for unchanged behaviour).
+# P2.2: multi-layer buffer stacks (e.g. AlN/TiN) + chemical/thermal window flags.
 
 name: nbn_si_45deg
 description: >
   Single NbN candidate with auto epitaxy (45° and buffer options) so
-  Si-feasibility v0.3 can score beyond cube-on-cube pessimism with a
+  Si-feasibility v0.4 can score beyond cube-on-cube pessimism with a
   transparent, weight-auditable component breakdown.
-version: "0.3"
+version: "0.4"
 dry_run: true
 
 enumeration:
@@ -36,7 +37,8 @@ calculators:
 formation_filter:
   enabled: false
 
-# P2.1 — first-class Si-feasibility component weights (optional; defaults shown).
+# P2.1/P2.2 — Si-feasibility component weights (optional; defaults shown).
+# Stack recommendations and chemical/thermal flags come from the scorer (v0.4).
 si_feasibility:
   weights:
     lattice_mismatch: 0.35

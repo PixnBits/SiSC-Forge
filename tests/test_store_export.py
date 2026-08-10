@@ -74,6 +74,9 @@ def test_csv_has_required_columns(tmp_path: Path) -> None:
         "si_w_chemical",
         "si_w_buffer",
         "si_w_process_maturity",
+        "si_chemical_flags",
+        "si_thermal_window",
+        "si_process_temp_ceiling_c",
         "status",
         "composition",
     ):
@@ -109,6 +112,8 @@ def test_synthesis_cards(tmp_path: Path) -> None:
     assert "weights" in text
     assert "lattice mismatch" in text
     assert "process maturity" in text
+    assert "recommended buffers" in text
+    assert "chemical flags" in text or "thermal window" in text
 
 
 def test_campaign_config_formation_filter_yaml(tmp_path: Path) -> None:
