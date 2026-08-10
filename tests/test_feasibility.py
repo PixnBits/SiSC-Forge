@@ -10,12 +10,14 @@ from siscforge.models.config import (
 from siscforge.silicon.buffers import (
     BUFFER_LIBRARY,
     STACK_LIBRARY,
+    aggregate_stack_flags,
     list_stacks_for_family,
 )
 from siscforge.silicon.feasibility import (
     COMPONENT_KEYS,
     COMPONENT_WEIGHTS,
     SCORER_VERSION,
+    _layer_layer_mismatch_pct,
     evaluate_mismatch_options,
     normalize_component_weights,
     rank_by_si_feasibility,
@@ -200,6 +202,43 @@ def test_buffers_disabled_skips_stacks() -> None:
     opts = evaluate_mismatch_options(cand)
     assert all(not o.get("is_multilayer") for o in opts)
     assert all(str(o.get("buffer")) == "direct_Si" for o in opts)
+
+
+def test_buffers_disabled_does_not_recommend_or_credit_stacks() -> None:
+    """use_buffers=False must not list library stacks or inflate buffer_availability."""
+    disabled = score_si_feasibility(_nbn_candidate(use_buffers=False))
+    enabled = score_si_feasibility(_nbn_candidate(use_buffers=True))
+    assert all("/" not in b for b in disabled.recommended_buffers)
+    assert all(b == "direct_Si" for b in disabled.recommended_buffers)
+    # Direct-only path should not get stack-library credit over enabled path's baseline
+    assert disabled.components.buffer_availability <= enabled.components.buffer_availability
+    # No stack names in notes as assumed recommendation
+    assert "assumed stack:" not in disabled.notes
+    assert "assumed buffer:" not in disabled.notes
+
+
+def test_oxide_on_si_flag_only_when_oxide_is_substrate_side() -> None:
+    """Position-aware flags: oxide_on_si only if MgO (etc.) is the Si-side layer."""
+    mgo_tin = aggregate_stack_flags(STACK_LIBRARY["MgO/TiN"])
+    tin_mgo = aggregate_stack_flags(STACK_LIBRARY["TiN/MgO"])
+    assert "oxide_on_si" in mgo_tin  # MgO on Si
+    assert "oxide_on_si" not in tin_mgo  # MgO is film-side, not on Si
+    # Single-layer MgO still carries oxide_on_si
+    from siscforge.silicon.buffers import stack_from_single
+    single = aggregate_stack_flags(stack_from_single(BUFFER_LIBRARY["MgO"]))
+    assert "oxide_on_si" in single
+
+
+def test_interlayer_mismatch_uses_film_substrate_convention() -> None:
+    """Interlayer misfit: 100*(a_bottom - a_top)/a_top (matches lattice_mismatch_percent)."""
+    a_aln = BUFFER_LIBRARY["AlN"].lattice_a_ang  # 3.112
+    a_tin = BUFFER_LIBRARY["TiN"].lattice_a_ang  # 4.242
+    pct = _layer_layer_mismatch_pct(a_aln, a_tin)
+    expected = 100.0 * (a_aln - a_tin) / a_tin
+    assert abs(pct - expected) < 1e-9
+    # Magnitude ~26.6%, not the inverted ~36.3%
+    assert abs(abs(pct) - 26.64) < 0.1
+    assert abs(pct) < 30.0
 
 
 def test_weight_override_still_reorders_with_p22_scorer() -> None:

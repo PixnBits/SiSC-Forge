@@ -183,10 +183,15 @@ def _use_buffers(candidate: StructureCandidate) -> bool:
 
 
 def _layer_layer_mismatch_pct(a_bottom: float, a_top: float) -> float:
-    """Percent misfit of *a_top* relative to *a_bottom* (same convention as film–sub)."""
-    if a_bottom <= 0:
+    """Percent misfit at a stack interface (substrate-side → film-side).
+
+    Uses the same convention as :func:`lattice_mismatch_percent`:
+    ``100 * (a_sub - a_film) / a_film`` with *a_bottom* as substrate-side and
+    *a_top* as film-side. Layers are ordered substrate → film.
+    """
+    if a_top <= 0:
         raise ValueError("layer lattice constant must be positive")
-    return 100.0 * (a_top - a_bottom) / a_bottom
+    return 100.0 * (a_bottom - a_top) / a_top
 
 
 def _option_from_stack(
@@ -466,18 +471,25 @@ def _recommended_buffer_list(
     family: str,
     options: list[dict[str, Any]],
     best: dict[str, Any] | None,
+    *,
+    include_library: bool = True,
 ) -> list[str]:
-    """Ordered recommendations: best path first, then other options, then library."""
+    """Ordered recommendations: best path first, then other options, then library.
+
+    When *include_library* is False (buffers disabled), only paths present in
+    *options* / *best* are listed — no stack/buffer library expansion.
+    """
     names: list[str] = []
     if best is not None and best.get("buffer"):
         names.append(str(best["buffer"]))
-    # Prefer multi-layer stacks next when present among top options
     for opt in options:
         b = str(opt.get("buffer") or "")
         if b and b not in names:
             names.append(b)
         if len(names) >= 6:
             break
+    if not include_library:
+        return names or ["direct_Si"]
     for buf in list_buffers_for_family(family):
         if buf.name not in names:
             names.append(buf.name)
@@ -543,8 +555,16 @@ def score_si_feasibility(
     chemical, chem_flags, chem_notes = _chemical_score_for_path(family, candidate, best)
     notes.extend(chem_notes)
 
-    n_single = len([b for b in list_buffers_for_family(family) if b.name != "direct_Si"])
-    n_stacks = len(list_stacks_for_family(family, multilayer_only=True))
+    use_bufs = _use_buffers(candidate)
+    if use_bufs:
+        n_single = len(
+            [b for b in list_buffers_for_family(family) if b.name != "direct_Si"]
+        )
+        n_stacks = len(list_stacks_for_family(family, multilayer_only=True))
+    else:
+        # Do not credit or recommend inaccessible library paths when opt-out.
+        n_single = 0
+        n_stacks = 0
     buffer_score = _buffer_availability_score(
         family,
         best,
@@ -552,7 +572,9 @@ def score_si_feasibility(
         n_stacks=n_stacks,
         mismatch_pct=mismatch_pct,
     )
-    buffers = _recommended_buffer_list(family, options, best)
+    buffers = _recommended_buffer_list(
+        family, options, best, include_library=use_bufs
+    )
 
     maturity = _FAMILY_MATURITY.get(family, 40.0)
     formula = candidate.formula

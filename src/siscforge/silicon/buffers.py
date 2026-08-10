@@ -294,11 +294,25 @@ def resolve_stack_layers(stack: BufferStack) -> list[BufferEntry]:
     return out
 
 
+# Flags that only make sense when the layer sits on Si (substrate-side).
+_SUBSTRATE_SIDE_ONLY_FLAGS: frozenset[str] = frozenset({"oxide_on_si", "direct_on_si"})
+
+
 def aggregate_stack_flags(stack: BufferStack) -> tuple[str, ...]:
-    """Union stack-level and per-layer chemical flags (stable order)."""
+    """Union stack-level and per-layer chemical flags (stable order).
+
+    Position-aware: substrate-side-only flags (e.g. ``oxide_on_si``) are taken
+    from the bottom layer only. Stack-level flags are always included so a
+    recipe can declare them explicitly. Other layer flags (N/O windows,
+    high_thermal_budget) apply regardless of position.
+    """
     flags: list[str] = list(stack.chemical_flags)
-    for layer in resolve_stack_layers(stack):
-        flags.extend(layer.chemical_flags)
+    layers = resolve_stack_layers(stack)
+    for i, layer in enumerate(layers):
+        for flag in layer.chemical_flags:
+            if flag in _SUBSTRATE_SIDE_ONLY_FLAGS and i != 0:
+                continue
+            flags.append(flag)
     return tuple(_dedupe_preserve(flags))
 
 
