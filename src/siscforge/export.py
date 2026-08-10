@@ -147,6 +147,15 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "recommended_buffers": (
             ";".join(si.recommended_buffers) if si and si.recommended_buffers else ""
         ),
+        "si_chemical_flags": (
+            ";".join(si.chemical_flags) if si and getattr(si, "chemical_flags", None) else ""
+        ),
+        "si_thermal_window": (
+            getattr(si, "thermal_window_note", "") or "" if si else ""
+        ),
+        "si_process_temp_ceiling_c": (
+            getattr(si, "process_temp_ceiling_c", None) if si else None
+        ),
     }
 
 
@@ -204,6 +213,9 @@ CSV_FIELDNAMES = [
     "calculator_name",
     "quality_tag",
     "recommended_buffers",
+    "si_chemical_flags",
+    "si_thermal_window",
+    "si_process_temp_ceiling_c",
 ]
 
 
@@ -442,6 +454,14 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                     else ""
                 ),
                 f"- recommended buffers: {', '.join(si.recommended_buffers) or '—'}",
+                f"- chemical flags: "
+                f"{', '.join(getattr(si, 'chemical_flags', None) or []) or '—'}",
+                f"- thermal window: {getattr(si, 'thermal_window_note', '') or '—'}",
+                (
+                    f"- process temp ceiling (°C): {si.process_temp_ceiling_c}"
+                    if getattr(si, "process_temp_ceiling_c", None) is not None
+                    else "- process temp ceiling (°C): —"
+                ),
                 f"- notes: {si.notes or '—'}",
             ]
         )

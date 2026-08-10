@@ -144,7 +144,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 
 ### Suggested Order of Module Implementation
 1. Expand SiFeasibilityComponents and make every term first-class in the data model and exports. **(P2.1 — done: YAML weights + export provenance)**
-2. Buffer library + stack suggestor with chemical-compatibility flags.
+2. Buffer library + stack suggestor with chemical-compatibility flags. **(P2.2 — done: multi-layer stacks + chemical/thermal window flags)**
 3. Thermal-budget and oxygen/nitrogen window estimators.
 4. Membrane and critical-thickness helpers.
 5. Ranking engine upgrades (configurable weights, Pareto, acquisition score).
