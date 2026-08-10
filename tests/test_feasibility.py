@@ -1,4 +1,4 @@
-"""Tests for the Silicon Feasibility scorer (P2.1 weights + P2.2 stacks)."""
+"""Tests for the Silicon Feasibility scorer (P2.1–P2.3)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,12 @@ from siscforge.silicon.buffers import (
     STACK_LIBRARY,
     aggregate_stack_flags,
     list_stacks_for_family,
+)
+from siscforge.silicon.critical_thickness import (
+    estimate_critical_thickness,
+    matthews_blakeslee_hc_nm,
+    membrane_transfer_heuristic,
+    people_bean_hc_nm,
 )
 from siscforge.silicon.feasibility import (
     COMPONENT_KEYS,
@@ -55,9 +61,9 @@ def _bsi_candidate() -> StructureCandidate:
     )
 
 
-def test_scorer_version_is_p22() -> None:
-    assert SCORER_VERSION == "0.4"
-    assert score_si_feasibility(_nbn_candidate()).version == "0.4"
+def test_scorer_version_is_p23() -> None:
+    assert SCORER_VERSION == "0.5"
+    assert score_si_feasibility(_nbn_candidate()).version == "0.5"
 
 
 def test_default_weights_match_component_weights_constant() -> None:
@@ -242,7 +248,7 @@ def test_interlayer_mismatch_uses_film_substrate_convention() -> None:
 
 
 def test_weight_override_still_reorders_with_p22_scorer() -> None:
-    """P2.1 weight override behaviour preserved after P2.2 stack enrichment."""
+    """P2.1 weight override behaviour preserved after P2.2/P2.3 enrichment."""
     nbn = _nbn_candidate()
     bsi = _bsi_candidate()
     default_order = rank_by_si_feasibility([nbn, bsi])
@@ -267,7 +273,7 @@ def test_weight_override_still_reorders_with_p22_scorer() -> None:
     # Weights appear on score audit trail
     s = score_si_feasibility(nbn, weights=buffer_heavy)
     assert abs(s.weights["buffer_availability"] - 1.0) < 1e-9
-    assert s.version == "0.4"
+    assert s.version == "0.5"
 
 
 def test_process_note_not_duplicated_in_score_notes() -> None:
@@ -293,3 +299,118 @@ def test_process_temp_ceiling_note_matches_exported_field() -> None:
     if "process temp ceiling ~" in score.notes:
         assert expected in score.notes, (expected, score.notes)
 
+
+# --- P2.3 critical thickness + membrane transfer ---
+
+
+def test_matthews_blakeslee_low_mismatch_larger_than_high() -> None:
+    """Known physics: lower |f| → larger h_c."""
+    b = 4.392 / (2**0.5)  # Å
+    hc_low = matthews_blakeslee_hc_nm(0.01, b_ang=b, poisson=0.25)
+    hc_high = matthews_blakeslee_hc_nm(0.05, b_ang=b, poisson=0.25)
+    assert hc_low is not None and hc_high is not None
+    assert hc_low > hc_high
+    # People–Bean should be substantially larger than MB at same f
+    pb_low = people_bean_hc_nm(0.01, b_ang=b, a_ang=4.392, poisson=0.25)
+    assert pb_low is not None
+    assert pb_low > hc_low
+
+
+def test_low_mismatch_nitride_thicker_recommended_band() -> None:
+    """Low-mismatch path (buffered NbN) → larger recommended thickness than high-mismatch."""
+    low = score_si_feasibility(_nbn_candidate(use_buffers=True))
+    high = score_si_feasibility(
+        _nbn_candidate(use_buffers=False, epitaxy_orientation="cube_on_cube")
+    )
+    assert low.recommended_thickness_nm is not None
+    assert high.recommended_thickness_nm is not None
+    # Upper bound of low-mismatch guidance should exceed high-mismatch
+    assert low.recommended_thickness_nm[1] >= high.recommended_thickness_nm[1]
+    # Low path should use physical method when elastic data present
+    assert low.critical_thickness_method in {"Matthews-Blakeslee", "People-Bean"}
+    assert "Matthews" in low.notes or "People" in low.notes or "critical" in low.notes.lower()
+
+
+def test_high_mismatch_thinner_guidance_and_note() -> None:
+    """High cube-on-cube NbN mismatch → thin band + clear note / method."""
+    score = score_si_feasibility(
+        _nbn_candidate(use_buffers=False, epitaxy_orientation="cube_on_cube")
+    )
+    assert score.lattice_mismatch_pct is not None
+    assert abs(score.lattice_mismatch_pct) > 15.0
+    assert score.recommended_thickness_nm is not None
+    lo, hi = score.recommended_thickness_nm
+    assert hi <= 30.0
+    assert lo <= 5.0
+    # Method and inputs audited
+    assert score.critical_thickness_method
+    assert score.critical_thickness_inputs or "fallback" in score.critical_thickness_method
+    assert "mismatch" in score.notes.lower() or "h_c" in score.notes or "thickness" in score.notes.lower()
+
+
+def test_missing_lattice_elastic_data_safe_fallback() -> None:
+    """No lattice / elastic data → conservative band, no crash."""
+    cand = StructureCandidate(
+        formula="MysteryX",
+        material_family="other",
+        composition={"X": 1.0},
+        lattice_abc=None,
+        substrate="Si(001)",
+        in_plane_strain=None,
+        metadata={},
+    )
+    score = score_si_feasibility(cand)
+    assert score.recommended_thickness_nm is not None
+    assert score.critical_thickness_method == "heuristic fallback"
+    assert score.version == "0.5"
+    # estimate_critical_thickness itself
+    ct = estimate_critical_thickness(None, formula="UnknownZed", material_family="other")
+    assert ct.method == "heuristic fallback"
+    assert ct.recommended_thickness_nm[0] > 0
+
+
+def test_membrane_note_when_direct_mismatch_high() -> None:
+    """Membrane-transfer candidate when direct epitaxy mismatch is high."""
+    # Cube-on-cube NbN on Si ~24% → should flag membrane
+    score = score_si_feasibility(
+        _nbn_candidate(use_buffers=False, epitaxy_orientation="cube_on_cube")
+    )
+    assert score.membrane_transfer_candidate is True
+    assert score.membrane_transfer_note
+    assert "membrane" in score.membrane_transfer_note.lower()
+    assert "membrane" in score.notes.lower() or "membrane_transfer" in score.chemical_flags
+
+    # Helper unit: high direct mismatch
+    flag, note = membrane_transfer_heuristic(direct_mismatch_pct=20.0)
+    assert flag is True
+    assert "membrane-transfer candidate" in note
+
+
+def test_membrane_not_forced_for_near_matched_bsi() -> None:
+    """Near-matched B:Si should not be a membrane candidate."""
+    score = score_si_feasibility(_bsi_candidate())
+    # B:Si on Si is nearly lattice-matched
+    if score.lattice_mismatch_pct is not None and abs(score.lattice_mismatch_pct) < 2.0:
+        assert score.membrane_transfer_candidate is False
+
+
+def test_p21_weights_and_p22_stacks_still_work_with_p23() -> None:
+    """Regression: weight override + multi-layer stacks intact after P2.3."""
+    nbn = _nbn_candidate()
+    bsi = _bsi_candidate()
+    maturity_heavy = {
+        "lattice_mismatch": 0.0,
+        "thermal_budget": 0.0,
+        "chemical_compatibility": 0.0,
+        "buffer_availability": 0.0,
+        "process_maturity": 1.0,
+    }
+    ranked = rank_by_si_feasibility([nbn, bsi], weights=maturity_heavy)
+    assert ranked[0][0].formula == "NbN"
+    score = ranked[0][1]
+    assert score.version == "0.5"
+    assert any("/" in b for b in score.recommended_buffers)
+    assert score.chemical_flags is not None
+    assert score.process_temp_ceiling_c is not None
+    assert score.critical_thickness_method
+    assert score.recommended_thickness_nm is not None

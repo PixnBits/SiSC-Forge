@@ -15,6 +15,10 @@ Active weights and scorer version are stored on every
 v0.4 (P2.2) adds **multi-layer buffer stacks** and surfaces
 **chemical-compatibility / thermal-window** flags from stack metadata on the
 score and synthesis cards. Still heuristic — not CALPHAD.
+
+v0.5 (P2.3) drives **recommended thickness** from Matthews–Blakeslee /
+People–Bean critical-thickness estimates and adds **membrane-transfer**
+heuristics (ranking / process guidance only — not continuum FEM).
 """
 
 from __future__ import annotations
@@ -37,6 +41,10 @@ from siscforge.silicon.buffers import (
     stack_process_temp_ceiling_c,
     stack_window_notes,
 )
+from siscforge.silicon.critical_thickness import (
+    estimate_critical_thickness,
+    membrane_transfer_heuristic,
+)
 from siscforge.structure.strain import (
     SI_LATTICE_CONSTANT,
     EpitaxyMatch,
@@ -45,7 +53,7 @@ from siscforge.structure.strain import (
     substrate_in_plane_spacing,
 )
 
-SCORER_VERSION = "0.4"
+SCORER_VERSION = "0.5"
 
 COMPONENT_WEIGHTS: dict[str, float] = {
     "lattice_mismatch": 0.35,
@@ -371,6 +379,24 @@ def _raw_mismatch_percent(candidate: StructureCandidate) -> float | None:
     return lattice_mismatch_percent(a_film, substrate, match="cube_on_cube")
 
 
+def _direct_mismatch_percent(candidate: StructureCandidate) -> float | None:
+    """Best *direct* (no buffer) mismatch for membrane heuristics."""
+    opts = evaluate_mismatch_options(candidate)
+    direct = [o for o in opts if str(o.get("path", "")).startswith("direct/")]
+    if not direct:
+        # force cube-on-cube if buffers-only path enumeration was empty of direct
+        a_film = _film_in_plane_a(candidate)
+        substrate = candidate.substrate or "Si(001)"
+        if a_film is None:
+            return None
+        try:
+            return lattice_mismatch_percent(a_film, substrate, match="cube_on_cube")
+        except ValueError:
+            return None
+    direct.sort(key=lambda o: abs(float(o["mismatch_pct"])))
+    return float(direct[0]["mismatch_pct"])
+
+
 def _chemical_score_for_path(
     family: str,
     candidate: StructureCandidate,
@@ -521,6 +547,7 @@ def score_si_feasibility(
 
     family = candidate.material_family
     notes: list[str] = []
+    lattice_data_missing = False
 
     options = evaluate_mismatch_options(candidate)
     best = options[0] if options else None
@@ -545,6 +572,7 @@ def score_si_feasibility(
     else:
         mismatch_pct = 5.0
         lattice_score = _mismatch_score_from_percent(mismatch_pct)
+        lattice_data_missing = True
         notes.append("mismatch defaulted (no lattice data)")
 
     thermal, t_proc, thermal_window_note, thermal_notes = _thermal_for_path(
@@ -598,10 +626,46 @@ def score_si_feasibility(
     )
     total = _clamp(round(total, 2))
 
-    if mismatch_pct is not None and abs(mismatch_pct) > 5:
-        thickness = (5.0, 30.0)
+    # --- P2.3: critical thickness → recommended band ---
+    a_film = _film_in_plane_a(candidate)
+    # When mismatch was defaulted for missing lattice, do not invent a physical h_c.
+    ct_mismatch = None if lattice_data_missing else mismatch_pct
+    ct = estimate_critical_thickness(
+        ct_mismatch,
+        formula=formula,
+        material_family=family,
+        film_a_ang=a_film,
+    )
+    thickness = ct.recommended_thickness_nm
+    notes.extend(ct.notes)
+
+    # --- P2.3: membrane-transfer heuristics ---
+    direct_mm = _direct_mismatch_percent(candidate)
+    path_eff = None
+    if best is not None:
+        path_eff = float(best.get("mismatch_effective_abs_pct", best["mismatch_pct"]))
+        # keep signed path mismatch for reporting when available
+        path_signed = float(best["mismatch_pct"])
     else:
-        thickness = (20.0, 100.0)
+        path_signed = mismatch_pct if mismatch_pct is not None else None
+        path_eff = abs(path_signed) if path_signed is not None else None
+
+    membrane_flag, membrane_note = membrane_transfer_heuristic(
+        direct_mismatch_pct=direct_mm,
+        path_mismatch_pct=path_signed if path_signed is not None else path_eff,
+        hc_nm=ct.hc_primary_nm,
+        path=str(best["path"]) if best else None,
+        is_multilayer=bool(best.get("is_multilayer")) if best else False,
+        material_family=family,
+        chemical_flags=chem_flags,
+    )
+    if membrane_flag:
+        notes.append(membrane_note)
+        if "membrane_transfer" not in chem_flags:
+            chem_flags = list(chem_flags) + ["membrane_transfer"]
+    elif membrane_note and ct.method != "heuristic fallback":
+        # Keep a short non-candidate note only when thickness guidance is physical
+        pass  # leave off notes to avoid noise; field still set on score
 
     # Surface chemical / thermal window on the notes string for card visibility
     if chem_flags:
@@ -637,6 +701,12 @@ def score_si_feasibility(
         chemical_flags=chem_flags,
         thermal_window_note=thermal_window_note,
         process_temp_ceiling_c=process_ceiling,
+        critical_thickness_nm=ct.hc_primary_nm,
+        critical_thickness_method=ct.method,
+        critical_thickness_people_bean_nm=ct.hc_people_bean_nm,
+        critical_thickness_inputs=dict(ct.inputs),
+        membrane_transfer_candidate=membrane_flag,
+        membrane_transfer_note=membrane_note if membrane_flag else "",
     )
 
 
@@ -675,4 +745,5 @@ def scorer_debug_info(candidate: StructureCandidate) -> dict[str, Any]:
     except ValueError:
         info["substrate_target_a"] = None
     info["mismatch_pct"] = _raw_mismatch_percent(candidate)
+    info["direct_mismatch_pct"] = _direct_mismatch_percent(candidate)
     return info

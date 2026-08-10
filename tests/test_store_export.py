@@ -77,6 +77,10 @@ def test_csv_has_required_columns(tmp_path: Path) -> None:
         "si_chemical_flags",
         "si_thermal_window",
         "si_process_temp_ceiling_c",
+        "si_recommended_thickness_nm",
+        "si_critical_thickness_nm",
+        "si_critical_thickness_method",
+        "si_membrane_transfer_candidate",
         "status",
         "composition",
     ):
@@ -114,6 +118,7 @@ def test_synthesis_cards(tmp_path: Path) -> None:
     assert "process maturity" in text
     assert "recommended buffers" in text
     assert "chemical flags" in text or "thermal window" in text
+    assert "critical thickness" in text or "recommended thickness" in text
 
 
 def test_campaign_config_formation_filter_yaml(tmp_path: Path) -> None:

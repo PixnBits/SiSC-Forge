@@ -57,6 +57,15 @@ def _si_weight(si, key: str) -> float | None:
     return float(weights[key])
 
 
+def _fmt_thickness_band(band: object) -> str:
+    """Format recommended_thickness_nm for CSV / cards."""
+    if band is None:
+        return ""
+    if isinstance(band, (list, tuple)) and len(band) == 2:
+        return f"{band[0]:g}–{band[1]:g}"
+    return str(band)
+
+
 def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
     """Flat row for CSV / tables with Phase-0 summary fields."""
     si = ev.si_feasibility
@@ -156,6 +165,24 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "si_process_temp_ceiling_c": (
             getattr(si, "process_temp_ceiling_c", None) if si else None
         ),
+        "si_recommended_thickness_nm": (
+            _fmt_thickness_band(getattr(si, "recommended_thickness_nm", None)) if si else ""
+        ),
+        "si_critical_thickness_nm": (
+            getattr(si, "critical_thickness_nm", None) if si else None
+        ),
+        "si_critical_thickness_method": (
+            getattr(si, "critical_thickness_method", "") or "" if si else ""
+        ),
+        "si_critical_thickness_people_bean_nm": (
+            getattr(si, "critical_thickness_people_bean_nm", None) if si else None
+        ),
+        "si_membrane_transfer_candidate": (
+            bool(getattr(si, "membrane_transfer_candidate", False)) if si else False
+        ),
+        "si_membrane_transfer_note": (
+            getattr(si, "membrane_transfer_note", "") or "" if si else ""
+        ),
     }
 
 
@@ -216,6 +243,12 @@ CSV_FIELDNAMES = [
     "si_chemical_flags",
     "si_thermal_window",
     "si_process_temp_ceiling_c",
+    "si_recommended_thickness_nm",
+    "si_critical_thickness_nm",
+    "si_critical_thickness_method",
+    "si_critical_thickness_people_bean_nm",
+    "si_membrane_transfer_candidate",
+    "si_membrane_transfer_note",
 ]
 
 
@@ -425,6 +458,12 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
 
     if si is not None:
         w = getattr(si, "weights", None) or {}
+        thick = _fmt_thickness_band(getattr(si, "recommended_thickness_nm", None))
+        ct_nm = getattr(si, "critical_thickness_nm", None)
+        ct_method = getattr(si, "critical_thickness_method", "") or "—"
+        ct_pb = getattr(si, "critical_thickness_people_bean_nm", None)
+        mem_flag = bool(getattr(si, "membrane_transfer_candidate", False))
+        mem_note = getattr(si, "membrane_transfer_note", "") or ""
         lines.extend(
             [
                 "",
@@ -454,6 +493,14 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                     else ""
                 ),
                 f"- recommended buffers: {', '.join(si.recommended_buffers) or '—'}",
+                f"- recommended thickness (nm): {thick or '—'}",
+                f"- critical thickness h_c (nm): {ct_nm if ct_nm is not None else '—'}"
+                f" [{ct_method}]",
+                (
+                    f"- People–Bean h_c (nm, metastable): {ct_pb}"
+                    if ct_pb is not None
+                    else "- People–Bean h_c (nm, metastable): —"
+                ),
                 f"- chemical flags: "
                 f"{', '.join(getattr(si, 'chemical_flags', None) or []) or '—'}",
                 f"- thermal window: {getattr(si, 'thermal_window_note', '') or '—'}",
@@ -462,9 +509,12 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                     if getattr(si, "process_temp_ceiling_c", None) is not None
                     else "- process temp ceiling (°C): —"
                 ),
-                f"- notes: {si.notes or '—'}",
+                f"- membrane-transfer candidate: {'yes' if mem_flag else 'no'}",
             ]
         )
+        if mem_note:
+            lines.append(f"- membrane note: {mem_note}")
+        lines.append(f"- notes: {si.notes or '—'}")
 
     if ph is not None:
         lines.extend(

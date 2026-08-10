@@ -9,13 +9,15 @@
 # P2.1: component weights are YAML-overridable under si_feasibility.weights
 # (defaults match COMPONENT_WEIGHTS; omit the block for unchanged behaviour).
 # P2.2: multi-layer buffer stacks (e.g. AlN/TiN) + chemical/thermal window flags.
+# P2.3: critical-thickness (Matthews–Blakeslee / People–Bean) + membrane notes.
 
 name: nbn_si_45deg
 description: >
   Single NbN candidate with auto epitaxy (45° and buffer options) so
-  Si-feasibility v0.4 can score beyond cube-on-cube pessimism with a
-  transparent, weight-auditable component breakdown.
-version: "0.4"
+  Si-feasibility v0.5 can score beyond cube-on-cube pessimism with a
+  transparent, weight-auditable component breakdown and critical-thickness
+  guided thickness / membrane-transfer notes.
+version: "0.5"
 dry_run: true
 
 enumeration:
@@ -37,8 +39,9 @@ calculators:
 formation_filter:
   enabled: false
 
-# P2.1/P2.2 — Si-feasibility component weights (optional; defaults shown).
-# Stack recommendations and chemical/thermal flags come from the scorer (v0.4).
+# P2.1–P2.3 — Si-feasibility component weights (optional; defaults shown).
+# Stack recommendations, chemical/thermal flags, and critical-thickness
+# guidance come from the scorer (v0.5).
 si_feasibility:
   weights:
     lattice_mismatch: 0.35
