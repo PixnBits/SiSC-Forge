@@ -259,8 +259,7 @@ def _option_from_stack(
     ]
     if stack.notes:
         notes_bits.append(stack.notes)
-    if stack.process_note:
-        notes_bits.append(stack.process_note)
+    # process_note is returned separately; score_si_feasibility appends it once.
 
     return {
         "path": f"{path_kind}/{stack.name}",
@@ -425,7 +424,8 @@ def _thermal_for_path(
         ceiling = best.get("max_process_temp_c")
         if ceiling is not None:
             t_proc = max(t_family, float(ceiling))
-            notes.append(f"process temp ceiling ~{float(ceiling):.0f} °C (stack/film)")
+            # Report the same value that is scored/exported as process_temp_ceiling_c.
+            notes.append(f"process temp ceiling ~{t_proc:.0f} °C (stack/film)")
         thermal_note = str(best.get("thermal_window_note") or "")
         flags = best.get("chemical_flags") or []
         if "high_thermal_budget" in flags:

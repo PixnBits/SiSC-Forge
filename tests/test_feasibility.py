@@ -268,3 +268,28 @@ def test_weight_override_still_reorders_with_p22_scorer() -> None:
     s = score_si_feasibility(nbn, weights=buffer_heavy)
     assert abs(s.weights["buffer_availability"] - 1.0) < 1e-9
     assert s.version == "0.4"
+
+
+def test_process_note_not_duplicated_in_score_notes() -> None:
+    """process_note lives in a dedicated field; score notes should not repeat it."""
+    score = score_si_feasibility(_nbn_candidate(epitaxy_orientation="cube_on_cube"))
+    # When a buffer/stack is chosen, process note appears at most once.
+    opts = evaluate_mismatch_options(_nbn_candidate(epitaxy_orientation="cube_on_cube"))
+    best = opts[0]
+    pn = str(best.get("process_note") or "")
+    if pn:
+        assert score.notes.count(pn) <= 1, score.notes
+    # Option notes must not already embed process_note (would double when appended)
+    assert pn == "" or pn not in str(best.get("notes") or "")
+
+
+def test_process_temp_ceiling_note_matches_exported_field() -> None:
+    """Human-readable ceiling note must match process_temp_ceiling_c / scored temp."""
+    score = score_si_feasibility(_nbn_candidate())
+    assert score.process_temp_ceiling_c is not None
+    expected = f"process temp ceiling ~{score.process_temp_ceiling_c:.0f} °C"
+    # Either the note is present with the matching value, or no ceiling note at all
+    # (direct path with only family temp still has ceiling field from t_proc).
+    if "process temp ceiling ~" in score.notes:
+        assert expected in score.notes, (expected, score.notes)
+
