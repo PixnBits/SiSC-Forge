@@ -143,6 +143,15 @@ class CandidateEvaluation(BaseModel):
     rank: int | None = None
     """1-based rank after sorting (filled by ranking module)."""
 
+    on_pareto_front: bool | None = None
+    """True if non-dominated on primary ranking axes (P2.4); None if Pareto off."""
+
+    ranking_weights: dict[str, float] | None = None
+    """Active ranking weight vector + performance ceiling used for this row (P2.4)."""
+
+    composite_breakdown: dict[str, Any] | None = None
+    """Normalized axis values and pre-penalty blend for transparent export (P2.4)."""
+
     acquisition_score: float | None = None
     """Active-learning acquisition score (higher → run expensive job sooner)."""
 

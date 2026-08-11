@@ -66,6 +66,18 @@ def _fmt_thickness_band(band: object) -> str:
     return str(band)
 
 
+def _ranking_weight(ev: CandidateEvaluation, key: str) -> float | None:
+    weights = getattr(ev, "ranking_weights", None) or {}
+    if key not in weights:
+        return None
+    return float(weights[key])
+
+
+def _breakdown_field(ev: CandidateEvaluation, key: str) -> object:
+    bd = getattr(ev, "composite_breakdown", None) or {}
+    return bd.get(key)
+
+
 def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
     """Flat row for CSV / tables with Phase-0 summary fields."""
     si = ev.si_feasibility
@@ -137,6 +149,15 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "si_w_buffer": _si_weight(si, "buffer_availability"),
         "si_w_process_maturity": _si_weight(si, "process_maturity"),
         "composite_score": ev.composite_score,
+        "on_pareto_front": getattr(ev, "on_pareto_front", None),
+        "ranking_w_performance": _ranking_weight(ev, "performance"),
+        "ranking_w_si_feasibility": _ranking_weight(ev, "si_feasibility"),
+        "ranking_w_uncertainty": _ranking_weight(ev, "uncertainty"),
+        "ranking_performance_ceiling_K": _ranking_weight(ev, "performance_ceiling_K"),
+        "composite_perf_norm": _breakdown_field(ev, "performance_norm"),
+        "composite_si": _breakdown_field(ev, "si_feasibility"),
+        "composite_certainty_norm": _breakdown_field(ev, "certainty_norm"),
+        "composite_pre_penalty": _breakdown_field(ev, "pre_penalty"),
         "result_quality": getattr(ev, "result_quality", None) or "unknown",
         "quality_flags": ";".join(getattr(ev, "quality_flags", None) or []),
         "quality_notes": getattr(ev, "quality_notes", None) or "",
@@ -227,6 +248,15 @@ CSV_FIELDNAMES = [
     "si_w_buffer",
     "si_w_process_maturity",
     "composite_score",
+    "on_pareto_front",
+    "ranking_w_performance",
+    "ranking_w_si_feasibility",
+    "ranking_w_uncertainty",
+    "ranking_performance_ceiling_K",
+    "composite_perf_norm",
+    "composite_si",
+    "composite_certainty_norm",
+    "composite_pre_penalty",
     "result_quality",
     "quality_flags",
     "quality_notes",
@@ -307,7 +337,27 @@ def write_synthesis_cards(
                 "",
             ]
         )
-    for ev in evaluations:
+    # Ranking provenance banner (P2.4) — take weights from first ranked row
+    eval_list = list(evaluations)
+    if eval_list:
+        rw = getattr(eval_list[0], "ranking_weights", None) or {}
+        if rw:
+            lines.extend(
+                [
+                    "### Ranking axes (campaign)",
+                    (
+                        f"- weights: performance={rw.get('performance', '—')}, "
+                        f"si_feasibility={rw.get('si_feasibility', '—')}, "
+                        f"uncertainty={rw.get('uncertainty', '—')}"
+                    ),
+                    (
+                        f"- performance ceiling: "
+                        f"{rw.get('performance_ceiling_K', 40)} K"
+                    ),
+                    "",
+                ]
+            )
+    for ev in eval_list:
         lines.extend(_card_markdown(ev))
         lines.append("")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -390,6 +440,13 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
     ph = ev.phonon
     scf = ev.scf
     rank = ev.rank if ev.rank is not None else "—"
+    pareto = getattr(ev, "on_pareto_front", None)
+    if pareto is True:
+        pareto_s = "yes"
+    elif pareto is False:
+        pareto_s = "no"
+    else:
+        pareto_s = "—"
     lines = [
         f"## #{rank} — {c.formula}",
         "",
@@ -401,10 +458,27 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         f"{c.in_plane_strain if c.in_plane_strain is not None else '—'}",
         f"- **status**: {ev.status} (`{ev.calculator_name or 'n/a'}`)",
         f"- **composite score**: {ev.composite_score}",
+        f"- **on Pareto front**: {pareto_s}",
         f"- **performance score**: {ev.performance_score}",
         f"- **performance source**: {getattr(ev, 'performance_score_source', None) or '—'}",
         f"- **result quality**: `{getattr(ev, 'result_quality', 'unknown')}`",
     ]
+    rw = getattr(ev, "ranking_weights", None) or {}
+    if rw:
+        lines.append(
+            f"- **ranking weights**: perf={rw.get('performance', '—')}, "
+            f"Si={rw.get('si_feasibility', '—')}, "
+            f"uncertainty={rw.get('uncertainty', '—')} "
+            f"(ceiling {rw.get('performance_ceiling_K', 40)} K)"
+        )
+    bd = getattr(ev, "composite_breakdown", None) or {}
+    if bd:
+        lines.append(
+            f"- **composite breakdown**: perf_norm={bd.get('performance_norm')}, "
+            f"Si={bd.get('si_feasibility')}, "
+            f"certainty_norm={bd.get('certainty_norm', '—')}, "
+            f"pre_penalty={bd.get('pre_penalty')}"
+        )
     flags = getattr(ev, "quality_flags", None) or []
     if flags:
         lines.append(f"- **quality flags**: {', '.join(flags)}")

@@ -230,8 +230,30 @@ def rank_cmd(
         "--stable-first",
         help="Sort dynamically stable rows above unstable (phonon-map stores).",
     ),
+    config_path: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Optional campaign YAML to load RankingConfig weights / Pareto settings.",
+        exists=True,
+        readable=True,
+    ),
+    pareto: bool | None = typer.Option(
+        None,
+        "--pareto/--no-pareto",
+        help="Override RankingConfig.pareto_enabled (default: config or True).",
+    ),
 ) -> None:
     """Rank evaluation records from a JSON file or campaign store directory."""
+    from siscforge.models.config import RankingConfig
+
+    if config_path is not None:
+        ranking_cfg = CampaignConfig.from_yaml(config_path).ranking
+    else:
+        ranking_cfg = RankingConfig()
+    if pareto is not None:
+        ranking_cfg = ranking_cfg.model_copy(update={"pareto_enabled": pareto})
+
     if input_json.is_dir():
         store = EvaluationStore(input_json)
         evaluations = store.load_evaluations(ranked=False)
@@ -244,8 +266,10 @@ def rank_cmd(
             raise typer.BadParameter("Input JSON must be a list of evaluations")
         evaluations = [CandidateEvaluation.model_validate(item) for item in raw]
 
-    ranked = rank_evaluations(evaluations, stable_first=stable_first)
-    _print_rank_table(ranked)
+    ranked = rank_evaluations(
+        evaluations, ranking_cfg, stable_first=stable_first
+    )
+    _print_rank_table(ranked, title="Ranked candidates", ranking_config=ranking_cfg)
 
     if output is not None:
         path = write_evaluations_json(ranked, output)
@@ -1555,7 +1579,11 @@ def run_cmd(
             "checkpoint": stats,
         }
     )
-    _print_rank_table(ranked, title=f"Ranked results — {config.name}")
+    _print_rank_table(
+        ranked,
+        title=f"Ranked results — {config.name}",
+        ranking_config=config.ranking,
+    )
 
     # 6. Export bundle
     formats = list(config.export_formats)
@@ -1634,7 +1662,22 @@ def _print_rank_table(
     ranked: list[CandidateEvaluation],
     *,
     title: str = "Ranked candidates",
+    ranking_config=None,
 ) -> None:
+    # Provenance banner: active ranking weights (P2.4)
+    rw = None
+    if ranked and getattr(ranked[0], "ranking_weights", None):
+        rw = ranked[0].ranking_weights
+    elif ranking_config is not None and hasattr(ranking_config, "active_weights"):
+        rw = ranking_config.active_weights()
+    if rw:
+        console.print(
+            f"[dim]Ranking weights:[/dim] perf={rw.get('performance', '—')} · "
+            f"Si={rw.get('si_feasibility', '—')} · "
+            f"uncertainty={rw.get('uncertainty', '—')} · "
+            f"ceiling={rw.get('performance_ceiling_K', 40)} K"
+        )
+
     table = Table(title=title)
     table.add_column("#", justify="right", style="cyan")
     table.add_column("ID", style="dim", max_width=10)
@@ -1647,6 +1690,7 @@ def _print_rank_table(
     table.add_column("Si", justify="right")
     table.add_column("Acq", justify="right")
     table.add_column("Composite", justify="right", style="bold")
+    table.add_column("Pareto", justify="center")
     table.add_column("Stable")
     table.add_column("min ω", justify="right")
     table.add_column("Status")
@@ -1682,6 +1726,13 @@ def _print_rank_table(
             if ev.acquisition_score is not None
             else "—"
         )
+        pareto_flag = getattr(ev, "on_pareto_front", None)
+        if pareto_flag is True:
+            pareto_s = "●"
+        elif pareto_flag is False:
+            pareto_s = "·"
+        else:
+            pareto_s = "—"
         stable = "—"
         min_w = "—"
         if ev.phonon is not None:
@@ -1708,6 +1759,7 @@ def _print_rank_table(
             si,
             acq,
             comp,
+            pareto_s,
             stable,
             min_w,
             status,

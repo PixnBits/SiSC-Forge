@@ -30,8 +30,12 @@ calculators:
       note: dry-run only
 
 ranking:
-  performance_weight: 0.6
-  si_feasibility_weight: 0.4
+  # P2.4 multi-objective weights (renormalized by sum). Defaults preserve legacy order.
+  performance_weight: 0.6          # Tc-like axis; normalized by performance_ceiling_K
+  si_feasibility_weight: 0.4       # Si-feasibility.total (0–100)
+  uncertainty_weight: 0.0          # optional certainty (1−surrogate u); 0 = off
+  performance_ceiling_K: 40.0      # K; maps performance_score → 0–100
+  pareto_enabled: true             # mark non-dominated on perf vs Si (+ certainty if weighted)
   prefer_dynamically_stable: true
 
 josephson:
