@@ -1257,6 +1257,16 @@ def run_dftu_scf(
         )
         if not step.success and dftu_result.status == "ok":
             dftu_result = dftu_result.model_copy(update={"status": "failed"})
+        # Persist fingerprint so resume only skips matching U/J/structure
+        if step.success and dftu_result is not None and dftu_result.status == "ok":
+            from siscforge.calculators.qe.dftu import write_dftu_config_sidecar
+
+            write_dftu_config_sidecar(
+                work_dir,
+                structure,
+                config.dftu,
+                quality_tag=config.quality_tag,
+            )
     return step, dftu_result
 
 
@@ -1330,11 +1340,20 @@ def run_dftu_workflow(
     dftu_out = work_dir / "dftu.out"
     resume_dftu = False
     if do_resume and not do_force and dftu_out.is_file():
-        try:
-            body = dftu_out.read_text(encoding="utf-8", errors="replace")
-            resume_dftu = "JOB DONE" in body.upper()
-        except OSError:
-            resume_dftu = False
+        from siscforge.calculators.qe.dftu import dftu_checkpoint_matches
+
+        resume_dftu = dftu_checkpoint_matches(
+            work_dir,
+            current,
+            config.dftu,
+            quality_tag=config.quality_tag,
+            out_name="dftu.out",
+        )
+        if not resume_dftu and dftu_out.is_file():
+            log.append(
+                "dftu checkpoint present but config fingerprint mismatch "
+                "(or missing sidecar) — re-running DFT+U"
+            )
     if resume_dftu:
         from siscforge.calculators.qe.dftu import parse_dftu_output
 

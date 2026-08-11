@@ -1058,13 +1058,18 @@ def run_cmd(
         raise typer.Exit(code=2) from exc
 
     calc_params: dict = {}
+    # Prefer exact calculator name, then fall back to QE alias group.
     for c in config.calculators:
-        if c.name == calc_name or (
-            calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}
-            and c.name in {"qe", "qe-epw", "quantum-espresso", "epw", "qe-dftu", "dftu"}
-        ):
+        if c.name == calc_name:
             calc_params = dict(c.parameters)
             break
+    else:
+        qe_aliases = {"qe", "qe-epw", "quantum-espresso", "epw", "qe-dftu", "dftu"}
+        if calc_name in qe_aliases:
+            for c in config.calculators:
+                if c.name in qe_aliases:
+                    calc_params = dict(c.parameters)
+                    break
 
     if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}:
         dft = config.dft
@@ -1237,7 +1242,7 @@ def run_cmd(
         f"heartbeat={run_cfg.heartbeat_seconds}s"
     )
     if (
-        calc_name in {"qe", "qe-epw"}
+        calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}
         and run_cfg.heartbeat_seconds
         and run_cfg.heartbeat_seconds > 0
     ):
@@ -1249,7 +1254,7 @@ def run_cmd(
     # 3b. Desktop walltime bands (qe / qe-epw only; mock unchanged)
     walltime_tracker = None
     walltime_est = None
-    if calc_name in {"qe", "qe-epw"} and getattr(run_cfg, "estimate_walltime", True):
+    if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"} and getattr(run_cfg, "estimate_walltime", True):
         from siscforge.walltime import (
             WalltimeTracker,
             estimate_campaign_walltime,
@@ -1278,7 +1283,7 @@ def run_cmd(
     evaluations: list[CandidateEvaluation] = []
     # Prior successes from this output_dir (for skip-finished).
     # Real QE/EPW must not skip dry-run mock rows (require_real).
-    require_real = calc_name in {"qe", "qe-epw"}
+    require_real = calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}
     resume_by_id, resume_by_fp = (
         store.resume_index(require_real=require_real)
         if run_cfg.resume and not run_cfg.force_rerun

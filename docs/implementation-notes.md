@@ -61,6 +61,19 @@ Addressed Copilot review on #11:
 
 ---
 
+## Slice P3.1 review round 2 (2026-08-11)
+
+| Issue | Fix |
+|-------|-----|
+| `species_type_index` used site order | Atomic-number order via `qe_atomic_type_symbols` (matches PWInput) |
+| DFT+U checkpoint ignored U/structure | `siscforge_dftu_config.json` fingerprint; mismatch re-runs |
+| `status=ok` without JOB DONE | Require energy **and** JOB DONE |
+| `require_real` missing qe-dftu | Include `qe-dftu`/`dftu` so mock rows are not resumed as real |
+| Calculator params alias order | Exact name first, then QE alias group |
+
+---
+
+
 
 
 ## Slice 28 (2026-08-07) — Phonon `phq_setup` / FFT–symmetry diagnosis + nosym retry

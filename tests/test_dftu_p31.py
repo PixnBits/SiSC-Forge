@@ -460,18 +460,27 @@ def test_run_dftu_workflow_mocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert result.dftu.status == "ok"
     assert result.dftu.total_energy_eV is not None
     assert (work / "dftu.out").is_file()
+    assert (work / "siscforge_dftu_config.json").is_file()
 
 
 def test_run_dftu_workflow_resume_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from siscforge.calculators.qe import recipes as recipes_mod
+    from siscforge.calculators.qe.dftu import write_dftu_config_sidecar
     from siscforge.calculators.qe.recipes import run_dftu_workflow
 
     s = build_binary_nitride("Nb")
     work = tmp_path / "resume"
     work.mkdir()
+    cfg = DFTConfig(
+        do_relax=False,
+        do_dftu=True,
+        dftu=DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=5.0),
+        quality_tag="screening",
+    )
     (work / "dftu.out").write_text(FIXTURE_DFTU.read_text(encoding="utf-8"), encoding="utf-8")
+    write_dftu_config_sidecar(work, s, cfg.dftu, quality_tag=cfg.quality_tag)
 
     def boom(*_a, **_k):
         raise AssertionError("run_pw should not be called on checkpoint resume")
@@ -482,15 +491,99 @@ def test_run_dftu_workflow_resume_checkpoint(
         "require_qe",
         lambda **kw: type("E", (), {"pw": "/bin/true", "ph": None, "epw": None, "mpirun": None})(),
     )
-    cfg = DFTConfig(
-        do_relax=False,
-        do_dftu=True,
-        dftu=DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=5.0),
-    )
     result = run_dftu_workflow(s, cfg, work, resume_qe_steps=True)
     assert result.success
     assert result.dftu is not None
     assert any("skip dftu" in s.message for s in result.steps)
+
+
+def test_run_dftu_workflow_resume_rejects_u_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Changing U invalidates checkpoint even if JOB DONE is present."""
+    from siscforge.calculators.qe import recipes as recipes_mod
+    from siscforge.calculators.qe.dftu import write_dftu_config_sidecar
+    from siscforge.calculators.qe.recipes import QEStepResult, run_dftu_workflow
+
+    s = build_binary_nitride("Nb")
+    work = tmp_path / "mismatch"
+    work.mkdir()
+    old_cfg_u = DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=5.0)
+    (work / "dftu.out").write_text(FIXTURE_DFTU.read_text(encoding="utf-8"), encoding="utf-8")
+    write_dftu_config_sidecar(work, s, old_cfg_u, quality_tag="screening")
+
+    calls = {"n": 0}
+
+    def fake_run_pw(structure, config, work_dir, **kwargs):
+        calls["n"] += 1
+        work_dir = Path(work_dir)
+        base = kwargs.get("input_basename") or "dftu"
+        out = work_dir / f"{base}.out"
+        out.write_text(FIXTURE_DFTU.read_text(encoding="utf-8"), encoding="utf-8")
+        inp = work_dir / f"{base}.in"
+        inp.write_text("! mock\n", encoding="utf-8")
+        return QEStepResult(
+            name=str(base),
+            work_dir=work_dir,
+            returncode=0,
+            stdout_path=out,
+            input_path=inp,
+            success=True,
+            message=f"pw.x {base} rc=0",
+        )
+
+    monkeypatch.setattr(recipes_mod, "run_pw", fake_run_pw)
+    monkeypatch.setattr(
+        recipes_mod,
+        "require_qe",
+        lambda **kw: type("E", (), {"pw": "/bin/true", "ph": None, "epw": None, "mpirun": None})(),
+    )
+    new_cfg = DFTConfig(
+        do_relax=False,
+        do_dftu=True,
+        dftu=DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=7.0),  # changed U
+        quality_tag="screening",
+    )
+    log: list[str] = []
+    result = run_dftu_workflow(s, new_cfg, work, resume_qe_steps=True, step_log=log)
+    assert calls["n"] == 1  # must re-run, not skip
+    assert result.success
+    assert any("fingerprint mismatch" in m for m in log)
+    assert not any("skip dftu" in s.message for s in result.steps)
+    # Sidecar should now reflect U=7
+    import json
+    side = json.loads((work / "siscforge_dftu_config.json").read_text())
+    assert side["U_by_species"]["Nb"] == 7.0
+
+
+def test_species_type_index_matches_pwinput_order() -> None:
+    """NbN: N (Z=7) before Nb (Z=41) — Hubbard_U index must follow PWInput."""
+    from siscforge.calculators.qe.dftu import species_type_index
+
+    s = build_binary_nitride("Nb")
+    idx = species_type_index(s)
+    assert idx["N"] == 1
+    assert idx["Nb"] == 2
+    extras = hubbard_system_extras(
+        s, DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=4.0)
+    )
+    # Hubbard_U must target type index 2 (Nb), not 1 (N)
+    assert extras["Hubbard_U(2)"] == 4.0
+    assert "Hubbard_U(1)" not in extras
+
+
+def test_parse_incomplete_scf_not_ok() -> None:
+    """Energy lines without JOB DONE must not report status=ok."""
+    text = """
+     !    total energy              =    -100.0 Ry
+     estimated scf accuracy    <       1.0E-05 Ry
+     total magnetization       =     0.1 Bohr mag/cell
+"""
+    result = parse_dftu_output(
+        text, dftu=DFTUConfig(enabled=True, U_eV=4.0, hubbard_species=["Ni"])
+    )
+    assert result.total_energy_eV is not None
+    assert result.status == "failed"
 
 
 @pytest.mark.skipif(

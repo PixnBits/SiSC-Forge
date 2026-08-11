@@ -121,12 +121,15 @@ def resolve_u_j_maps(
 
 
 def species_type_index(structure: Structure) -> dict[str, int]:
-    """Map element symbol → 1-based ATOMIC_SPECIES index (QE convention)."""
-    order: list[str] = []
-    for site in structure:
-        sym = str(site.specie.symbol)
-        if sym not in order:
-            order.append(sym)
+    """Map element symbol → 1-based ATOMIC_SPECIES index (QE convention).
+
+    Order matches pymatgen ``PWInput`` / QE ``ATOMIC_SPECIES``: unique symbols
+    sorted by atomic number (N before Nb). Site-appearance order is wrong for
+    Hubbard_U(i) / starting_magnetization(i) indices.
+    """
+    from siscforge.calculators.qe.epw_inputs import qe_atomic_type_symbols
+
+    order = qe_atomic_type_symbols(structure)
     return {sym: i + 1 for i, sym in enumerate(order)}
 
 
@@ -364,11 +367,9 @@ def parse_dftu_output(
         re.search(r"the Fermi energy is", text, re.IGNORECASE)
         or re.search(r"occupations\s*=\s*['\"]?smearing", text, re.IGNORECASE)
     )
-    status = (
-        "ok"
-        if energy is not None and job_done
-        else ("ok" if energy is not None else "failed")
-    )
+    # Require both a final energy and JOB DONE. Intermediate total-energy lines
+    # from a killed SCF must not be treated as success.
+    status = "ok" if energy is not None and job_done else "failed"
 
     species: list[str] = list(dftu.hubbard_species)
     u_map = dict(dftu.U_by_species)
@@ -492,3 +493,89 @@ def mock_dftu_result(
             notes="dry-run DFT+U placeholder (P3.1)",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# DFT+U checkpoint fingerprint (structure + U/J/projectors)
+# ---------------------------------------------------------------------------
+
+DFTU_CONFIG_SIDECAR = "siscforge_dftu_config.json"
+
+
+def dftu_config_fingerprint(
+    structure: Structure,
+    dftu: DFTUConfig,
+    *,
+    quality_tag: str = "screening",
+) -> dict[str, Any]:
+    """Stable fingerprint of Hubbard settings + composition for resume gates.
+
+    Changing U, J, projectors, spin, syntax, or cell composition invalidates
+    a prior ``dftu.out`` checkpoint so we never re-label old energy as new U.
+    """
+    species, u_map, j_map = resolve_u_j_maps(structure, dftu)
+    # Round lattice for stable JSON compare across float noise
+    lat = structure.lattice
+    return {
+        "version": 1,
+        "formula": structure.composition.reduced_formula,
+        "nsites": len(structure),
+        "elements": sorted({str(sp.symbol) for sp in structure.composition.elements}),
+        "lattice_abc": [round(float(x), 6) for x in (lat.a, lat.b, lat.c)],
+        "lattice_angles": [round(float(x), 4) for x in (lat.alpha, lat.beta, lat.gamma)],
+        "hubbard_species": list(species),
+        "U_by_species": {k: round(float(v), 6) for k, v in sorted(u_map.items())},
+        "J_by_species": {k: round(float(v), 6) for k, v in sorted(j_map.items())},
+        "hubbard_projectors": dftu.hubbard_projectors,
+        "lda_plus_u_kind": int(dftu.lda_plus_u_kind),
+        "nspin": int(dftu.nspin),
+        "hubbard_syntax": getattr(dftu, "hubbard_syntax", "namelist"),
+        "quality_tag": quality_tag,
+    }
+
+
+def write_dftu_config_sidecar(
+    work_dir: Path | str,
+    structure: Structure,
+    dftu: DFTUConfig,
+    *,
+    quality_tag: str = "screening",
+) -> Path:
+    """Persist fingerprint next to dftu.out after a successful DFT+U run."""
+    import json
+
+    work_dir = Path(work_dir)
+    path = work_dir / DFTU_CONFIG_SIDECAR
+    payload = dftu_config_fingerprint(structure, dftu, quality_tag=quality_tag)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def dftu_checkpoint_matches(
+    work_dir: Path | str,
+    structure: Structure,
+    dftu: DFTUConfig,
+    *,
+    quality_tag: str = "screening",
+    out_name: str = "dftu.out",
+) -> bool:
+    """True when dftu.out is JOB DONE and sidecar matches current config."""
+    import json
+
+    work_dir = Path(work_dir)
+    out = work_dir / out_name
+    side = work_dir / DFTU_CONFIG_SIDECAR
+    if not out.is_file() or not side.is_file():
+        return False
+    try:
+        body = out.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if "JOB DONE" not in body.upper():
+        return False
+    try:
+        saved = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected = dftu_config_fingerprint(structure, dftu, quality_tag=quality_tag)
+    return saved == expected
