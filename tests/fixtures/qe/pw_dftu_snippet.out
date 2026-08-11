@@ -1,0 +1,32 @@
+     Program PWSCF v.7.2 starts on  1Jan2024 at 12: 0: 0
+
+     Parallel version (MPI), running on     1 processors
+
+     Reading input from dftu.in
+
+     number of atoms/cell      =            3
+     number of atomic types    =            3
+     number of electrons       =         35.00
+     number of Kohn-Sham states=           24
+     kinetic-energy cutoff     =      50.0000  Ry
+     charge density cutoff     =     400.0000  Ry
+     Exchange-correlation= PBE
+                           (   1   4   3   4   0   0   0)
+     LDA+U calculation with U parameters
+
+     the Fermi energy is     8.7654 ev
+
+     !    total energy              =    -250.12345678 Ry
+     estimated scf accuracy    <       1.0E-09 Ry
+
+     total magnetization       =     1.2345 Bohr mag/cell
+     absolute magnetization    =     1.4567 Bohr mag/cell
+
+     Magnetic moment per site:
+     atom:    1 charge:   8.1234  magn:  1.1000
+     atom:    2 charge:   9.0000  magn:  0.0500
+     atom:    3 charge:   6.0000  magn:  0.0800
+
+     Hubbard occupation Ni = 8.15
+
+     JOB DONE.

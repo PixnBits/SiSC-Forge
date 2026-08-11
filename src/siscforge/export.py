@@ -397,6 +397,17 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "si_membrane_transfer_note": (
             getattr(si, "membrane_transfer_note", "") or "" if si else ""
         ),
+        # P3.1 DFT+U summary columns (empty when disabled / absent)
+        "dftu_U_eV": (ev.dftu.U_eV if ev.dftu is not None else None),
+        "dftu_J_eV": (ev.dftu.J_eV if ev.dftu is not None else None),
+        "dftu_total_magnetization": (
+            ev.dftu.total_magnetization if ev.dftu is not None else None
+        ),
+        "dftu_total_energy_eV": (
+            ev.dftu.total_energy_eV if ev.dftu is not None else None
+        ),
+        "dftu_status": (ev.dftu.status if ev.dftu is not None else ""),
+        "dftu_summary": (ev.dftu.summary_line() if ev.dftu is not None else ""),
     }
 
 
@@ -472,6 +483,12 @@ CSV_FIELDNAMES = [
     "si_critical_thickness_people_bean_nm",
     "si_membrane_transfer_candidate",
     "si_membrane_transfer_note",
+    "dftu_U_eV",
+    "dftu_J_eV",
+    "dftu_total_magnetization",
+    "dftu_total_energy_eV",
+    "dftu_status",
+    "dftu_summary",
 ]
 
 
@@ -880,6 +897,31 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- total energy (eV): {scf.total_energy_eV}",
                 f"- metallic: {scf.is_metallic}",
                 f"- status / quality: {scf.status} / {scf.quality_tag}",
+            ]
+        )
+
+    dftu = getattr(ev, "dftu", None)
+    if dftu is not None:
+        lines.extend(
+            [
+                "",
+                "#### DFT+U (correlated proxy, P3.1)",
+                f"- U (eV): {dftu.U_eV}",
+                f"- J (eV): {dftu.J_eV}",
+                f"- Hubbard species: {', '.join(dftu.hubbard_species) or '—'}",
+                f"- projectors: {dftu.hubbard_projectors or '—'}",
+                f"- total magnetization (μ_B): {dftu.total_magnetization}",
+                f"- occupancy: "
+                + (
+                    ", ".join(f"{k}={v}" for k, v in dftu.occupancy_summary.items())
+                    if dftu.occupancy_summary
+                    else "—"
+                ),
+                f"- total energy (eV): {dftu.total_energy_eV}",
+                f"- status / quality: {dftu.status} / {dftu.quality_tag}",
+                f"- summary: {dftu.summary_line()}",
+                "- note: cheap DFT+U proxy only — Wannier (P3.2) / DMFT (P3.3) / "
+                "pairing (P3.4) not yet attached",
             ]
         )
 

@@ -11,14 +11,14 @@ from siscforge.calculators.qe.eliashberg import performance_score_from_epw
 from siscforge.calculators.qe.env import QENotAvailableError, require_qe
 from siscforge.calculators.qe.epw_recipes import run_relax_scf_phonon_epw
 from siscforge.calculators.qe.inputs import candidate_to_structure
-from siscforge.calculators.qe.recipes import run_relax_scf_phonon
+from siscforge.calculators.qe.recipes import run_dftu_workflow, run_relax_scf_phonon
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import DFTConfig
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import SiFeasibilityScore
 from siscforge.silicon.feasibility import score_si_feasibility
 
-__all__ = ["QECalculator", "QENotAvailableError", "QEEpwCalculator"]
+__all__ = ["QECalculator", "QENotAvailableError", "QEEpwCalculator", "QEDftuCalculator"]
 
 
 def _merge_dft_config(
@@ -38,15 +38,18 @@ def _merge_dft_config(
 
 
 class QECalculator(BaseCalculator):
-    """Run relax → SCF → phonon (+ optional EPW) via Quantum ESPRESSO.
+    """Run relax → SCF → phonon (+ optional EPW / DFT+U) via Quantum ESPRESSO.
 
     Registration names: ``qe``, ``quantum-espresso``.
     Enable EPW with ``dft.do_epw: true`` / ``dft.epw.enabled: true``, or use
     :class:`QEEpwCalculator` (``qe-epw``).
+    Enable DFT+U with ``dft.do_dftu: true`` / ``dft.dftu.enabled: true``, or
+    use :class:`QEDftuCalculator` (``qe-dftu``). DFT+U is inert by default.
     """
 
     name = "qe"
     force_epw: bool = False
+    force_dftu: bool = False
 
     def __init__(
         self,
@@ -54,15 +57,27 @@ class QECalculator(BaseCalculator):
         work_root: str | Path | None = None,
         *,
         force_epw: bool = False,
+        force_dftu: bool = False,
     ) -> None:
         self.dft = dft or DFTConfig(engine="qe")
         self.work_root = Path(work_root) if work_root else Path("qe_work")
         self.force_epw = force_epw
+        self.force_dftu = force_dftu
 
     def run(self, candidate: StructureCandidate, **kwargs: Any) -> CandidateEvaluation:
-        """Execute the QE (+ optional EPW) workflow for *candidate*."""
+        """Execute the QE (+ optional EPW / DFT+U) workflow for *candidate*."""
+        from siscforge.calculators.qe.dftu import dftu_is_enabled
+
         dft = _merge_dft_config(self.dft, kwargs)
         want_epw = self.force_epw or dft.do_epw or dft.epw.enabled
+        want_dftu = dftu_is_enabled(dft, force=self.force_dftu)
+        if want_dftu:
+            dft = dft.model_copy(
+                update={
+                    "do_dftu": True,
+                    "dftu": dft.dftu.model_copy(update={"enabled": True}),
+                }
+            )
         if want_epw:
             dft = dft.model_copy(
                 update={
@@ -71,10 +86,16 @@ class QECalculator(BaseCalculator):
                     "epw": dft.epw.model_copy(update={"enabled": True}),
                 }
             )
+        elif want_dftu and not dft.do_phonon:
+            # Pure DFT+U calculator path (qe-dftu default)
+            dft = dft.model_copy(update={"engine": "qe-dftu"})
         else:
             dft = dft.model_copy(update={"engine": "qe"})
 
-        need_ph = dft.do_phonon
+        need_ph = dft.do_phonon and not (want_dftu and self.force_dftu and not dft.do_phonon)
+        # force_dftu with default do_phonon True still runs phonon unless disabled in YAML
+        if self.force_dftu and not dft.do_phonon and not want_epw:
+            need_ph = False
         qe_env = require_qe(need_phonon=need_ph, need_epw=want_epw)
 
         try:
@@ -134,7 +155,37 @@ class QECalculator(BaseCalculator):
             resume_qe = not force_qe
 
         step_log: list[str] = []
-        if want_epw:
+        dftu_only = bool(
+            want_dftu
+            and not want_epw
+            and (self.force_dftu or (not dft.do_phonon and dft.do_dftu))
+        )
+        if dftu_only:
+            base = run_dftu_workflow(
+                structure,
+                dft,
+                cand_dir,
+                prefix=prefix,
+                qe_env=qe_env,
+                resume_qe_steps=resume_qe,
+                force_qe_steps=force_qe,
+                step_log=step_log,
+            )
+            from siscforge.calculators.qe.epw_recipes import EPWWorkflowResult
+
+            wf = EPWWorkflowResult(
+                work_dir=base.work_dir,
+                structure=base.structure,
+                scf=base.scf,
+                phonon=base.phonon,
+                steps=list(base.steps),
+                relaxed_structure=base.relaxed_structure,
+                success=base.success,
+                message=base.message,
+            )
+            # stash dftu on a side channel for evaluation assembly
+            wf.__dict__["_dftu_result"] = base.dftu
+        elif want_epw:
             wf = run_relax_scf_phonon_epw(
                 structure,
                 dft,
@@ -145,6 +196,20 @@ class QECalculator(BaseCalculator):
                 force_qe_steps=force_qe,
                 step_log=step_log,
             )
+            if want_dftu:
+                dftu_dir = cand_dir / "dftu"
+                dftu_base = run_dftu_workflow(
+                    structure if wf.relaxed_structure is None else wf.relaxed_structure,
+                    dft,
+                    dftu_dir,
+                    prefix=prefix,
+                    qe_env=qe_env,
+                    resume_qe_steps=resume_qe,
+                    force_qe_steps=force_qe,
+                    step_log=step_log,
+                )
+                wf.__dict__["_dftu_result"] = dftu_base.dftu
+                wf.steps = list(wf.steps) + list(dftu_base.steps)
         else:
             base = run_relax_scf_phonon(
                 structure,
@@ -168,6 +233,26 @@ class QECalculator(BaseCalculator):
                 success=base.success,
                 message=base.message,
             )
+            if want_dftu:
+                dftu_dir = cand_dir / "dftu"
+                struct_for_u = base.relaxed_structure or structure
+                dftu_base = run_dftu_workflow(
+                    struct_for_u,
+                    dft,
+                    dftu_dir,
+                    prefix=prefix,
+                    qe_env=qe_env,
+                    resume_qe_steps=resume_qe,
+                    force_qe_steps=force_qe,
+                    step_log=step_log,
+                )
+                wf.__dict__["_dftu_result"] = dftu_base.dftu
+                wf.steps = list(wf.steps) + list(dftu_base.steps)
+                # Additive DFT+U should not fail the whole eval if conventional ok
+                if not dftu_base.success:
+                    step_log.append(
+                        f"DFT+U failed (conventional path kept): {dftu_base.message}"
+                    )
 
         precomputed = kwargs.get("si_feasibility")
         if isinstance(precomputed, SiFeasibilityScore):
@@ -322,11 +407,17 @@ class QECalculator(BaseCalculator):
             err_list.append(f"work_dir={cand_dir}")
             err_list.append(truncate_for_notes(wf.message, max_chars=600))
 
+        dftu_result = getattr(wf, "_dftu_result", None)
+        if dftu_result is not None:
+            notes_parts.append(f"dftu={dftu_result.summary_line()}")
+        notes_parts.append(f"do_dftu={want_dftu}")
+
         return CandidateEvaluation(
             candidate=out_candidate,
             scf=scf,
             phonon=phonon,
             electron_phonon=eph,
+            dftu=dftu_result,
             si_feasibility=si,
             performance_score=performance,
             composite_score=None,
@@ -349,9 +440,15 @@ class QECalculator(BaseCalculator):
                     "pseudos": resolved_pseudos,
                     "relaxed": wf.relaxed_structure is not None,
                     "do_epw": want_epw,
+                    "do_dftu": want_dftu,
                 },
                 parent_ids=[candidate.candidate_id],
-                notes="QE relax/SCF/phonon" + ("/EPW" if want_epw else "") + " evaluation",
+                notes=(
+                    "QE relax/SCF/phonon"
+                    + ("/EPW" if want_epw else "")
+                    + ("/DFT+U" if want_dftu else "")
+                    + " evaluation"
+                ),
             ),
         )
 
@@ -372,8 +469,36 @@ class QEEpwCalculator(QECalculator):
             self.dft = self.dft.model_copy(update={"engine": "qe-epw", "do_epw": True})
 
 
+class QEDftuCalculator(QECalculator):
+    """QE calculator focused on DFT+U (Hubbard) SCF for correlated proxies.
+
+    Registration name: ``qe-dftu``. Forces ``do_dftu``; defaults phonon/EPW off
+    unless the campaign explicitly re-enables them. Does not require Wannier90
+    or TRIQS (those arrive in P3.2 / P3.3).
+    """
+
+    name = "qe-dftu"
+    force_dftu = True
+
+    def __init__(
+        self,
+        dft: DFTConfig | None = None,
+        work_root: str | Path | None = None,
+    ) -> None:
+        base = dft or DFTConfig(engine="qe-dftu", do_phonon=False, do_epw=False)
+        if not base.do_dftu:
+            base = base.model_copy(
+                update={
+                    "do_dftu": True,
+                    "dftu": base.dftu.model_copy(update={"enabled": True}),
+                    "engine": "qe-dftu",
+                }
+            )
+        super().__init__(dft=base, work_root=work_root, force_dftu=True)
+
+
 def register_qe_calculators() -> None:
-    """Register ``qe``, ``quantum-espresso``, and ``qe-epw`` aliases."""
+    """Register ``qe``, ``quantum-espresso``, ``qe-epw``, and ``qe-dftu`` aliases."""
     from siscforge.calculators import registry
 
     calc = QECalculator()
@@ -381,3 +506,5 @@ def register_qe_calculators() -> None:
     registry.register(calc, name="quantum-espresso", overwrite=True)
     registry.register(QEEpwCalculator(), name="qe-epw", overwrite=True)
     registry.register(QEEpwCalculator(), name="epw", overwrite=True)
+    registry.register(QEDftuCalculator(), name="qe-dftu", overwrite=True)
+    registry.register(QEDftuCalculator(), name="dftu", overwrite=True)

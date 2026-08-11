@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from siscforge.calculators.qe.calculator import (
     QECalculator,
+    QEDftuCalculator,
     QEEpwCalculator,
     register_qe_calculators,
 )
@@ -37,6 +38,7 @@ from siscforge.calculators.qe.pseudos import (
 __all__ = [
     "EPWNotAvailableError",
     "QECalculator",
+    "QEDftuCalculator",
     "QEEpwCalculator",
     "QENotFoundError",
     "QENotAvailableError",

@@ -1060,13 +1060,13 @@ def run_cmd(
     calc_params: dict = {}
     for c in config.calculators:
         if c.name == calc_name or (
-            calc_name in {"qe", "qe-epw"}
-            and c.name in {"qe", "qe-epw", "quantum-espresso", "epw"}
+            calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}
+            and c.name in {"qe", "qe-epw", "quantum-espresso", "epw", "qe-dftu", "dftu"}
         ):
             calc_params = dict(c.parameters)
             break
 
-    if calc_name in {"qe", "qe-epw"}:
+    if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}:
         dft = config.dft
         if calc_name == "qe-epw":
             dft = dft.model_copy(
@@ -1075,10 +1075,29 @@ def run_cmd(
                     "epw": dft.epw.model_copy(update={"enabled": True}),
                 }
             )
+        if calc_name in {"qe-dftu", "dftu"}:
+            dft = dft.model_copy(
+                update={
+                    "do_dftu": True,
+                    "engine": "qe-dftu",
+                    "dftu": dft.dftu.model_copy(update={"enabled": True}),
+                    # Focused DFT+U calculator: no phonon/EPW unless YAML kept them on
+                    # via explicit do_phonon after enabling dftu (rare).
+                    "do_phonon": False,
+                    "do_epw": False,
+                    "epw": dft.epw.model_copy(update={"enabled": False}),
+                }
+            )
         # EPW fine-grid: nproc must equal npool (nimage=1). Auto-fix early so
         # users see the message before multi-hour DFPT, not only at epw.x launch.
         # Phonon-only (do_epw false + calculator qe): skip all EPW preflight noise.
+        # DFT+U-only (qe-dftu) also skips EPW preflight.
         want_epw = bool(calc_name == "qe-epw" or dft.do_epw or dft.epw.enabled)
+        want_dftu = bool(
+            calc_name in {"qe-dftu", "dftu"}
+            or dft.do_dftu
+            or dft.dftu.enabled
+        )
         if want_epw:
             from siscforge.calculators.qe.epw_inputs import (
                 default_nbndsub_screening,
@@ -1191,6 +1210,7 @@ def run_cmd(
             f"do_relax={dft.do_relax}",
             f"do_phonon={dft.do_phonon}",
             f"do_epw={want_epw}",
+            f"do_dftu={want_dftu}",
             f"nproc={dft.nproc}",
         ]
         if want_epw:
@@ -1202,7 +1222,9 @@ def run_cmd(
             f"[bold]Calculator[/bold] {calc_name}  ({', '.join(mode_bits)})"
         )
     else:
-        calc_params = {**calc_params, "run_config": run_cfg}
+        # Pass campaign DFT so mock can honor do_dftu / dftu.enabled (P3.1).
+        # Inert when DFT+U is disabled (default).
+        calc_params = {**calc_params, "dft": config.dft, "run_config": run_cfg}
         console.print(f"[bold]Calculator[/bold] {calc_name}")
 
     console.print(

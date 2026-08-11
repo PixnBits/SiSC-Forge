@@ -1,5 +1,48 @@
 # Implementation Notes
 
+## Slice P3.1 (2026-08-11) — DFT+U workflow and DFTUResult model
+
+**Scope**: First vertical slice of the unconventional (nickelate) pathway.
+Adds typed `DFTUResult`, campaign knobs (`dft.do_dftu` / `dft.dftu`, **off by
+default**), QE sequential `pw.x` DFT+U recipe, mock dry-run path, and light
+CSV / synthesis-card export. Conventional nitride / MgB₂ / AL campaigns are
+unchanged when DFT+U is disabled.
+
+| Item | Location |
+|------|----------|
+| Model | `models/results.py` → `DFTUResult` |
+| Evaluation field | `CandidateEvaluation.dftu` (optional) |
+| Config | `DFTUConfig` under `DFTConfig.dftu`; `do_dftu` flag |
+| Helpers | `calculators/qe/dftu.py` |
+| Recipe | `run_dftu_scf`, `run_dftu_workflow` |
+| Calculator | `qe-dftu` / `dftu`; additive on `qe` when enabled |
+| Mock | fills `DFTUResult` only when enabled |
+| Export | `dftu_*` CSV columns + card section |
+| Docs | `docs/phase3-p31-dftu.md` |
+| Example | `examples/ndnio2_dftu_mock.yaml` |
+| Tests | `tests/test_dftu_p31.py` |
+
+**Out of scope**: Wannier (P3.2), TRIQS/DMFT (P3.3), pairing (P3.4),
+O-vacancy (P3.5), mixed AL (P3.6).
+
+### Enable
+
+```yaml
+dft:
+  do_dftu: true
+  dftu:
+    enabled: true
+    U_eV: 5.0
+    hubbard_species: [Ni]
+```
+
+```bash
+siscforge run --dry-run examples/ndnio2_dftu_mock.yaml
+```
+
+---
+
+
 ## Slice 28 (2026-08-07) — Phonon `phq_setup` / FFT–symmetry diagnosis + nosym retry
 
 **Scope**: Phonon-map campaigns (`do_epw=false`) were mislabeling
