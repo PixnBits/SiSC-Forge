@@ -17,7 +17,7 @@ class SCFResult(BaseModel):
     """Minimal self-consistent field (or total-energy) result.
 
     Populated by real QE calculators later; the mock calculator fills
-    placeholder values with ``status="mock"``.
+    placeholder values with ``status=\"mock\"``.
     """
 
     total_energy_eV: float | None = None
@@ -202,8 +202,8 @@ class SiFeasibilityScore(BaseModel):
     recommended_buffers: list[str] = Field(default_factory=list)
     """Suggested buffer-layer stacks (names / formulas; may include multi-layer e.g. AlN/TiN)."""
 
-    recommended_thickness_nm: tuple[float, float] | None = None
-    """Optional (min, max) recommended film thickness in nm."""
+    recommended_thickness_nm: float | tuple[float, float] | None = None
+    """Recommended film thickness in nm (P2.3: scalar from critical thickness; legacy (min, max) band also accepted)."""
 
     notes: str = ""
     """Human-readable rationale or caveats."""
@@ -220,6 +220,25 @@ class SiFeasibilityScore(BaseModel):
 
     process_temp_ceiling_c: float | None = None
     """P2.2: heuristic process-temperature ceiling (°C) for film + recommended stack."""
+
+    # --- P2.3 critical thickness + membrane transfer (additive) ---
+    critical_thickness_nm: float | None = None
+    """P2.3: primary critical thickness h_c (nm), usually Matthews–Blakeslee."""
+
+    critical_thickness_method: str = ""
+    """P2.3: method label (Matthews–Blakeslee / People–Bean / heuristic fallback)."""
+
+    critical_thickness_people_bean_nm: float | None = None
+    """P2.3: optional People–Bean metastable h_c (nm) for audit."""
+
+    critical_thickness_inputs: dict[str, Any] = Field(default_factory=dict)
+    """P2.3: key model inputs (mismatch, Burgers vector, Poisson ratio, …)."""
+
+    membrane_transfer_candidate: bool = False
+    """P2.3: rule-based flag — membrane transfer may help (not FEM)."""
+
+    membrane_transfer_note: str = ""
+    """P2.3: short membrane-transfer heuristic note for cards / export."""
 
     @field_validator("total")
     @classmethod

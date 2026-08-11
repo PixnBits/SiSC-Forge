@@ -165,7 +165,8 @@ def test_example_al_broad_yaml_loads_and_enumerates() -> None:
     # Si-feasibility metadata for 45° / buffer scoring
     assert all(c.metadata.get("epitaxy_orientation") == "auto" for c in cands)
     si0 = score_si_feasibility(cands[0])
-    assert si0.version == "0.4"
+    assert si0.version == "0.5"
+
     assert 0.0 <= si0.total <= 100.0
     assert si0.weights  # P2.1 provenance
 
