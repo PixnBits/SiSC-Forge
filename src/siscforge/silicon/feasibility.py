@@ -109,11 +109,7 @@ def _clamp(score: float) -> float:
 def normalize_component_weights(
     weights: WeightsLike = None,
 ) -> dict[str, float]:
-    """Return a full, non-negative weight vector normalized to sum 1.0.
-
-    An all-zero (or negative-clamped) override falls back to COMPONENT_WEIGHTS.
-    Non-finite values (NaN / ±∞) also force fallback so scoring never produces NaN.
-    """
+    """Return a full, non-negative weight vector normalized to sum 1.0."""
     base = dict(COMPONENT_WEIGHTS)
     if weights is None:
         raw = base
@@ -191,12 +187,206 @@ def _use_buffers(candidate: StructureCandidate) -> bool:
 
 
 def _layer_layer_mismatch_pct(a_bottom: float, a_top: float) -> float:
-    """Percent misfit at a stack interface (substrate-side → film-side).
-
-    Uses the same convention as :func:`lattice_mismatch_percent`:
-    ``100 * (a_sub - a_film) / a_film`` with *a_bottom* as substrate-side and
-    *a_top* as film-side. Layers are ordered substrate → film.
-    """
+    """Percent misfit at a stack interface (substrate-side → film-side)."""
     if a_top <= 0:
         raise ValueError("layer lattice constant must be positive")
     return 100.0 * (a_bottom - a_top) / a_top
+
+
+def _option_from_stack(
+    stack: BufferStack,
+    *,
+    a_film: float,
+    substrate: str,
+) -> dict[str, Any] | None:
+    """Build a mismatch option dict for a single- or multi-layer stack."""
+    layers = resolve_stack_layers(stack)
+    if not layers:
+        return None
+    top = layers[-1]
+    bottom = layers[0]
+    try:
+        m_film_top = lattice_mismatch_percent(
+            a_film, substrate, match="cube_on_cube", substrate_a=top.lattice_a_ang
+        )
+        m_bottom_si = lattice_mismatch_percent(
+            bottom.lattice_a_ang, substrate, match="cube_on_cube"
+        )
+    except ValueError:
+        return None
+
+    interface_pcts: list[float] = [m_film_top, m_bottom_si]
+    interface_detail: list[str] = [
+        f"film–{top.name} {m_film_top:.2f}%",
+        f"{bottom.name}–Si {m_bottom_si:.2f}%",
+    ]
+    intermediate_abs: list[float] = []
+    for i in range(len(layers) - 1):
+        lo, hi = layers[i], layers[i + 1]
+        try:
+            m_ll = _layer_layer_mismatch_pct(lo.lattice_a_ang, hi.lattice_a_ang)
+        except ValueError:
+            continue
+        interface_pcts.append(m_ll)
+        intermediate_abs.append(abs(m_ll))
+        interface_detail.append(f"{lo.name}–{hi.name} {m_ll:.2f}%")
+
+    if stack.is_multilayer:
+        soft = 0.15 * abs(m_bottom_si)
+        if intermediate_abs:
+            soft += 0.10 * max(intermediate_abs)
+        eff = abs(m_film_top) + soft
+        report_pct = m_film_top
+    else:
+        eff = max(abs(p) for p in interface_pcts)
+        report_pct = m_film_top
+        for p in interface_pcts:
+            if abs(p) >= abs(report_pct):
+                report_pct = p
+
+    flags = list(aggregate_stack_flags(stack))
+    ceiling = stack_process_temp_ceiling_c(stack)
+    path_kind = "stack" if stack.is_multilayer else "buffer"
+    notes_bits = [
+        f"{'multi-layer stack' if stack.is_multilayer else 'buffer'} {stack.name}: "
+        + ", ".join(interface_detail),
+    ]
+    if stack.notes:
+        notes_bits.append(stack.notes)
+
+    return {
+        "path": f"{path_kind}/{stack.name}",
+        "match": "cube_on_cube",
+        "buffer": stack.name,
+        "layers": list(stack.layers),
+        "is_multilayer": stack.is_multilayer,
+        "mismatch_pct": report_pct,
+        "mismatch_film_buffer_pct": m_film_top,
+        "mismatch_buffer_si_pct": m_bottom_si,
+        "mismatch_effective_abs_pct": eff,
+        "score": _mismatch_score_from_percent(eff),
+        "notes": "; ".join(notes_bits),
+        "process_note": stack.process_note,
+        "chemical_flags": flags,
+        "max_process_temp_c": ceiling,
+        "thermal_window_note": stack.thermal_window_note
+        or (layers[-1].thermal_window_note if layers else ""),
+        "window_notes": stack_window_notes(stack),
+    }
+
+
+def evaluate_mismatch_options(candidate: StructureCandidate) -> list[dict[str, Any]]:
+    """Enumerate direct epitaxy and buffer/stack paths ranked by |mismatch|."""
+    substrate = candidate.substrate or "Si(001)"
+    try:
+        parse_substrate(substrate)
+    except ValueError:
+        return []
+    a_film = _film_in_plane_a(candidate)
+    if a_film is None:
+        return []
+    options: list[dict[str, Any]] = []
+    mode = _resolve_epitaxy_mode(candidate)
+    matches: list[EpitaxyMatch]
+    if mode == "auto":
+        matches = ["cube_on_cube", "45deg"]
+    elif mode == "45deg":
+        matches = ["45deg"]
+    else:
+        matches = ["cube_on_cube"]
+    for m in matches:
+        try:
+            pct = lattice_mismatch_percent(a_film, substrate, match=m)
+        except ValueError:
+            continue
+        direct = BUFFER_LIBRARY["direct_Si"]
+        options.append({
+            "path": f"direct/{m}",
+            "match": m,
+            "buffer": "direct_Si",
+            "layers": ["direct_Si"],
+            "is_multilayer": False,
+            "mismatch_pct": pct,
+            "mismatch_effective_abs_pct": abs(pct),
+            "score": _mismatch_score_from_percent(pct),
+            "notes": f"direct on Si with {m} matching",
+            "process_note": "Direct epitaxy on Si (no buffer).",
+            "chemical_flags": list(direct.chemical_flags),
+            "max_process_temp_c": None,
+            "thermal_window_note": direct.thermal_window_note,
+            "window_notes": [direct.thermal_window_note] if direct.thermal_window_note else [],
+        })
+    if _use_buffers(candidate):
+        family = candidate.material_family
+        for buf in list_buffers_for_family(family):
+            if buf.name == "direct_Si":
+                continue
+            opt = _option_from_stack(
+                stack_from_single(buf), a_film=a_film, substrate=substrate
+            )
+            if opt is not None:
+                opt["path"] = f"buffer/{buf.name}"
+                options.append(opt)
+        for stack in list_stacks_for_family(family, multilayer_only=True):
+            opt = _option_from_stack(stack, a_film=a_film, substrate=substrate)
+            if opt is not None:
+                options.append(opt)
+    options.sort(
+        key=lambda o: (
+            abs(float(o.get("mismatch_effective_abs_pct", o["mismatch_pct"]))),
+            0 if o.get("is_multilayer") else 1,
+            str(o.get("buffer", "")),
+        )
+    )
+    return options
+
+
+def _raw_mismatch_percent(candidate: StructureCandidate) -> float | None:
+    opts = evaluate_mismatch_options(candidate)
+    if opts:
+        return float(opts[0]["mismatch_pct"])
+    substrate = candidate.substrate or "Si(001)"
+    try:
+        parse_substrate(substrate)
+    except ValueError:
+        return None
+    a_film = _film_in_plane_a(candidate)
+    if a_film is None:
+        return None
+    return lattice_mismatch_percent(a_film, substrate, match="cube_on_cube")
+
+
+def _direct_mismatch_percent(
+    candidate: StructureCandidate,
+    options: list[dict[str, Any]] | None = None,
+) -> float | None:
+    """Best *direct* (no buffer) mismatch for membrane heuristics.
+
+    When *options* is provided (already computed by the scorer), reuse it
+    instead of re-enumerating mismatch paths.
+    """
+    opts = options if options is not None else evaluate_mismatch_options(candidate)
+    direct = [o for o in opts if str(o.get("path", "")).startswith("direct/")]
+    if not direct:
+        a_film = _film_in_plane_a(candidate)
+        substrate = candidate.substrate or "Si(001)"
+        if a_film is None:
+            return None
+        try:
+            return lattice_mismatch_percent(a_film, substrate, match="cube_on_cube")
+        except ValueError:
+            return None
+    direct.sort(key=lambda o: abs(float(o["mismatch_pct"])))
+    return float(direct[0]["mismatch_pct"])
+
+
+def score_si_feasibility(*args, **kwargs):
+    raise NotImplementedError("pending full restore of score_si_feasibility")
+
+
+def rank_by_si_feasibility(*args, **kwargs):
+    raise NotImplementedError("pending full restore of rank_by_si_feasibility")
+
+
+def scorer_debug_info(*args, **kwargs):
+    raise NotImplementedError("pending full restore of scorer_debug_info")
