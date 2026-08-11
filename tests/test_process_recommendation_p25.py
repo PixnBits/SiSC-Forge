@@ -24,7 +24,8 @@ from siscforge.models.results import (
 from siscforge.ranking import rank_evaluations
 
 
-# Stable key set frozen for Phase 2 handoff (schema v1.0).
+# Required keys frozen for Phase 2 handoff (schema v1.0).
+# Additive optional keys may appear within v1.x — assert issuperset, not equality.
 REQUIRED_PROCESS_KEYS = {
     "schema_version",
     "candidate_id",
@@ -54,6 +55,13 @@ REQUIRED_PROCESS_KEYS = {
     "si_feasibility_total",
     "si_scorer_version",
 }
+
+
+def _assert_has_required_keys(rec: dict) -> None:
+    """v1.x freeze: required keys present; extra optional keys allowed."""
+    missing = REQUIRED_PROCESS_KEYS - set(rec.keys())
+    assert not missing, f"missing required process-recommendation keys: {missing}"
+
 
 
 def _cand(formula: str = "NbN", *, cid: str = "cid-nbn") -> StructureCandidate:
@@ -143,7 +151,7 @@ def test_process_recommendation_schema_keys() -> None:
     ranked = rank_evaluations([_ev()], RankingConfig())
     rec = process_recommendation(ranked[0])
     assert rec["schema_version"] == PROCESS_RECOMMENDATION_SCHEMA_VERSION
-    assert set(rec.keys()) == REQUIRED_PROCESS_KEYS
+    _assert_has_required_keys(rec)
     assert rec["recommended_stack"] == "MgO/TiN"
     assert rec["recommended_buffers"][0] == "MgO/TiN"
     assert rec["critical_thickness_method"] == "Matthews-Blakeslee"
@@ -156,6 +164,7 @@ def test_process_recommendation_schema_keys() -> None:
     assert rec["result_quality"] == "screening"
     assert rec["do_not_cite_tc"] is True
     assert rec["trust_warning"] is not None
+
 
 
 def test_do_not_cite_tc_by_quality_tier() -> None:
@@ -212,7 +221,7 @@ def test_missing_si_still_emits_stable_keys() -> None:
     ev = _ev()
     ev = ev.model_copy(update={"si_feasibility": None})
     rec = process_recommendation(ev)
-    assert set(rec.keys()) == REQUIRED_PROCESS_KEYS
+    _assert_has_required_keys(rec)
     assert rec["recommended_stack"] is None
     assert rec["recommended_buffers"] == []
     assert rec["si_feasibility_total"] is None
@@ -229,7 +238,8 @@ def test_write_process_recommendations_json(tmp_path: Path) -> None:
     assert len(data) == 2
     assert data[0]["schema_version"] == "1.0"
     assert data[0]["formula"] in {"NbN", "TiN"}
-    assert set(data[0].keys()) == REQUIRED_PROCESS_KEYS
+    _assert_has_required_keys(data[0])
+
 
 
 def test_synthesis_card_layout_sections(tmp_path: Path) -> None:
@@ -251,6 +261,10 @@ def test_synthesis_card_layout_sections(tmp_path: Path) -> None:
     assert "lattice mismatch" in text
     assert "process maturity" in text
     assert "weights" in text
+    # Header names the schema version clearly (single line, not function-style)
+    assert "schema version 1.0" in text
+    assert "docs/process-recommendation-schema.md" in text
+
 
 
 def test_card_do_not_cite_when_suspect(tmp_path: Path) -> None:
