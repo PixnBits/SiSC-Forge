@@ -111,14 +111,19 @@ def test_synthesis_cards(tmp_path: Path) -> None:
     path = write_synthesis_cards(evals, tmp_path / "cards.md", campaign_name="test")
     text = path.read_text()
     assert "Synthesis cards" in text
-    assert "Silicon feasibility" in text
+    assert "### Process recommendation" in text
+    assert "### Identity" in text
+    assert "### Headline scores" in text
     assert "Phonon summary" in text
     assert "weights" in text
     assert "lattice mismatch" in text
     assert "process maturity" in text
-    assert "recommended buffers" in text
-    assert "chemical flags" in text or "thermal window" in text
-    assert "critical thickness" in text or "recommended thickness" in text
+    assert "recommended buffer" in text or "recommended buffers" in text
+    assert "chemical flags" in text or "thermal window" in text or "N–O window" in text
+    assert "critical thickness" in text or "recommended thickness" in text or "h_c" in text
+    assert "```json" in text
+    assert '"schema_version"' in text
+
 
 
 def test_campaign_config_formation_filter_yaml(tmp_path: Path) -> None:
