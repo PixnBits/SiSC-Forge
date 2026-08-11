@@ -152,6 +152,29 @@ def test_process_recommendation_schema_keys() -> None:
     assert "nitrogen_window" in rec["chemical_flags"]
     assert rec["si_feasibility_total"] == 72.0
     assert rec["rank"] == 1
+    # Default fixture is screening — not citable as production
+    assert rec["result_quality"] == "screening"
+    assert rec["do_not_cite_tc"] is True
+    assert rec["trust_warning"] is not None
+
+
+def test_do_not_cite_tc_by_quality_tier() -> None:
+    """do_not_cite_tc is false only for production; true for all other tiers."""
+    cases = [
+        ("production", False),
+        ("screening", True),
+        ("screening_suspect", True),
+        ("unreliable", True),
+        ("unknown", True),
+    ]
+    for rq, expect_flag in cases:
+        ev = _ev(result_quality=rq, cid=f"id-{rq}")
+        rec = process_recommendation(ev)
+        assert rec["do_not_cite_tc"] is expect_flag, rq
+        if expect_flag:
+            assert rec["trust_warning"] is not None, rq
+        else:
+            assert rec["trust_warning"] is None, rq
 
 
 def test_do_not_cite_tc_on_suspect() -> None:

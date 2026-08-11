@@ -57,8 +57,9 @@ object experimental tools can consume without scraping Markdown.
 | Key | Type | Meaning |
 |-----|------|---------|
 | `result_quality` | string | `production` / `screening` / `screening_suspect` / `unreliable` / `unknown` |
-| `do_not_cite_tc` | bool | `true` when Tc/λ must not be quoted as production |
-| `trust_warning` | string \| null | Human caveat (null when clean/production) |
+| `do_not_cite_tc` | bool | `false` **only** when `result_quality == "production"`; `true` for screening, screening_suspect, unreliable, unknown, and any other non-production tier. Machine consumers must treat Tc/λ as non-citable when this flag is true. |
+| `trust_warning` | string \| null | Human caveat; null **only** for production |
+
 
 ### Headline scores
 
@@ -94,8 +95,9 @@ object experimental tools can consume without scraping Markdown.
   "membrane_transfer_candidate": true,
   "membrane_transfer_note": "high direct mismatch …",
   "result_quality": "screening",
-  "do_not_cite_tc": false,
+  "do_not_cite_tc": true,
   "trust_warning": "result_quality=screening: Tc/λ are order-of-magnitude only …",
+
   "composite_score": 35.8,
   "performance_score": 8.3,
   "performance_score_source": "mock",

@@ -113,8 +113,15 @@ def _breakdown_field(ev: CandidateEvaluation, key: str) -> object:
 
 
 def _trust_warning(ev: CandidateEvaluation) -> str | None:
-    """Explicit 'do not cite Tc' warning when trust tier is weak."""
+    """Human caveat when Tc/λ must not be quoted as production literature.
+
+    Returns None only for ``result_quality == "production"``. Screening,
+    suspect, unreliable, and unknown tiers all carry a non-null warning so
+    machine consumers and Markdown cards stay aligned with ``do_not_cite_tc``.
+    """
     rq = getattr(ev, "result_quality", None) or "unknown"
+    if rq == "production":
+        return None
     if rq in {"screening_suspect", "unreliable"}:
         notes = (getattr(ev, "quality_notes", None) or "").strip()
         base = (
@@ -127,9 +134,15 @@ def _trust_warning(ev: CandidateEvaluation) -> str | None:
     if rq == "screening":
         return (
             "result_quality=screening: Tc/λ are order-of-magnitude only "
-            "(screening grids / random Wannier) — not literature-grade."
+            "(screening grids / random Wannier) — not literature-grade; "
+            "do not cite as production."
         )
-    return None
+    # unknown and any other non-production tier — conservative default
+    return (
+        f"result_quality={rq}: trust tier is not production — "
+        "do not cite Tc/λ as production predictions."
+    )
+
 
 
 def process_recommendation(ev: CandidateEvaluation) -> dict[str, Any]:
@@ -162,8 +175,12 @@ def process_recommendation(ev: CandidateEvaluation) -> dict[str, Any]:
     **Trust**
 
     - ``result_quality``: production | screening | screening_suspect | unreliable | unknown
-    - ``do_not_cite_tc``: true when Tc/λ must not be quoted as production
-    - ``trust_warning``: human caveat or null
+    - ``do_not_cite_tc``: ``False`` only when ``result_quality == "production"``;
+      ``True`` for screening / screening_suspect / unreliable / unknown (and any
+      other non-production tier). Machine consumers must not treat Tc/λ as
+      citable production values when this flag is true.
+    - ``trust_warning``: human caveat; null only for production
+
 
     **Headline scores (also in JSON for machine consumers)**
 
@@ -176,7 +193,9 @@ def process_recommendation(ev: CandidateEvaluation) -> dict[str, Any]:
     primary_stack = buffers[0] if buffers else None
     rq = getattr(ev, "result_quality", None) or "unknown"
     warning = _trust_warning(ev)
-    do_not_cite = rq in {"screening_suspect", "unreliable"}
+    # Only production-quality results are citable; all other tiers set the flag.
+    do_not_cite = rq != "production"
+
 
     thick = _thickness_jsonable(
         getattr(si, "recommended_thickness_nm", None) if si else None

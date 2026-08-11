@@ -855,7 +855,9 @@ change Si scoring, ranking maths, or calculators.
 
 **Process block fields**: recommended stack/buffers, thickness + h_c method,
 process temp ceiling + thermal window, chemical flags, membrane transfer,
-`do_not_cite_tc` / trust warning, headline scores.
+`do_not_cite_tc` (false only for `result_quality=production`) / trust warning,
+headline scores.
+
 
 **Out of scope**: interface-slab DFT, FEM membranes, CALPHAD, Phase 3/4 science.
 
