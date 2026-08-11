@@ -1076,18 +1076,20 @@ def run_cmd(
                 }
             )
         if calc_name in {"qe-dftu", "dftu"}:
-            dft = dft.model_copy(
-                update={
-                    "do_dftu": True,
-                    "engine": "qe-dftu",
-                    "dftu": dft.dftu.model_copy(update={"enabled": True}),
-                    # Focused DFT+U calculator: no phonon/EPW unless YAML kept them on
-                    # via explicit do_phonon after enabling dftu (rare).
-                    "do_phonon": False,
-                    "do_epw": False,
-                    "epw": dft.epw.model_copy(update={"enabled": False}),
-                }
-            )
+            # Force DFT+U on. Default phonon/EPW off only when the campaign YAML
+            # did not explicitly set them (preserve model_fields_set values).
+            dft_fields = set(getattr(config.dft, "model_fields_set", set()) or set())
+            updates: dict = {
+                "do_dftu": True,
+                "engine": "qe-dftu",
+                "dftu": dft.dftu.model_copy(update={"enabled": True}),
+            }
+            if "do_phonon" not in dft_fields:
+                updates["do_phonon"] = False
+            if "do_epw" not in dft_fields and "epw" not in dft_fields:
+                updates["do_epw"] = False
+                updates["epw"] = dft.epw.model_copy(update={"enabled": False})
+            dft = dft.model_copy(update=updates)
         # EPW fine-grid: nproc must equal npool (nimage=1). Auto-fix early so
         # users see the message before multi-hour DFPT, not only at epw.x launch.
         # Phonon-only (do_epw false + calculator qe): skip all EPW preflight noise.

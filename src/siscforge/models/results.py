@@ -209,6 +209,13 @@ class DFTUResult(BaseModel):
             bits.append(f"U=[{u_bits}] eV")
         if self.J_eV is not None and self.J_eV > 0:
             bits.append(f"J={self.J_eV:g} eV")
+        elif self.J_eV is None and self.J_by_species and any(
+            v > 0 for v in self.J_by_species.values()
+        ):
+            j_bits = ",".join(
+                f"{k}:{v:g}" for k, v in sorted(self.J_by_species.items()) if v > 0
+            )
+            bits.append(f"J=[{j_bits}] eV")
         if self.total_magnetization is not None:
             bits.append(f"M={self.total_magnetization:g} μB")
         if self.occupancy_summary:

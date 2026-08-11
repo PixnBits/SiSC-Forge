@@ -42,6 +42,26 @@ siscforge run --dry-run examples/ndnio2_dftu_mock.yaml
 
 ---
 
+## Slice P3.1 review fixes (2026-08-11)
+
+Addressed Copilot review on #11:
+
+| Issue | Fix |
+|-------|-----|
+| Explicit `hubbard_species` mismatch silently remapped | Hard error if any listed element missing from structure |
+| `nspin` accepted 3 | `Literal[1, 2, 4]` |
+| Dual Hubbard namelist + HUBBARD card | Exactly one dialect via `hubbard_syntax` (`namelist` default / `card`) |
+| Site moments parsed charge not magn | Regex prefers `magn:` value |
+| Averaged multi-species U/J | Scalar only when all species agree; else `None` + map |
+| `qe` + `do_dftu` + no phonon became dftu-only | dftu-only reserved for `force_dftu` (`qe-dftu`) |
+| Additive DFT+U re-relaxed | `do_relax=False` unless `do_relax_with_u` |
+| CLI `qe-dftu` overwrote explicit phonon/EPW | Respect `model_fields_set` |
+| Workflow untested | Mocked `run_dftu_workflow` + resume + optional real-QE gate |
+| HUBBARD card emitted full `J` for kind 0 | Emit `J0`; reject kind=1 + nonzero scalar J |
+
+---
+
+
 
 ## Slice 28 (2026-08-07) — Phonon `phq_setup` / FFT–symmetry diagnosis + nosym retry
 

@@ -1,0 +1,39 @@
+{
+  "record_id": "59aebf1c-75da-41e2-bc18-242683d887ae",
+  "timestamp": "2026-08-11T21:23:39.696122Z",
+  "model_version": "heuristic",
+  "method": "family_heuristic",
+  "training_set_size": 0,
+  "bootstrap": true,
+  "strategy": "uncertainty_si_tc",
+  "acquisition_weights": {
+    "uncertainty": 0.4,
+    "predicted_tc": 0.3,
+    "si_feasibility": 0.3,
+    "hull_penalty": 0.1
+  },
+  "n_candidates": 2,
+  "n_selected": 2,
+  "selected_ids": [
+    "922dee73-f5a3-4bfe-99a4-62b90990d6b8",
+    "7a5a7f59-7f47-4fe5-bd57-b0bdcb635448"
+  ],
+  "deferred_ids": [],
+  "ranked_scores": [
+    {
+      "candidate_id": "922dee73-f5a3-4bfe-99a4-62b90990d6b8",
+      "acquisition_score": 0.432775,
+      "selected": true,
+      "predicted_tc": 20.97,
+      "uncertainty": 0.25
+    },
+    {
+      "candidate_id": "7a5a7f59-7f47-4fe5-bd57-b0bdcb635448",
+      "acquisition_score": 0.418985,
+      "selected": true,
+      "predicted_tc": 11.13,
+      "uncertainty": 0.35
+    }
+  ],
+  "notes": "campaign=failfast_test"
+}

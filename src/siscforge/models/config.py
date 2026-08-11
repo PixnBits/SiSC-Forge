@@ -276,10 +276,21 @@ class DFTUConfig(BaseModel):
     """QE Hubbard projector type (``Hubbard_projectors`` / HUBBARD card)."""
 
     lda_plus_u_kind: int = Field(default=0, ge=0, le=1)
-    """0 = simplified, 1 = full rotationally invariant (Dudarev / Liechtenstein)."""
+    """0 = simplified (J0), 1 = full Liechtenstein (requires anisotropic J — not
+    expressible via scalar J_eV; use kind 0 or J=0)."""
 
-    nspin: int = Field(default=2, ge=1, le=4)
-    """Collinear spin polarization (2) is the workstation default for DFT+U."""
+    nspin: Literal[1, 2, 4] = 2
+    """QE spin polarization: 1 (non-spin), 2 (collinear), or 4 (noncollinear).
+    Value 3 is invalid in pw.x and is rejected at config validation."""
+
+    hubbard_syntax: Literal["namelist", "card"] = "namelist"
+    """Exactly one QE Hubbard input dialect:
+
+    * ``namelist`` — classic ``lda_plus_u`` / ``Hubbard_U(*)`` (QE 6.x–7.x; default)
+    * ``card`` — QE ≥ 7.1 ``HUBBARD (...)`` card only
+
+    Never emit both dialects in one input.
+    """
 
     starting_magnetization: dict[str, float] = Field(default_factory=dict)
     """Element → starting magnetization fraction for spin-polarized SCF."""

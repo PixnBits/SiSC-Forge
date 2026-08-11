@@ -301,8 +301,9 @@ def run_pw(
     *extra_system* / *extra_control* are merged into the pw.x namelists (e.g.
     ``nosym=.true.`` for a conservative d_matrix recovery SCF).
 
-    When *hubbard* is True, inject DFT+U SYSTEM extras and a HUBBARD card
-    (P3.1). *input_basename* defaults to *calculation* (e.g. ``scf``, ``dftu``).
+    When *hubbard* is True, inject DFT+U using exactly one dialect from
+    ``dft.dftu.hubbard_syntax`` (``namelist`` default or ``card``). *input_basename*
+    defaults to *calculation* (e.g. ``scf``, ``dftu``).
     """
     qe_env = qe_env or require_qe(need_phonon=False)
     assert qe_env.pw is not None
@@ -318,10 +319,14 @@ def run_pw(
         dft = dft.model_copy(update={"pseudo_dir": str(Path(dft.pseudo_dir).resolve())})
 
     system_extra = dict(extra_system or {})
+    hubbard_dialect = "namelist"
     if hubbard:
         from siscforge.calculators.qe.dftu import hubbard_system_extras
 
-        system_extra.update(hubbard_system_extras(structure, dft.dftu))
+        hubbard_dialect = (dft.dftu.hubbard_syntax or "namelist").lower()
+        system_extra.update(
+            hubbard_system_extras(structure, dft.dftu, syntax=hubbard_dialect)
+        )
 
     pw_in = build_pw_input(
         structure,
@@ -335,13 +340,15 @@ def run_pw(
     base = input_basename or calculation
     in_path = work_dir / f"{base}.in"
     out_path = work_dir / f"{base}.out"
-    if hubbard:
+    if hubbard and hubbard_dialect == "card":
+        # QE ≥ 7.1 HUBBARD card only — no namelist Hubbard_U (dual syntax invalid)
         from siscforge.calculators.qe.dftu import append_hubbard_card
         from siscforge.calculators.qe.inputs import write_pw_text
 
         text = append_hubbard_card(str(pw_in), structure, dft.dftu)
         write_pw_text(text, in_path)
     else:
+        # namelist dialect (default) or non-Hubbard: write PWInput as-is
         write_pw_input(pw_in, in_path)
 
     cmd = [

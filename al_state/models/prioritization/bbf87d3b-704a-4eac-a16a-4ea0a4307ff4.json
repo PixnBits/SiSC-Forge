@@ -1,0 +1,143 @@
+{
+  "record_id": "bbf87d3b-704a-4eac-a16a-4ea0a4307ff4",
+  "timestamp": "2026-08-11T21:23:36.100939Z",
+  "model_version": "heuristic",
+  "method": "family_heuristic",
+  "training_set_size": 0,
+  "bootstrap": true,
+  "strategy": "uncertainty_si_tc",
+  "acquisition_weights": {
+    "uncertainty": 0.4,
+    "predicted_tc": 0.3,
+    "si_feasibility": 0.3,
+    "hull_penalty": 0.1
+  },
+  "n_candidates": 15,
+  "n_selected": 15,
+  "selected_ids": [
+    "bb31b136-b231-4533-aeb0-fe8a594b118c",
+    "2dab153d-0776-4f3a-8f05-24135dccb660",
+    "d56600c3-6dc0-4d0c-82b8-6c17b666cea0",
+    "ad3e79d0-0691-4716-970d-2440fca10a9d",
+    "849c7150-2b4e-4388-a4a3-316bc24a4d7c",
+    "046ef2c4-6349-4768-b8e1-77389b36a70e",
+    "b9651620-ee1d-479f-9833-856cecec7d80",
+    "5cda9d61-a872-40ec-8793-edd981251e92",
+    "1c3fc286-0bad-4c07-be6c-e69787983474",
+    "aca549e0-749c-415c-9150-bc7230e749b9",
+    "3e50a51d-1d8f-4295-a478-7f64c96cb467",
+    "1e834bba-1d22-4bcb-9325-a9508a26b8e4",
+    "e05d44fd-15cf-46d1-b73c-5fd8066debf1",
+    "457e5dca-3da6-4f31-8daa-e2ab619859d7",
+    "041c16ef-9db0-45f5-ac06-63cce0c5f4e0"
+  ],
+  "deferred_ids": [],
+  "ranked_scores": [
+    {
+      "candidate_id": "aca549e0-749c-415c-9150-bc7230e749b9",
+      "acquisition_score": 0.4686,
+      "selected": true,
+      "predicted_tc": 16.92,
+      "uncertainty": 0.49
+    },
+    {
+      "candidate_id": "1e834bba-1d22-4bcb-9325-a9508a26b8e4",
+      "acquisition_score": 0.46629,
+      "selected": true,
+      "predicted_tc": 16.92,
+      "uncertainty": 0.49
+    },
+    {
+      "candidate_id": "457e5dca-3da6-4f31-8daa-e2ab619859d7",
+      "acquisition_score": 0.46443,
+      "selected": true,
+      "predicted_tc": 16.92,
+      "uncertainty": 0.49
+    },
+    {
+      "candidate_id": "b9651620-ee1d-479f-9833-856cecec7d80",
+      "acquisition_score": 0.46304,
+      "selected": true,
+      "predicted_tc": 17.04,
+      "uncertainty": 0.43
+    },
+    {
+      "candidate_id": "5cda9d61-a872-40ec-8793-edd981251e92",
+      "acquisition_score": 0.46304,
+      "selected": true,
+      "predicted_tc": 17.04,
+      "uncertainty": 0.43
+    },
+    {
+      "candidate_id": "1c3fc286-0bad-4c07-be6c-e69787983474",
+      "acquisition_score": 0.46304,
+      "selected": true,
+      "predicted_tc": 17.04,
+      "uncertainty": 0.43
+    },
+    {
+      "candidate_id": "3e50a51d-1d8f-4295-a478-7f64c96cb467",
+      "acquisition_score": 0.46104,
+      "selected": true,
+      "predicted_tc": 16.92,
+      "uncertainty": 0.49
+    },
+    {
+      "candidate_id": "e05d44fd-15cf-46d1-b73c-5fd8066debf1",
+      "acquisition_score": 0.46014,
+      "selected": true,
+      "predicted_tc": 16.92,
+      "uncertainty": 0.49
+    },
+    {
+      "candidate_id": "041c16ef-9db0-45f5-ac06-63cce0c5f4e0",
+      "acquisition_score": 0.45939,
+      "selected": true,
+      "predicted_tc": 16.92,
+      "uncertainty": 0.49
+    },
+    {
+      "candidate_id": "d56600c3-6dc0-4d0c-82b8-6c17b666cea0",
+      "acquisition_score": 0.4478,
+      "selected": true,
+      "predicted_tc": 20.84,
+      "uncertainty": 0.31
+    },
+    {
+      "candidate_id": "ad3e79d0-0691-4716-970d-2440fca10a9d",
+      "acquisition_score": 0.4478,
+      "selected": true,
+      "predicted_tc": 20.84,
+      "uncertainty": 0.31
+    },
+    {
+      "candidate_id": "849c7150-2b4e-4388-a4a3-316bc24a4d7c",
+      "acquisition_score": 0.43416,
+      "selected": true,
+      "predicted_tc": 11.02,
+      "uncertainty": 0.41
+    },
+    {
+      "candidate_id": "046ef2c4-6349-4768-b8e1-77389b36a70e",
+      "acquisition_score": 0.43416,
+      "selected": true,
+      "predicted_tc": 11.02,
+      "uncertainty": 0.41
+    },
+    {
+      "candidate_id": "bb31b136-b231-4533-aeb0-fe8a594b118c",
+      "acquisition_score": 0.432775,
+      "selected": true,
+      "predicted_tc": 20.97,
+      "uncertainty": 0.25
+    },
+    {
+      "candidate_id": "2dab153d-0776-4f3a-8f05-24135dccb660",
+      "acquisition_score": 0.418985,
+      "selected": true,
+      "predicted_tc": 11.13,
+      "uncertainty": 0.35
+    }
+  ],
+  "notes": "campaign=nbti_n_si001_strain"
+}

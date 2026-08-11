@@ -35,6 +35,7 @@ dft:
     J_eV: 0.8
     hubbard_species: [Ni]
     hubbard_projectors: ortho-atomic
+    hubbard_syntax: namelist   # or card (QE ≥ 7.1); never both
 ```
 
 Or calculator choice:

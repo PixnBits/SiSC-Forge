@@ -86,16 +86,13 @@ class QECalculator(BaseCalculator):
                     "epw": dft.epw.model_copy(update={"enabled": True}),
                 }
             )
-        elif want_dftu and not dft.do_phonon:
-            # Pure DFT+U calculator path (qe-dftu default)
+        elif self.force_dftu and want_dftu and not dft.do_phonon:
+            # Pure DFT+U only for the forced qe-dftu calculator (not additive qe)
             dft = dft.model_copy(update={"engine": "qe-dftu"})
         else:
-            dft = dft.model_copy(update={"engine": "qe"})
+            dft = dft.model_copy(update={"engine": "qe" if not want_epw else dft.engine})
 
-        need_ph = dft.do_phonon and not (want_dftu and self.force_dftu and not dft.do_phonon)
-        # force_dftu with default do_phonon True still runs phonon unless disabled in YAML
-        if self.force_dftu and not dft.do_phonon and not want_epw:
-            need_ph = False
+        need_ph = bool(dft.do_phonon)
         qe_env = require_qe(need_phonon=need_ph, need_epw=want_epw)
 
         try:
@@ -155,10 +152,10 @@ class QECalculator(BaseCalculator):
             resume_qe = not force_qe
 
         step_log: list[str] = []
+        # DFT+U-only workflow is reserved for calculator qe-dftu (force_dftu).
+        # Enabling do_dftu on plain qe remains additive (conventional then DFT+U).
         dftu_only = bool(
-            want_dftu
-            and not want_epw
-            and (self.force_dftu or (not dft.do_phonon and dft.do_dftu))
+            want_dftu and not want_epw and self.force_dftu and not dft.do_phonon
         )
         if dftu_only:
             base = run_dftu_workflow(
@@ -198,9 +195,14 @@ class QECalculator(BaseCalculator):
             )
             if want_dftu:
                 dftu_dir = cand_dir / "dftu"
+                # Conventional path already relaxed (if configured). Only re-relax
+                # under U when dftu.do_relax_with_u is explicitly enabled.
+                dft_u = dft
+                if not dft.dftu.do_relax_with_u:
+                    dft_u = dft.model_copy(update={"do_relax": False})
                 dftu_base = run_dftu_workflow(
                     structure if wf.relaxed_structure is None else wf.relaxed_structure,
-                    dft,
+                    dft_u,
                     dftu_dir,
                     prefix=prefix,
                     qe_env=qe_env,
@@ -236,9 +238,14 @@ class QECalculator(BaseCalculator):
             if want_dftu:
                 dftu_dir = cand_dir / "dftu"
                 struct_for_u = base.relaxed_structure or structure
+                # Conventional path already relaxed (if configured). Only re-relax
+                # under U when dftu.do_relax_with_u is explicitly enabled.
+                dft_u = dft
+                if not dft.dftu.do_relax_with_u:
+                    dft_u = dft.model_copy(update={"do_relax": False})
                 dftu_base = run_dftu_workflow(
                     struct_for_u,
-                    dft,
+                    dft_u,
                     dftu_dir,
                     prefix=prefix,
                     qe_env=qe_env,

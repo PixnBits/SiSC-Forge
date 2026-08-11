@@ -2,7 +2,7 @@
 
 Provides:
 - species / U,J resolution from :class:`~siscforge.models.config.DFTUConfig`
-- pw.x SYSTEM namelist extras + optional HUBBARD card (QE ≥ 7.1)
+- pw.x SYSTEM namelist extras **or** HUBBARD card (exactly one dialect)
 - parse of total energy, magnetization, and basic occupancy proxies
 - mock :class:`~siscforge.models.results.DFTUResult` for dry-run
 
@@ -74,19 +74,33 @@ def resolve_hubbard_species(
     structure: Structure,
     dftu: DFTUConfig,
 ) -> list[str]:
-    """Ordered unique Hubbard species present in *structure*."""
+    """Ordered unique Hubbard species present in *structure*.
+
+    When ``hubbard_species`` is set explicitly, **every** requested element must
+    appear in the cell. Silent fallback to other correlated metals is refused
+    so a mismatched campaign cannot run a scientifically different calculation.
+    """
     present = {str(sp.symbol) for sp in structure.composition.elements}
     if dftu.hubbard_species:
-        chosen = [s for s in dftu.hubbard_species if s in present]
-        if not chosen:
-            # Explicit list but none in cell — fall back to intersection of defaults
-            chosen = sorted(present & _DEFAULT_HUBBARD_ELEMENTS)
-        return chosen
+        missing = [s for s in dftu.hubbard_species if s not in present]
+        if missing:
+            raise ValueError(
+                f"hubbard_species includes {missing} not present in structure "
+                f"(elements={sorted(present)}). Fix campaign YAML; refusing "
+                "silent fallback to other correlated metals."
+            )
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for s in dftu.hubbard_species:
+            if s not in seen:
+                seen.add(s)
+                ordered.append(s)
+        return ordered
     # Auto: correlated metals present in the structure
     auto = sorted(present & _DEFAULT_HUBBARD_ELEMENTS)
     if auto:
         return auto
-    # Last resort: heaviest non-O/N/H/C/F element (oxide/nitride host)
+    # Last resort: non-light element (oxide/nitride host)
     light = {"H", "He", "C", "N", "O", "F", "Ne", "Cl", "Ar"}
     metals = sorted(el for el in present if el not in light)
     return metals[:1] if metals else sorted(present)[:1]
@@ -108,8 +122,6 @@ def resolve_u_j_maps(
 
 def species_type_index(structure: Structure) -> dict[str, int]:
     """Map element symbol → 1-based ATOMIC_SPECIES index (QE convention)."""
-    # pymatgen Structure.types_of_specie order is not always input order;
-    # use sorted unique symbols by first appearance in sites.
     order: list[str] = []
     for site in structure:
         sym = str(site.specie.symbol)
@@ -118,23 +130,61 @@ def species_type_index(structure: Structure) -> dict[str, int]:
     return {sym: i + 1 for i, sym in enumerate(order)}
 
 
+def _validate_hubbard_j_kind(dftu: DFTUConfig, j_map: dict[str, float]) -> None:
+    """Reject full Liechtenstein kind with scalar J we cannot express."""
+    if int(dftu.lda_plus_u_kind) != 1:
+        return
+    if any(float(v) > 0.0 for v in j_map.values()) or float(dftu.J_eV) > 0.0:
+        raise ValueError(
+            "lda_plus_u_kind=1 (full Liechtenstein) needs anisotropic Hubbard_J "
+            "parameters not expressible as scalar J_eV/J_by_species. "
+            "Use lda_plus_u_kind=0 (simplified, J0) or set all J values to 0."
+        )
+
+
 def hubbard_system_extras(
     structure: Structure,
     dftu: DFTUConfig,
+    *,
+    syntax: str | None = None,
 ) -> dict[str, Any]:
-    """Build SYSTEM namelist extras for classic ``lda_plus_u`` pw.x input.
+    """Build SYSTEM namelist extras for DFT+U pw.x input.
 
-    Works with QE 6.x–7.x namelist Hubbard parameters. A HUBBARD card can be
-    appended separately via :func:`append_hubbard_card` for QE ≥ 7.1.
+    *syntax* is ``\"namelist\"`` (QE 6.x classic ``lda_plus_u`` / ``Hubbard_U``)
+    or ``\"card\"`` (QE ≥ 7.1 HUBBARD card only — spin/mag fields only here).
+    Defaults to ``dftu.hubbard_syntax``. Exactly one Hubbard dialect is used
+    per input; never both namelist U and HUBBARD card together.
     """
+    dialect = (syntax or getattr(dftu, "hubbard_syntax", "namelist") or "namelist").lower()
+    if dialect not in {"namelist", "card"}:
+        raise ValueError(f"Unknown hubbard_syntax {dialect!r}; use 'namelist' or 'card'")
+
     species, u_map, j_map = resolve_u_j_maps(structure, dftu)
+    _validate_hubbard_j_kind(dftu, j_map)
     type_idx = species_type_index(structure)
     extras: dict[str, Any] = {
         "nspin": int(dftu.nspin),
-        "lda_plus_u": True,
-        "lda_plus_u_kind": int(dftu.lda_plus_u_kind),
-        "Hubbard_projectors": dftu.hubbard_projectors,
     }
+    if dftu.nspin >= 2:
+        for el in species:
+            idx = type_idx.get(el)
+            if idx is None:
+                continue
+            mag = dftu.starting_magnetization.get(
+                el, dftu.default_starting_magnetization
+            )
+            extras[f"starting_magnetization({idx})"] = float(mag)
+        for el, mag in dftu.starting_magnetization.items():
+            idx = type_idx.get(el)
+            if idx is not None and f"starting_magnetization({idx})" not in extras:
+                extras[f"starting_magnetization({idx})"] = float(mag)
+
+    if dialect == "card":
+        return extras
+
+    extras["lda_plus_u"] = True
+    extras["lda_plus_u_kind"] = int(dftu.lda_plus_u_kind)
+    extras["Hubbard_projectors"] = dftu.hubbard_projectors
     for el in species:
         idx = type_idx.get(el)
         if idx is None:
@@ -142,17 +192,8 @@ def hubbard_system_extras(
         extras[f"Hubbard_U({idx})"] = float(u_map[el])
         j_val = float(j_map.get(el, 0.0))
         if j_val > 0.0:
-            # Simplified (kind=0) uses Hubbard_J0; full uses Hubbard_J(1,itype)
-            if dftu.lda_plus_u_kind == 0:
-                extras[f"Hubbard_J0({idx})"] = j_val
-            else:
-                extras[f"Hubbard_J(1,{idx})"] = j_val
-        # Starting magnetization for spin-polarized runs
-        if dftu.nspin >= 2:
-            mag = dftu.starting_magnetization.get(
-                el, dftu.default_starting_magnetization
-            )
-            extras[f"starting_magnetization({idx})"] = float(mag)
+            # Simplified (kind=0) uses Hubbard_J0 only
+            extras[f"Hubbard_J0({idx})"] = j_val
     return extras
 
 
@@ -161,26 +202,26 @@ def append_hubbard_card(
     structure: Structure,
     dftu: DFTUConfig,
 ) -> str:
-    """Append a QE ≥ 7.1 ``HUBBARD`` card if not already present.
+    """Append a QE ≥ 7.1 ``HUBBARD`` card (card dialect only).
 
-    The card is additive documentation for modern QE; classic namelist
-    Hubbard_U(*) parameters remain the primary path for broader compatibility.
+    Call this **only** when ``dftu.hubbard_syntax == \"card\"``. Do not combine
+    with namelist ``Hubbard_U(*)`` / ``lda_plus_u`` — QE 6.x rejects the card,
+    and dual syntax is invalid.
     """
     if re.search(r"^\s*HUBBARD\b", pw_text, flags=re.IGNORECASE | re.MULTILINE):
         return pw_text
     species, u_map, j_map = resolve_u_j_maps(structure, dftu)
+    _validate_hubbard_j_kind(dftu, j_map)
     if not species:
         return pw_text
-    lines = [f"HUBBARD ({dftu.hubbard_projectors})", ""]
-    # Drop the blank we just added — rebuild cleanly
     lines = [f"HUBBARD ({dftu.hubbard_projectors})"]
     for el in species:
-        # Default manifold: 3d for 3d metals, 4f for rare earths, 4d for 4d
         manifold = _default_manifold(el)
         lines.append(f"  U {el}-{manifold} {u_map[el]:.4f}")
         j_val = float(j_map.get(el, 0.0))
         if j_val > 0.0:
-            lines.append(f"  J {el}-{manifold} {j_val:.4f}")
+            # kind=0 simplified → J0 (scalar Hund). Full J is rejected above.
+            lines.append(f"  J0 {el}-{manifold} {j_val:.4f}")
     card = "\n".join(lines) + "\n"
     text = pw_text if pw_text.endswith("\n") else pw_text + "\n"
     return text + card
@@ -238,20 +279,26 @@ def parse_magnetization(text: str) -> tuple[float | None, float | None]:
 def parse_atomic_magnetic_moments(text: str) -> dict[str, float]:
     """Parse per-atom magnetic moments when QE prints them.
 
-    Returns a compact map ``atom_index → μ_B`` or ``species → mean μ_B``
-    depending on available lines. Empty if not present.
+    Prefer the value after ``magn`` / ``moment`` — never the atomic charge
+    that often appears earlier on the same line.
     """
     moments: dict[str, float] = {}
-    # Common block: "Magnetic moment per site:" then lines with atom index
+    # e.g. "atom:    1 charge:   8.1234  magn:  1.1000"
     site_pat = re.compile(
-        r"atom:\s*(\d+)\s+.*?(?:charge|moment).*?([-\d.Ee+]+)",
+        r"atom:\s*(\d+)\s+.*?\bmagn(?:etization|etic)?\b\s*[:=]?\s*([-\d.Ee+]+)",
         re.IGNORECASE,
     )
     for m in site_pat.finditer(text):
         moments[f"atom_{int(m.group(1))}"] = float(m.group(2))
+    if not moments:
+        site_pat2 = re.compile(
+            r"atom:\s*(\d+)\s+.*?\bmoment\b\s*[:=]\s*([-\d.Ee+]+)",
+            re.IGNORECASE,
+        )
+        for m in site_pat2.finditer(text):
+            moments[f"atom_{int(m.group(1))}"] = float(m.group(2))
     if moments:
         return moments
-    # Fallback: "magnetic moment per atom" style summaries
     simple = re.findall(
         r"magnetic moment\s*(?:of|on)?\s*([A-Za-z]+)\s*[:=]\s*([-\d.Ee+]+)",
         text,
@@ -263,13 +310,8 @@ def parse_atomic_magnetic_moments(text: str) -> dict[str, float]:
 
 
 def parse_occupancy_proxy(text: str) -> dict[str, float]:
-    """Best-effort Hubbard occupancy / atomic charge summary from pw.x text.
-
-    QE versions differ widely; we store whatever compact numbers we can find
-    under stable keys for later DMFT comparison (P3.3).
-    """
+    """Best-effort Hubbard occupancy / atomic charge summary from pw.x text."""
     occ: dict[str, float] = {}
-    # Hubbard occupation lines (various QE versions)
     for m in re.finditer(
         r"Hubbard\s+(?:occupation|occupancy)[^\n]*?([A-Za-z]+)\s*[:=]\s*([-\d.Ee+]+)",
         text,
@@ -281,10 +323,19 @@ def parse_occupancy_proxy(text: str) -> dict[str, float]:
         text,
         flags=re.IGNORECASE,
     ):
-        # Sequential indices if multiple
         key = f"Tr_ns_{len(occ)}"
         occ[key] = float(m.group(1))
     return occ
+
+
+def _uniform_scalar(mapping: dict[str, float], default: float) -> float | None:
+    """Return a scalar only when all map values agree; else None."""
+    if not mapping:
+        return float(default)
+    vals = [float(v) for v in mapping.values()]
+    if all(abs(v - vals[0]) < 1e-12 for v in vals):
+        return float(vals[0])
+    return None
 
 
 def parse_dftu_output(
@@ -313,8 +364,10 @@ def parse_dftu_output(
         re.search(r"the Fermi energy is", text, re.IGNORECASE)
         or re.search(r"occupations\s*=\s*['\"]?smearing", text, re.IGNORECASE)
     )
-    status = "ok" if energy is not None and job_done else (
-        "ok" if energy is not None else "failed"
+    status = (
+        "ok"
+        if energy is not None and job_done
+        else ("ok" if energy is not None else "failed")
     )
 
     species: list[str] = list(dftu.hubbard_species)
@@ -323,18 +376,8 @@ def parse_dftu_output(
     if structure is not None:
         species, u_map, j_map = resolve_u_j_maps(structure, dftu)
 
-    scalar_u = float(dftu.U_eV)
-    if len(u_map) == 1:
-        scalar_u = next(iter(u_map.values()))
-    elif u_map:
-        # Representative mean when multiple species
-        scalar_u = sum(u_map.values()) / len(u_map)
-
-    scalar_j = float(dftu.J_eV)
-    if len(j_map) == 1:
-        scalar_j = next(iter(j_map.values()))
-    elif j_map:
-        scalar_j = sum(j_map.values()) / len(j_map)
+    scalar_u = _uniform_scalar(u_map, float(dftu.U_eV))
+    scalar_j = _uniform_scalar(j_map, float(dftu.J_eV))
 
     raw: dict[str, Any] = {
         "source": source_name,
@@ -348,6 +391,12 @@ def parse_dftu_output(
     }
     if extra_raw:
         raw.update(extra_raw)
+
+    qtag = (
+        quality_tag
+        if quality_tag in {"screening", "production", "mock", "unknown"}
+        else "screening"
+    )
 
     return DFTUResult(
         U_eV=scalar_u,
@@ -364,7 +413,7 @@ def parse_dftu_output(
         is_metallic=is_metallic,
         fermi_energy_eV=fermi,
         status=status,
-        quality_tag=quality_tag if quality_tag in {"screening", "production", "mock", "unknown"} else "screening",  # type: ignore[arg-type]
+        quality_tag=qtag,  # type: ignore[arg-type]
         raw=raw,
         provenance=Provenance(
             source="qe_dftu",
@@ -393,26 +442,27 @@ def mock_dftu_result(
     digest = hashlib.sha256(f"{seed}:dftu".encode()).hexdigest()
     r = int(digest[:8], 16) / 0xFFFFFFFF
 
-    # Nickelates get Ni-like moments and partial d occupancy
     species = list(cfg.hubbard_species) or (
         ["Ni"] if material_family == "nickelate" or "Ni" in formula else ["M"]
     )
-    u_map = {
-        el: float(cfg.U_by_species.get(el, cfg.U_eV)) for el in species
-    }
-    j_map = {
-        el: float(cfg.J_by_species.get(el, cfg.J_eV)) for el in species
-    }
-    # Plausible Ni²⁺ d⁸-like occupancy ~8 e⁻, moment ~1–2 μ_B
+    u_map = {el: float(cfg.U_by_species.get(el, cfg.U_eV)) for el in species}
+    j_map = {el: float(cfg.J_by_species.get(el, cfg.J_eV)) for el in species}
     base_occ = 8.0 if any(s in {"Ni", "Cu", "Fe", "Co"} for s in species) else 6.0 + r
     occ = {f"hubbard_{species[0]}": round(base_occ - 0.3 * r, 3)}
     mom = round(0.8 + 1.4 * r, 3)
     total_m = round(mom * (1.0 if material_family == "nickelate" else 0.5 + r), 3)
     energy = round(-150.0 - 40.0 * r, 4)
+    scalar_u = _uniform_scalar(u_map, float(cfg.U_eV))
+    scalar_j = _uniform_scalar(j_map, float(cfg.J_eV))
+    qtag = (
+        quality_tag
+        if quality_tag in {"screening", "production", "mock", "unknown"}
+        else "mock"
+    )
 
     return DFTUResult(
-        U_eV=float(cfg.U_eV) if len(u_map) != 1 else next(iter(u_map.values())),
-        J_eV=float(cfg.J_eV) if len(j_map) != 1 else next(iter(j_map.values())),
+        U_eV=scalar_u,
+        J_eV=scalar_j,
         U_by_species=u_map,
         J_by_species=j_map,
         hubbard_species=species,
@@ -425,7 +475,7 @@ def mock_dftu_result(
         is_metallic=True,
         fermi_energy_eV=round(5.0 + 3.0 * r, 3),
         status="mock",
-        quality_tag="mock" if quality_tag == "mock" else quality_tag,  # type: ignore[arg-type]
+        quality_tag=qtag,  # type: ignore[arg-type]
         raw={
             "method": "mock_dftu",
             "pathway": "dftu",
