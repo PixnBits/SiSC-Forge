@@ -147,7 +147,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 2. Buffer library + stack suggestor with chemical-compatibility flags. **(P2.2 — done: multi-layer stacks + chemical/thermal window flags)**
 3. Thermal-budget and oxygen/nitrogen window estimators.
 4. Membrane and critical-thickness helpers. **(P2.3 — done: Matthews–Blakeslee / People–Bean + membrane-transfer heuristics)**
-5. Ranking engine upgrades (configurable weights, Pareto, acquisition score).
+5. Ranking engine upgrades (configurable weights, Pareto, acquisition score). **(P2.4 — done: multi-objective weights + Pareto + ranking provenance)**
 6. Synthesis-card generator and CSV/JSON schema freeze.
 7. (Optional) Automated slab builder for interface DFT on shortlist.
 

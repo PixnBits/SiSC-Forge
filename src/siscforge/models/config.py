@@ -63,11 +63,76 @@ class SiFeasibilityConfig(BaseModel):
 
 
 class RankingConfig(BaseModel):
-    performance_weight: float = Field(default=0.6, ge=0.0, le=1.0)
-    si_feasibility_weight: float = Field(default=0.4, ge=0.0, le=1.0)
+    """Multi-objective ranking weights and policy (YAML-overridable).
+
+    **Axes (each mapped to 0–100 before weighting):**
+
+    * ``performance`` — ``performance_score`` (Tc-like, K) normalized as
+      ``min(100, max(0, score / performance_ceiling_K * 100))``.
+      Default ceiling is **40 K** (legacy Phase-0 convention).
+    * ``si_feasibility`` — ``si_feasibility.total`` (already 0–100).
+    * ``uncertainty`` (optional) — when ``uncertainty_weight > 0`` and a
+      surrogate/performance uncertainty in ``[0, 1]`` is present on the
+      evaluation, contributes **certainty** ``(1 − u) × 100`` so lower
+      uncertainty ranks better. Missing uncertainty drops that weight from
+      the denominator (no invented neutral term).
+
+    Weights are re-normalized by their sum. Defaults
+    (``performance=0.6``, ``si_feasibility=0.4``, ``uncertainty=0.0``)
+    preserve pre-P2.4 composite ordering when omitted from YAML.
+
+    Trust-layer multipliers, ``prefer_dynamically_stable``, and
+    ``prefer_low_hull`` are applied **after** the weighted blend and are
+    independent of these weights.
+    """
+
+    performance_weight: float = Field(default=0.6, ge=0.0)
+    si_feasibility_weight: float = Field(default=0.4, ge=0.0)
+    uncertainty_weight: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Weight for certainty (1 − surrogate uncertainty). "
+            "Default 0 disables the term (backward compatible)."
+        ),
+    )
+    performance_ceiling_K: float = Field(
+        default=40.0,
+        gt=0.0,
+        description="Tc-like ceiling (K) used to normalize performance_score to 0–100.",
+    )
+    pareto_enabled: bool = Field(
+        default=True,
+        description=(
+            "Mark non-dominated candidates on performance vs Si-feasibility "
+            "(and certainty when uncertainty_weight > 0)."
+        ),
+    )
     prefer_dynamically_stable: bool = True
     prefer_low_hull: bool = True
     quality: QualityConfig = Field(default_factory=QualityConfig)
+    version: str = "0.2"
+
+    @field_validator(
+        "performance_weight",
+        "si_feasibility_weight",
+        "uncertainty_weight",
+        "performance_ceiling_K",
+    )
+    @classmethod
+    def _finite_weight(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("ranking weight/ceiling must be finite (got NaN or ±∞)")
+        return v
+
+    def active_weights(self) -> dict[str, float]:
+        """Return the weight vector + ceiling used for provenance export."""
+        return {
+            "performance": float(self.performance_weight),
+            "si_feasibility": float(self.si_feasibility_weight),
+            "uncertainty": float(self.uncertainty_weight),
+            "performance_ceiling_K": float(self.performance_ceiling_K),
+        }
 
 
 class FormationFilterConfig(BaseModel):

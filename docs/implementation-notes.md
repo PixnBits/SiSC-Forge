@@ -808,6 +808,34 @@ multi-layer stacks, membrane mechanics, critical thickness, interface slabs, Par
 
 ---
 
+## P2.4 (2026-08-10) — Multi-objective ranking + Pareto front
+
+**Scope**: Transparent, YAML-configurable ranking weights; Pareto non-dominated
+set on primary axes; ranking provenance on ranked rows / CSV / cards. Does **not**
+change Si-feasibility science (P2.1–P2.3) or introduce new ML models.
+
+| Item | Location |
+|------|----------|
+| Ranking config | `RankingConfig` — `performance_weight` (0.6), `si_feasibility_weight` (0.4), `uncertainty_weight` (0.0), `performance_ceiling_K` (40), `pareto_enabled` (True) |
+| Composite + breakdown | `siscforge.ranking.compute_composite_score` / `compute_composite_breakdown` |
+| Pareto | `identify_pareto_front` — maximize performance_score vs Si-total (+ certainty when weighted) |
+| Row provenance | `CandidateEvaluation.ranking_weights`, `composite_breakdown`, `on_pareto_front` |
+| Export | CSV columns `on_pareto_front`, `ranking_w_*`, `composite_*_norm`; synthesis-card ranking banner |
+| CLI | `siscforge rank --config campaign.yaml --pareto/--no-pareto`; weight banner + Pareto column |
+| Tests | `tests/test_ranking_p24.py` |
+
+**Normalization**: performance_score (Tc-like K) → `min(100, score / performance_ceiling_K × 100)`.
+Si total is already 0–100. Optional certainty = `(1 − surrogate uncertainty) × 100` when
+`uncertainty_weight > 0` and uncertainty is present; missing uncertainty drops that weight
+from the denominator. Trust penalties, `prefer_dynamically_stable`, and hull demotion apply
+**after** the weighted blend (unchanged).
+
+**Out of scope (P2.5+)**: synthesis-card / process-recipe freeze, new AL acquisition
+functions, GNN / DMFT / Josephson.
+
+
+---
+
 ## Phase 1 complete (frozen baseline)
 
 **Version**: `0.1.0` · **Tag**: `v0.1.0-phase1` · **Exit checklist**: [phase1-exit.md](phase1-exit.md)  
