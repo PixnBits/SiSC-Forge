@@ -126,17 +126,19 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 
 ---
 
-## Phase 2 — Silicon Integration Maturity + Ranking Polish
+## Phase 2 — Silicon Integration Maturity + Ranking Polish — **COMPLETE**
 **Goal**: Make the Silicon Feasibility Score and ranking production-grade, add membrane/interface realism, and ensure the multi-objective ranking is transparent and exportable for experimental collaborators.
 
+**Status**: **Shipped** (P2.1–P2.5). Exit checklist: [phase2-exit.md](phase2-exit.md). Schema freeze: [process-recommendation-schema.md](process-recommendation-schema.md).
+
 ### Key Deliverables
-- Full component breakdown of Si-Feasibility Score with documented weights and export of every term.
-- Expanded buffer-stack library and rule-based + simple thermodynamic interlayer checks.
-- Membrane-transfer heuristics (and later simple strain-relaxation estimates).
-- Critical-thickness estimates (Matthews–Blakeslee / People–Bean).
-- Multi-objective ranking (performance_score × Si-score × uncertainty) with Pareto front identification.
-- Rich Markdown synthesis cards and machine-readable process recommendations.
-- Optional interface-slab DFT calculations for selected high-ranking candidates (still optional at this stage).
+- Full component breakdown of Si-Feasibility Score with documented weights and export of every term. **(P2.1 — done)**
+- Expanded buffer-stack library and rule-based + simple thermodynamic interlayer checks. **(P2.2 — done)**
+- Membrane-transfer heuristics (and later simple strain-relaxation estimates). **(P2.3 — done; FEM deferred)**
+- Critical-thickness estimates (Matthews–Blakeslee / People–Bean). **(P2.3 — done)**
+- Multi-objective ranking (performance_score × Si-score × uncertainty) with Pareto front identification. **(P2.4 — done)**
+- Rich Markdown synthesis cards and machine-readable process recommendations. **(P2.5 — done: schema v1.0)**
+- Optional interface-slab DFT calculations for selected high-ranking candidates (still optional / deferred).
 
 ### Dependencies
 - Phase 0 (basic Si-score) and Phase 1 (reliable performance_score from Eliashberg).
@@ -145,11 +147,11 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 ### Suggested Order of Module Implementation
 1. Expand SiFeasibilityComponents and make every term first-class in the data model and exports. **(P2.1 — done: YAML weights + export provenance)**
 2. Buffer library + stack suggestor with chemical-compatibility flags. **(P2.2 — done: multi-layer stacks + chemical/thermal window flags)**
-3. Thermal-budget and oxygen/nitrogen window estimators.
+3. Thermal-budget and oxygen/nitrogen window estimators. **(P2.2 — done)**
 4. Membrane and critical-thickness helpers. **(P2.3 — done: Matthews–Blakeslee / People–Bean + membrane-transfer heuristics)**
 5. Ranking engine upgrades (configurable weights, Pareto, acquisition score). **(P2.4 — done: multi-objective weights + Pareto + ranking provenance)**
-6. Synthesis-card generator and CSV/JSON schema freeze.
-7. (Optional) Automated slab builder for interface DFT on shortlist.
+6. Synthesis-card generator and CSV/JSON schema freeze. **(P2.5 — done: scannable Process recommendation + `process_recommendations.json` v1.0)**
+7. (Optional) Automated slab builder for interface DFT on shortlist. **(deferred)**
 
 
 ### What Can Be Validated Without Large-Scale Compute
@@ -158,7 +160,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 - Synthesis cards contain every field an experimentalist would need for a first growth attempt.
 - Full ranking + export of a 100-candidate set finishes in seconds on a laptop.
 
-**Exit criteria**: Si-feasibility scores are trusted enough to be the primary filter before expensive EPW; experimental collaborators can act on the exported cards without further translation.
+**Exit criteria**: Si-feasibility scores are trusted enough to be the primary filter before expensive EPW; experimental collaborators can act on the exported cards without further translation. **Met** — see [phase2-exit.md](phase2-exit.md).
 
 ---
 
@@ -252,7 +254,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 | 0     | Foundation & local validation      | 4–8 weeks        | Workstation only      |
 | 1     | Conventional EPW + AL prioritization | 6–10 weeks     | Workstation + small cluster |
 | 1.5   | AL bootstrap (seed, first surrogate, interleaved cycles) | ongoing / parallel | Workstation |
-| 2     | Silicon Integration + ranking      | 3–6 weeks        | Workstation           |
+| 2     | Silicon Integration + ranking      | 3–6 weeks (**complete**) | Workstation |
 | 3     | Unconventional (DMFT) + AL maturity| 3–4 months       | Small → medium HPC    |
 | 4     | Josephson device metrics           | 2–4 months       | Mostly shortlist / analytic |
 

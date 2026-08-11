@@ -836,7 +836,34 @@ functions, GNN / DMFT / Josephson.
 
 ---
 
+## P2.5 (2026-08-11) — Process recommendations + Phase 2 close-out
+
+**Scope**: Scannable synthesis cards with an explicit **Process recommendation**
+section; freeze machine-readable process-recommendation schema `1.0`. Does **not**
+change Si scoring, ranking maths, or calculators.
+
+| Item | Location |
+|------|----------|
+| Helper | `siscforge.export.process_recommendation` |
+| Schema version | `PROCESS_RECOMMENDATION_SCHEMA_VERSION = "1.0"` |
+| Campaign JSON | `process_recommendations.json` via `export_campaign_bundle` |
+| Card layout | Identity → Headline scores → Process recommendation → Supporting detail |
+| One-pagers | Same layout as cards |
+| Schema doc | `docs/process-recommendation-schema.md` |
+| Exit checklist | `docs/phase2-exit.md` |
+| Tests | `tests/test_process_recommendation_p25.py` |
+
+**Process block fields**: recommended stack/buffers, thickness + h_c method,
+process temp ceiling + thermal window, chemical flags, membrane transfer,
+`do_not_cite_tc` / trust warning, headline scores.
+
+**Out of scope**: interface-slab DFT, FEM membranes, CALPHAD, Phase 3/4 science.
+
+
+---
+
 ## Phase 1 complete (frozen baseline)
+
 
 **Version**: `0.1.0` · **Tag**: `v0.1.0-phase1` · **Exit checklist**: [phase1-exit.md](phase1-exit.md)  
 **Validation**: [validation-phase1.md](validation-phase1.md)

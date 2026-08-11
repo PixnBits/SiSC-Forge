@@ -6,8 +6,30 @@ import csv
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
+
+# ---------------------------------------------------------------------------
+# Process recommendation schema (P2.5 freeze)
+# ---------------------------------------------------------------------------
+# Stable machine-readable block for experimental handoff. Schema version is
+# independent of SiFeasibilityScore.version / ranking config versions.
+#
+# Top-level keys (see process_recommendation() docstring for field semantics):
+#   schema_version, candidate_id, formula, material_family, substrate,
+#   in_plane_strain, rank, on_pareto_front,
+#   recommended_buffers, recommended_stack,
+#   recommended_thickness_nm, critical_thickness_nm, critical_thickness_method,
+#   critical_thickness_people_bean_nm,
+#   process_temp_ceiling_c, thermal_window_note, chemical_flags,
+#   membrane_transfer_candidate, membrane_transfer_note,
+#   result_quality, do_not_cite_tc, trust_warning,
+#   composite_score, performance_score, performance_score_source,
+#   si_feasibility_total, si_scorer_version
+# ---------------------------------------------------------------------------
+
+PROCESS_RECOMMENDATION_SCHEMA_VERSION = "1.0"
 
 
 def evaluations_to_jsonable(evaluations: Iterable[CandidateEvaluation]) -> list[dict]:
@@ -66,6 +88,18 @@ def _fmt_thickness_band(band: object) -> str:
     return str(band)
 
 
+def _thickness_jsonable(band: object) -> float | list[float] | None:
+    """Serialize recommended_thickness_nm for the process-recommendation schema."""
+    if band is None:
+        return None
+    if isinstance(band, (list, tuple)) and len(band) == 2:
+        return [float(band[0]), float(band[1])]
+    try:
+        return float(band)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _ranking_weight(ev: CandidateEvaluation, key: str) -> float | None:
     weights = getattr(ev, "ranking_weights", None) or {}
     if key not in weights:
@@ -76,6 +110,146 @@ def _ranking_weight(ev: CandidateEvaluation, key: str) -> float | None:
 def _breakdown_field(ev: CandidateEvaluation, key: str) -> object:
     bd = getattr(ev, "composite_breakdown", None) or {}
     return bd.get(key)
+
+
+def _trust_warning(ev: CandidateEvaluation) -> str | None:
+    """Explicit 'do not cite Tc' warning when trust tier is weak."""
+    rq = getattr(ev, "result_quality", None) or "unknown"
+    if rq in {"screening_suspect", "unreliable"}:
+        notes = (getattr(ev, "quality_notes", None) or "").strip()
+        base = (
+            f"result_quality={rq}: do **not** quote Tc/λ as production predictions; "
+            "refine with denser grids / tuned Wannier before citing."
+        )
+        if notes:
+            return f"{base} ({notes})"
+        return base
+    if rq == "screening":
+        return (
+            "result_quality=screening: Tc/λ are order-of-magnitude only "
+            "(screening grids / random Wannier) — not literature-grade."
+        )
+    return None
+
+
+def process_recommendation(ev: CandidateEvaluation) -> dict[str, Any]:
+    """Build the frozen P2.5 process-recommendation dict for one evaluation.
+
+    Schema version ``PROCESS_RECOMMENDATION_SCHEMA_VERSION`` (``1.0``). Keys are
+    stable for Phase 2 handoff; consumers should key on ``schema_version``.
+
+    **Identity / ranking**
+
+    - ``schema_version``: schema freeze id (not Si scorer version)
+    - ``candidate_id``, ``formula``, ``material_family``
+    - ``substrate``, ``in_plane_strain``
+    - ``rank``, ``on_pareto_front``
+
+    **Process recommendation (actionable)**
+
+    - ``recommended_buffers``: list of stack labels (best first)
+    - ``recommended_stack``: primary stack (first buffer entry or null)
+    - ``recommended_thickness_nm``: float or ``[lo, hi]`` band (nm), or null
+    - ``critical_thickness_nm``: primary h_c (nm)
+    - ``critical_thickness_method``: e.g. Matthews-Blakeslee
+    - ``critical_thickness_people_bean_nm``: optional metastable h_c
+    - ``process_temp_ceiling_c``: heuristic process temp ceiling (°C)
+    - ``thermal_window_note``: short thermal-window prose
+    - ``chemical_flags``: e.g. nitrogen_window, oxygen_window
+    - ``membrane_transfer_candidate``: bool
+    - ``membrane_transfer_note``: short membrane heuristic note
+
+    **Trust**
+
+    - ``result_quality``: production | screening | screening_suspect | unreliable | unknown
+    - ``do_not_cite_tc``: true when Tc/λ must not be quoted as production
+    - ``trust_warning``: human caveat or null
+
+    **Headline scores (also in JSON for machine consumers)**
+
+    - ``composite_score``, ``performance_score``, ``performance_score_source``
+    - ``si_feasibility_total``, ``si_scorer_version``
+    """
+    c = ev.candidate
+    si = ev.si_feasibility
+    buffers = list(si.recommended_buffers) if si and si.recommended_buffers else []
+    primary_stack = buffers[0] if buffers else None
+    rq = getattr(ev, "result_quality", None) or "unknown"
+    warning = _trust_warning(ev)
+    do_not_cite = rq in {"screening_suspect", "unreliable"}
+
+    thick = _thickness_jsonable(
+        getattr(si, "recommended_thickness_nm", None) if si else None
+    )
+
+    return {
+        "schema_version": PROCESS_RECOMMENDATION_SCHEMA_VERSION,
+        "candidate_id": c.candidate_id,
+        "formula": c.formula,
+        "material_family": c.material_family,
+        "substrate": c.substrate,
+        "in_plane_strain": c.in_plane_strain,
+        "rank": ev.rank,
+        "on_pareto_front": getattr(ev, "on_pareto_front", None),
+        "recommended_buffers": buffers,
+        "recommended_stack": primary_stack,
+        "recommended_thickness_nm": thick,
+        "critical_thickness_nm": (
+            getattr(si, "critical_thickness_nm", None) if si else None
+        ),
+        "critical_thickness_method": (
+            (getattr(si, "critical_thickness_method", None) or "") if si else ""
+        )
+        or None,
+        "critical_thickness_people_bean_nm": (
+            getattr(si, "critical_thickness_people_bean_nm", None) if si else None
+        ),
+        "process_temp_ceiling_c": (
+            getattr(si, "process_temp_ceiling_c", None) if si else None
+        ),
+        "thermal_window_note": (
+            (getattr(si, "thermal_window_note", None) or "") if si else ""
+        )
+        or None,
+        "chemical_flags": (
+            list(getattr(si, "chemical_flags", None) or []) if si else []
+        ),
+        "membrane_transfer_candidate": (
+            bool(getattr(si, "membrane_transfer_candidate", False)) if si else False
+        ),
+        "membrane_transfer_note": (
+            (getattr(si, "membrane_transfer_note", None) or "") if si else ""
+        )
+        or None,
+        "result_quality": rq,
+        "do_not_cite_tc": do_not_cite,
+        "trust_warning": warning,
+        "composite_score": ev.composite_score,
+        "performance_score": ev.performance_score,
+        "performance_score_source": getattr(ev, "performance_score_source", None),
+        "si_feasibility_total": si.total if si else None,
+        "si_scorer_version": si.version if si else None,
+    }
+
+
+def write_process_recommendations_json(
+    evaluations: Iterable[CandidateEvaluation],
+    path: str | Path,
+    *,
+    indent: int = 2,
+) -> Path:
+    """Write campaign-level ``process_recommendations.json`` (list of objects).
+
+    Each element is the dict from :func:`process_recommendation`. Order matches
+    the evaluation list (typically already ranked).
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = [process_recommendation(ev) for ev in evaluations]
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=indent)
+        fh.write("\n")
+    return path
 
 
 def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
@@ -307,13 +481,20 @@ def write_synthesis_cards(
     model_version: str | None = None,
     training_set_size: int | None = None,
 ) -> Path:
-    """Write Markdown synthesis cards (one section per ranked candidate)."""
+    """Write Markdown synthesis cards (one section per ranked candidate).
+
+    P2.5 layout per card: Identity → Headline scores → Process recommendation
+    (human bullets + fenced JSON) → Supporting detail.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = [
         f"# Synthesis cards{f' — {campaign_name}' if campaign_name else ''}",
         "",
-        "Auto-generated by SiSC-Forge Phase 0. Values may be mock or screening-quality.",
+        "Auto-generated by SiSC-Forge. Values may be mock or screening-quality.",
+        "Process recommendation blocks use schema "
+        f"`process_recommendation` v{PROCESS_RECOMMENDATION_SCHEMA_VERSION} "
+        "(see docs/process-recommendation-schema.md).",
         "",
     ]
     # AC15: bootstrap / low-data regime visible on synthesis cards
@@ -364,7 +545,6 @@ def write_synthesis_cards(
     return path
 
 
-
 def write_candidate_onepagers(
     evaluations: Iterable[CandidateEvaluation],
     directory: str | Path,
@@ -374,7 +554,8 @@ def write_candidate_onepagers(
 ) -> list[Path]:
     """Write one Markdown one-pager per top ranked candidate (desktop handoff).
 
-    Files: ``candidate_01_<formula>.md`` under *directory*.
+    Files: ``candidate_01_<formula>.md`` under *directory*. Layout matches
+    synthesis cards (Identity → Headline → Process recommendation → detail).
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -392,36 +573,9 @@ def write_candidate_onepagers(
             f"# Candidate one-pager — {ev.candidate.formula}",
             "",
             f"Campaign: {campaign_name or '—'}",
-            f"Rank: {ev.rank if ev.rank is not None else '—'}",
             "",
         ]
         lines.extend(_card_markdown(ev))
-        # Compact action line for experimentalists
-        eph = ev.electron_phonon
-        si = ev.si_feasibility
-        tc = eph.best_tc_K() if eph is not None else None
-        rq = getattr(ev, "result_quality", "unknown")
-        lines.extend(
-            [
-                "",
-                "### Desktop handoff summary",
-                f"- **Tc proxy (K)**: {tc if tc is not None else '—'}",
-                f"- **λ**: {eph.lambda_total if eph else '—'}",
-                f"- **result quality**: `{rq}`",
-                f"- **Si-feasibility**: {si.total if si else '—'} "
-                f"(v{si.version if si else '—'})",
-                f"- **status**: {ev.status}",
-                f"- **strain**: {ev.candidate.in_plane_strain}",
-                f"- **substrate**: {ev.candidate.substrate or '—'}",
-            ]
-        )
-        if rq in {"screening_suspect", "unreliable"}:
-            lines.append(
-                f"- **do not cite Tc/λ as production** ({rq}; "
-                f"{getattr(ev, 'quality_notes', '') or 'see quality flags'})"
-            )
-        if si and si.notes:
-            lines.append(f"- **Si notes**: {si.notes}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         written.append(path)
     return written
@@ -434,7 +588,18 @@ def _fmt_weights(weights: dict[str, float] | None) -> str:
     return ", ".join(parts)
 
 
+def _fmt_num(value: object, *, digits: int | None = None) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, float):
+        if digits is not None:
+            return f"{value:.{digits}f}".rstrip("0").rstrip(".")
+        return f"{value:g}"
+    return str(value)
+
+
 def _card_markdown(ev: CandidateEvaluation) -> list[str]:
+    """P2.5 scannable card: Identity → Headline → Process → Supporting detail."""
     c = ev.candidate
     si = ev.si_feasibility
     ph = ev.phonon
@@ -447,101 +612,138 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         pareto_s = "no"
     else:
         pareto_s = "—"
-    lines = [
+    rq = getattr(ev, "result_quality", "unknown") or "unknown"
+    rec = process_recommendation(ev)
+
+    lines: list[str] = [
         f"## #{rank} — {c.formula}",
         "",
+        "### Identity",
+        f"- **formula**: {c.formula}",
         f"- **candidate_id**: `{c.candidate_id}`",
         f"- **family**: {c.material_family}",
         f"- **composition**: {_fmt_composition(c.composition) or c.formula}",
         f"- **substrate**: {c.substrate or '—'}",
         f"- **in-plane strain**: "
         f"{c.in_plane_strain if c.in_plane_strain is not None else '—'}",
-        f"- **status**: {ev.status} (`{ev.calculator_name or 'n/a'}`)",
-        f"- **composite score**: {ev.composite_score}",
+        f"- **rank**: {rank}",
         f"- **on Pareto front**: {pareto_s}",
-        f"- **performance score**: {ev.performance_score}",
-        f"- **performance source**: {getattr(ev, 'performance_score_source', None) or '—'}",
-        f"- **result quality**: `{getattr(ev, 'result_quality', 'unknown')}`",
+        f"- **status**: {ev.status} (`{ev.calculator_name or 'n/a'}`)",
+        "",
+        "### Headline scores",
+        f"- **composite score**: {_fmt_num(ev.composite_score)}",
+        f"- **performance / Tc proxy**: {_fmt_num(ev.performance_score)}"
+        f" ({getattr(ev, 'performance_score_source', None) or '—'})",
+        f"- **Si-feasibility total**: "
+        f"{_fmt_num(si.total if si else None)}"
+        + (f" / 100 (v{si.version})" if si else ""),
+        f"- **result quality**: `{rq}`",
     ]
-    rw = getattr(ev, "ranking_weights", None) or {}
-    if rw:
-        lines.append(
-            f"- **ranking weights**: perf={rw.get('performance', '—')}, "
-            f"Si={rw.get('si_feasibility', '—')}, "
-            f"uncertainty={rw.get('uncertainty', '—')} "
-            f"(ceiling {rw.get('performance_ceiling_K', 40)} K)"
-        )
-    bd = getattr(ev, "composite_breakdown", None) or {}
-    if bd:
-        lines.append(
-            f"- **composite breakdown**: perf_norm={bd.get('performance_norm')}, "
-            f"Si={bd.get('si_feasibility')}, "
-            f"certainty_norm={bd.get('certainty_norm', '—')}, "
-            f"pre_penalty={bd.get('pre_penalty')}"
-        )
+    warning = rec.get("trust_warning")
+    if warning:
+        lines.append(f"- **trust caveat**: {warning}")
     flags = getattr(ev, "quality_flags", None) or []
     if flags:
         lines.append(f"- **quality flags**: {', '.join(flags)}")
-    qnotes = getattr(ev, "quality_notes", None) or ""
-    if qnotes:
-        lines.append(f"- **quality notes**: {qnotes}")
-    rq = getattr(ev, "result_quality", "unknown")
-    if rq in {"screening_suspect", "unreliable"}:
-        lines.append(
-            f"- **⚠ trust**: Tc/λ are **{rq}** — do **not** quote as production "
-            f"predictions; refine with denser grids / tuned Wannier before citing."
-        )
     if c.energy_above_hull_proxy is not None:
         lines.append(f"- **E_hull proxy (eV/atom)**: {c.energy_above_hull_proxy}")
 
-    surr = getattr(ev, "tc_lambda_surrogate", None)
-    if surr:
-        surr_title = "λ/Tc surrogate"
-        if surr.get("bootstrap") or surr.get("quality_tag") in {"stub", "trained"}:
-            if surr.get("bootstrap", True):
-                surr_title += " (prioritization aid — not experimental Tc)"
-        lines.extend(
-            [
-                "",
-                f"### {surr_title}",
-                f"- **model**: {surr.get('model_version', '—')} "
-                f"(`{surr.get('quality_tag', 'stub')}` / {surr.get('method', '—')})",
-                f"- predicted λ: {surr.get('predicted_lambda')}",
-                f"- predicted ω_log (K): {surr.get('predicted_omega_log')}",
-                f"- predicted Tc (K): {surr.get('predicted_Tc')}",
-                f"- uncertainty (0–1): {surr.get('uncertainty')}",
-                f"- training_set_size: {surr.get('training_set_size', '—')}",
-                f"- bootstrap: {surr.get('bootstrap', '—')}",
-                f"- notes: {surr.get('notes', '—')}",
-            ]
-        )
+    # --- Process recommendation (human + machine) ---
+    lines.extend(["", "### Process recommendation"])
+    stack = rec.get("recommended_stack")
+    buffers = rec.get("recommended_buffers") or []
+    if stack:
+        extra = ""
+        if len(buffers) > 1:
+            extra = f" (also: {', '.join(buffers[1:4])}" + (
+                ", …" if len(buffers) > 4 else ""
+            ) + ")"
+        lines.append(f"- **recommended buffer / stack**: `{stack}`{extra}")
+    else:
+        lines.append("- **recommended buffer / stack**: —")
 
-    acq = getattr(ev, "acquisition_score", None)
-    if acq is not None:
-        lines.extend(
-            [
-                "",
-                "### Active learning (prioritization)",
-                f"- acquisition score: {acq}",
-                f"- selected for expensive path: "
-                f"{getattr(ev, 'al_selected_for_expensive', None)}",
-                "- note: prioritization aid — not a measured Tc; real EPW overrides "
-                "when present",
-            ]
+    thick_s = _fmt_thickness_band(
+        getattr(si, "recommended_thickness_nm", None) if si else None
+    )
+    ct_nm = rec.get("critical_thickness_nm")
+    ct_method = rec.get("critical_thickness_method") or "—"
+    ct_pb = rec.get("critical_thickness_people_bean_nm")
+    thick_line = f"- **recommended thickness (nm)**: {thick_s or '—'}"
+    if ct_nm is not None:
+        thick_line += f" · **h_c**: {_fmt_num(ct_nm)} nm [{ct_method}]"
+        if ct_pb is not None:
+            thick_line += f" (People–Bean metastable {_fmt_num(ct_pb)} nm)"
+    lines.append(thick_line)
+
+    ceil = rec.get("process_temp_ceiling_c")
+    thermal = rec.get("thermal_window_note") or "—"
+    lines.append(
+        f"- **process temp ceiling**: "
+        f"{_fmt_num(ceil)} °C · **thermal window**: {thermal}"
+    )
+    chem = rec.get("chemical_flags") or []
+    lines.append(
+        f"- **chemical / N–O window flags**: {', '.join(chem) if chem else '—'}"
+    )
+    mem = rec.get("membrane_transfer_candidate")
+    mem_note = rec.get("membrane_transfer_note")
+    mem_s = "yes" if mem else "no"
+    if mem_note:
+        lines.append(f"- **membrane-transfer candidate**: {mem_s} — {mem_note}")
+    else:
+        lines.append(f"- **membrane-transfer candidate**: {mem_s}")
+    if rec.get("do_not_cite_tc"):
+        lines.append(
+            f"- **⚠ do not cite Tc/λ as production** "
+            f"(`{rq}`"
+            + (
+                f"; {getattr(ev, 'quality_notes', '') or 'see quality flags'}"
+                if getattr(ev, "quality_notes", None)
+                else ""
+            )
+            + ")"
         )
+    elif warning:
+        lines.append(f"- **Tc/λ caveat**: {warning}")
+
+    # Machine-readable freeze (schema v1.0)
+    lines.extend(
+        [
+            "",
+            "```json",
+            json.dumps(rec, indent=2, sort_keys=True),
+            "```",
+        ]
+    )
+
+    # --- Supporting detail ---
+    lines.extend(["", "### Supporting detail"])
+
+    rw = getattr(ev, "ranking_weights", None) or {}
+    bd = getattr(ev, "composite_breakdown", None) or {}
+    if rw or bd:
+        lines.extend(["", "#### Ranking provenance"])
+        if rw:
+            lines.append(
+                f"- **ranking weights**: perf={rw.get('performance', '—')}, "
+                f"Si={rw.get('si_feasibility', '—')}, "
+                f"uncertainty={rw.get('uncertainty', '—')} "
+                f"(ceiling {rw.get('performance_ceiling_K', 40)} K)"
+            )
+        if bd:
+            lines.append(
+                f"- **composite breakdown**: perf_norm={bd.get('performance_norm')}, "
+                f"Si={bd.get('si_feasibility')}, "
+                f"certainty_norm={bd.get('certainty_norm', '—')}, "
+                f"pre_penalty={bd.get('pre_penalty')}"
+            )
 
     if si is not None:
         w = getattr(si, "weights", None) or {}
-        thick = _fmt_thickness_band(getattr(si, "recommended_thickness_nm", None))
-        ct_nm = getattr(si, "critical_thickness_nm", None)
-        ct_method = getattr(si, "critical_thickness_method", "") or "—"
-        ct_pb = getattr(si, "critical_thickness_people_bean_nm", None)
-        mem_flag = bool(getattr(si, "membrane_transfer_candidate", False))
-        mem_note = getattr(si, "membrane_transfer_note", "") or ""
         lines.extend(
             [
                 "",
-                "### Silicon feasibility",
+                "#### Silicon feasibility breakdown",
                 f"- **total**: {si.total:.1f} / 100 (v{si.version})",
                 f"- **weights**: {_fmt_weights(w)}",
                 f"- lattice mismatch: {si.components.lattice_mismatch:.1f}"
@@ -566,35 +768,53 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                     if "process_maturity" in w
                     else ""
                 ),
-                f"- recommended buffers: {', '.join(si.recommended_buffers) or '—'}",
-                f"- recommended thickness (nm): {thick or '—'}",
-                f"- critical thickness h_c (nm): {ct_nm if ct_nm is not None else '—'}"
-                f" [{ct_method}]",
-                (
-                    f"- People–Bean h_c (nm, metastable): {ct_pb}"
-                    if ct_pb is not None
-                    else "- People–Bean h_c (nm, metastable): —"
-                ),
-                f"- chemical flags: "
-                f"{', '.join(getattr(si, 'chemical_flags', None) or []) or '—'}",
-                f"- thermal window: {getattr(si, 'thermal_window_note', '') or '—'}",
-                (
-                    f"- process temp ceiling (°C): {si.process_temp_ceiling_c}"
-                    if getattr(si, "process_temp_ceiling_c", None) is not None
-                    else "- process temp ceiling (°C): —"
-                ),
-                f"- membrane-transfer candidate: {'yes' if mem_flag else 'no'}",
+                f"- recommended buffers (full list): "
+                f"{', '.join(si.recommended_buffers) or '—'}",
+                f"- notes: {si.notes or '—'}",
             ]
         )
-        if mem_note:
-            lines.append(f"- membrane note: {mem_note}")
-        lines.append(f"- notes: {si.notes or '—'}")
+
+    surr = getattr(ev, "tc_lambda_surrogate", None)
+    if surr:
+        surr_title = "λ/Tc surrogate"
+        if surr.get("bootstrap") or surr.get("quality_tag") in {"stub", "trained"}:
+            if surr.get("bootstrap", True):
+                surr_title += " (prioritization aid — not experimental Tc)"
+        lines.extend(
+            [
+                "",
+                f"#### {surr_title}",
+                f"- **model**: {surr.get('model_version', '—')} "
+                f"(`{surr.get('quality_tag', 'stub')}` / {surr.get('method', '—')})",
+                f"- predicted λ: {surr.get('predicted_lambda')}",
+                f"- predicted ω_log (K): {surr.get('predicted_omega_log')}",
+                f"- predicted Tc (K): {surr.get('predicted_Tc')}",
+                f"- uncertainty (0–1): {surr.get('uncertainty')}",
+                f"- training_set_size: {surr.get('training_set_size', '—')}",
+                f"- bootstrap: {surr.get('bootstrap', '—')}",
+                f"- notes: {surr.get('notes', '—')}",
+            ]
+        )
+
+    acq = getattr(ev, "acquisition_score", None)
+    if acq is not None:
+        lines.extend(
+            [
+                "",
+                "#### Active learning (prioritization)",
+                f"- acquisition score: {acq}",
+                f"- selected for expensive path: "
+                f"{getattr(ev, 'al_selected_for_expensive', None)}",
+                "- note: prioritization aid — not a measured Tc; real EPW overrides "
+                "when present",
+            ]
+        )
 
     if ph is not None:
         lines.extend(
             [
                 "",
-                "### Phonon summary",
+                "#### Phonon summary",
                 f"- dynamically stable: {ph.dynamically_stable}",
                 f"- imaginary modes: {ph.has_imaginary_modes}",
                 f"- min / max frequency (cm⁻¹): {ph.min_frequency_cm1} / {ph.max_frequency_cm1}",
@@ -607,7 +827,7 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         lines.extend(
             [
                 "",
-                "### Electron-phonon / Tc",
+                "#### Electron-phonon / Tc",
                 f"- λ: {eph.lambda_total}",
                 f"- ω_log (K): {eph.omega_log}",
                 f"- μ*: {eph.mu_star}",
@@ -636,7 +856,7 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         lines.extend(
             [
                 "",
-                "### SCF summary",
+                "#### SCF summary",
                 f"- total energy (eV): {scf.total_energy_eV}",
                 f"- metallic: {scf.is_metallic}",
                 f"- status / quality: {scf.status} / {scf.quality_tag}",
@@ -660,7 +880,11 @@ def export_campaign_bundle(
     model_version: str | None = None,
     training_set_size: int | None = None,
 ) -> dict[str, Path]:
-    """Write the standard Phase-0 export set; return map of label → path."""
+    """Write the standard Phase-0/2 export set; return map of label → path.
+
+    Always writes ``process_recommendations.json`` (P2.5 schema freeze) alongside
+    evaluations JSON so experimental consumers get a single actionable list.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     formats = formats or ["json", "csv"]
@@ -668,6 +892,9 @@ def export_campaign_bundle(
 
     written["evaluations_json"] = write_evaluations_json(
         evaluations, out_dir / "evaluations.json"
+    )
+    written["process_recommendations"] = write_process_recommendations_json(
+        evaluations, out_dir / "process_recommendations.json"
     )
     if "csv" in formats:
         written["csv"] = write_evaluations_csv(evaluations, out_dir / "evaluations.csv")

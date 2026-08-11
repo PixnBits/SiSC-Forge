@@ -34,7 +34,7 @@ In short: the search is for the missing manufacturing link that would let an alr
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Setup | [`docs/SETUP.md`](docs/SETUP.md) |
 
-## Current status — **Phase 1 + 1.5 complete** (`v0.1.0`)
+## Current status — **Phase 2 complete** (`v0.1.0`)
 
 | Phase | Focus | Status |
 |-------|-------|--------|
@@ -42,9 +42,10 @@ In short: the search is for the missing manufacturing link that would let an alr
 | **1** | EPW + isotropic Eliashberg, goldens, λ/Tc stub, AL prioritization | **Done** — [phase1-exit](docs/phase1-exit.md) |
 | **1.5a** | AL bootstrap data hygiene (promotion gate, snapshots, retrain CLI) | **Done** — [phase15-exit](docs/phase15-exit.md) |
 | **1.5b** | Trained predictions change rankings; run-loop provenance; operator UX | **Done** — [phase15b-exit](docs/phase15b-exit.md) |
-| 2 | Si-integration maturity (45° epitaxy, buffers, …) | In progress |
+| **2** | Si-integration maturity + ranking polish (P2.1–P2.5) | **Done** — [phase2-exit](docs/phase2-exit.md) |
 | 3 | DMFT / unconventional | Future |
 | 4 | Josephson device metrics | Future |
+
 
 ### Phase 1 delivered
 
@@ -81,7 +82,12 @@ siscforge run next.yaml -o ./outputs/next --al-root ./al_state
 
 Mock / dry-run evaluations are **hard-refused** by the promotion gate so junk never enters the training set. See [docs/design/active-learning-flywheel.md](docs/design/active-learning-flywheel.md).
 
+### Phase 2 silicon integration + ranking — complete
+
+P2.1–P2.5 are shipped: first-class Si component weights, multi-layer buffer stacks, critical thickness / membrane heuristics, multi-objective ranking + Pareto, and **process-recommendation** synthesis cards with frozen schema `1.0` (`process_recommendations.json`). Exit notes: [phase2-exit](docs/phase2-exit.md). Schema: [process-recommendation-schema](docs/process-recommendation-schema.md).
+
 Validation: [docs/validation-phase1.md](docs/validation-phase1.md).
+
 
 
 ## Quick start (Python only — no QE)
