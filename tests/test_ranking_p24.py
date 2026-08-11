@@ -15,8 +15,10 @@ from siscforge.models.results import (
     SiFeasibilityScore,
 )
 from siscforge.ranking import (
+    compute_composite_breakdown,
     compute_composite_score,
     identify_pareto_front,
+    pareto_objectives,
     rank_evaluations,
 )
 
@@ -275,3 +277,151 @@ def test_json_roundtrip_ranking_fields() -> None:
     assert restored.ranking_weights is not None
     assert restored.composite_breakdown is not None
     assert restored.composite_score == ranked[0].composite_score
+
+
+def test_zero_si_score_not_replaced_by_neutral() -> None:
+    """Si-feasibility total of 0.0 is valid and must not become the 50 fallback."""
+    from siscforge.quality import apply_quality_assessment
+
+    ev = apply_quality_assessment(_ev(formula="Z", cid="z", tc=20.0, si=0.0, lam=1.0))
+    cfg = RankingConfig()
+    bd = compute_composite_breakdown(ev, cfg)
+    assert bd["si_feasibility"] == 0.0
+    # 0.6 * 50 + 0.4 * 0 = 30 (not 0.6*50 + 0.4*50 = 50)
+    assert bd["pre_penalty"] == pytest.approx(30.0, abs=1e-3)
+    assert compute_composite_score(ev, cfg) == pytest.approx(30.0, abs=1e-3)
+
+
+def test_pareto_excludes_incomplete_objectives() -> None:
+    """Rows missing performance or Si cannot sit on / dominate the front."""
+    complete = _ev(formula="Ok", cid="ok", tc=15.0, si=50.0, lam=1.0)
+    no_perf = complete.model_copy(
+        update={
+            "performance_score": None,
+            "candidate": complete.candidate.model_copy(update={"candidate_id": "np", "formula": "NoP"}),
+        }
+    )
+    no_si = complete.model_copy(
+        update={
+            "si_feasibility": None,
+            "candidate": complete.candidate.model_copy(update={"candidate_id": "ns", "formula": "NoSi"}),
+            "performance_score": 100.0,  # would look great if -inf encoding were used
+        }
+    )
+    # High-Tc incomplete must not mark as front-only non-dominated
+    high_incomplete = no_si
+    low_complete = _ev(formula="Low", cid="low", tc=5.0, si=40.0, lam=1.0)
+
+    assert pareto_objectives(no_perf, RankingConfig()) is None
+    assert pareto_objectives(no_si, RankingConfig()) is None
+
+    flags = identify_pareto_front(
+        [high_incomplete, low_complete, no_perf], RankingConfig()
+    )
+    by = {
+        high_incomplete.candidate.formula: flags[0],
+        low_complete.candidate.formula: flags[1],
+        no_perf.candidate.formula: flags[2],
+    }
+    assert by["NoSi"] is False
+    assert by["NoP"] is False
+    assert by["Low"] is True
+
+
+def test_pareto_certainty_axis_changes_dominance() -> None:
+    """With uncertainty_weight > 0, certainty is a third maximize objective."""
+    # Same perf/Si; higher certainty should dominate
+    sure = _ev(formula="Sure", cid="s", tc=20.0, si=50.0, uncertainty=0.1, lam=1.0)
+    unsure = _ev(formula="Unsure", cid="u", tc=20.0, si=50.0, uncertainty=0.8, lam=1.0)
+    # Better on 2D but worse certainty — still on 3D front if not dominated
+    high_tc = _ev(formula="Hot", cid="h", tc=35.0, si=30.0, uncertainty=0.5, lam=1.0)
+    cfg = RankingConfig(uncertainty_weight=0.2)
+
+    objs_s = pareto_objectives(sure, cfg)
+    objs_u = pareto_objectives(unsure, cfg)
+    assert objs_s is not None and objs_u is not None
+    assert len(objs_s) == 3
+    # sure dominates unsure on (perf, Si, certainty) when first two equal
+    assert objs_s[0] == objs_u[0] and objs_s[1] == objs_u[1]
+    assert objs_s[2] > objs_u[2]
+
+    flags = identify_pareto_front([sure, unsure, high_tc], cfg)
+    by = {r.candidate.formula: flags[i] for i, r in enumerate([sure, unsure, high_tc])}
+    assert by["Sure"] is True
+    assert by["Unsure"] is False  # dominated by Sure
+    assert by["Hot"] is True
+
+
+def test_pareto_missing_uncertainty_excluded_when_weighted() -> None:
+    """When certainty is a configured axis, missing u excludes the row from the front."""
+    with_u = _ev(formula="HasU", cid="hu", tc=20.0, si=50.0, uncertainty=0.3, lam=1.0)
+    no_u = _ev(formula="NoU", cid="nu", tc=30.0, si=80.0, lam=1.0)  # no uncertainty key
+    cfg = RankingConfig(uncertainty_weight=0.25)
+    assert pareto_objectives(with_u, cfg) is not None
+    assert pareto_objectives(no_u, cfg) is None
+    flags = identify_pareto_front([with_u, no_u], cfg)
+    assert flags == [True, False]
+
+
+def test_rank_cli_config_and_pareto_override(tmp_path: Path) -> None:
+    """CliRunner: YAML ranking weights reorder; --pareto / --no-pareto override."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from siscforge.cli.main import app
+
+    rows = [
+        _ev(formula="HighTc", cid="ht", tc=32.0, si=30.0, lam=1.0),
+        _ev(formula="HighSi", cid="hs", tc=8.0, si=95.0, lam=1.0),
+    ]
+    raw = tmp_path / "raw.json"
+    raw.write_text(json.dumps([e.model_dump(mode="json") for e in rows], indent=2))
+
+    # Si-heavy campaign YAML
+    cfg_path = tmp_path / "camp.yaml"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "name: rank_cli_p24",
+                "ranking:",
+                "  performance_weight: 0.1",
+                "  si_feasibility_weight: 0.9",
+                "  uncertainty_weight: 0.0",
+                "  pareto_enabled: true",
+                "",
+            ]
+        )
+    )
+
+    runner = CliRunner()
+    out_si = tmp_path / "ranked_si.json"
+    r1 = runner.invoke(
+        app,
+        ["rank", str(raw), "-c", str(cfg_path), "-o", str(out_si)],
+    )
+    assert r1.exit_code == 0, r1.stdout + r1.stderr
+    data = json.loads(out_si.read_text())
+    assert data[0]["candidate"]["formula"] == "HighSi"
+    assert data[0]["ranking_weights"]["si_feasibility"] == 0.9
+    assert data[0]["on_pareto_front"] is True
+
+    out_no = tmp_path / "ranked_nopareto.json"
+    r2 = runner.invoke(
+        app,
+        ["rank", str(raw), "-c", str(cfg_path), "--no-pareto", "-o", str(out_no)],
+    )
+    assert r2.exit_code == 0, r2.stdout + r2.stderr
+    data2 = json.loads(out_no.read_text())
+    assert data2[0]["on_pareto_front"] is None
+
+    out_yes = tmp_path / "ranked_pareto.json"
+    r3 = runner.invoke(
+        app,
+        ["rank", str(raw), "--pareto", "-o", str(out_yes)],
+    )
+    assert r3.exit_code == 0, r3.stdout + r3.stderr
+    data3 = json.loads(out_yes.read_text())
+    assert data3[0]["on_pareto_front"] is True
+    # default weights → HighTc first
+    assert data3[0]["candidate"]["formula"] == "HighTc"

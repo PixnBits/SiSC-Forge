@@ -114,8 +114,11 @@ def compute_composite_breakdown(
     tier = evaluation.result_quality or "unknown"
     axes = ranking_axis_values(evaluation, config)
 
-    perf_norm = float(axes["performance_norm"] or 0.0)
-    si = float(axes["si_feasibility"] or 50.0)
+    # Explicit None checks — valid 0.0 scores must not hit neutral fallbacks
+    pn = axes["performance_norm"]
+    perf_norm = 0.0 if pn is None else float(pn)
+    si_raw = axes["si_feasibility"]
+    si = 50.0 if si_raw is None else float(si_raw)
     certainty = axes["certainty_norm"]
     u = axes["uncertainty"]
 
@@ -215,34 +218,39 @@ def _dominates(a: list[float], b: list[float]) -> bool:
 def pareto_objectives(
     evaluation: CandidateEvaluation,
     config: RankingConfig | None = None,
-) -> list[float]:
+) -> list[float] | None:
     """Primary axes for Pareto (maximize): performance, Si-total, [certainty].
 
-    Missing performance or Si uses ``-inf`` so incomplete rows cannot dominate.
-    Certainty is included only when ``uncertainty_weight > 0``.
+    Returns ``None`` when any *required* axis is missing so incomplete rows are
+    excluded from the front (they must not dominate or remain non-dominated by
+    encoding missing values as ``-inf``). Certainty is required only when
+    ``uncertainty_weight > 0``.
     """
     config = config or RankingConfig()
-    if evaluation.performance_score is not None and math.isfinite(
-        float(evaluation.performance_score)
-    ):
+    if evaluation.performance_score is None:
+        return None
+    try:
         perf = float(evaluation.performance_score)
-    else:
-        perf = float("-inf")
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(perf):
+        return None
 
-    if evaluation.si_feasibility is not None and math.isfinite(
-        float(evaluation.si_feasibility.total)
-    ):
+    if evaluation.si_feasibility is None:
+        return None
+    try:
         si = float(evaluation.si_feasibility.total)
-    else:
-        si = float("-inf")
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(si):
+        return None
 
     objs = [perf, si]
     if config.uncertainty_weight > 0.0:
         u = extract_uncertainty(evaluation)
-        if u is not None:
-            objs.append(1.0 - u)
-        else:
-            objs.append(float("-inf"))
+        if u is None:
+            return None
+        objs.append(1.0 - u)
     return objs
 
 
@@ -250,20 +258,28 @@ def identify_pareto_front(
     evaluations: list[CandidateEvaluation],
     config: RankingConfig | None = None,
 ) -> list[bool]:
-    """Return a bool per evaluation: True iff non-dominated on primary axes."""
+    """Return a bool per evaluation: True iff non-dominated on primary axes.
+
+    Incomplete objective vectors (``pareto_objectives`` → ``None``) are never
+    on the front and do not participate in dominance comparisons.
+    """
     config = config or RankingConfig()
     if not evaluations:
         return []
     objs = [pareto_objectives(ev, config) for ev in evaluations]
     n = len(objs)
-    on_front = [True] * n
-    for i in range(n):
-        for j in range(n):
+    on_front = [False] * n
+    eligible = [i for i, o in enumerate(objs) if o is not None]
+    for i in eligible:
+        dominated = False
+        for j in eligible:
             if i == j:
                 continue
-            if _dominates(objs[j], objs[i]):
-                on_front[i] = False
+            # objs[j]/objs[i] are non-None by construction of eligible
+            if _dominates(objs[j], objs[i]):  # type: ignore[arg-type]
+                dominated = True
                 break
+        on_front[i] = not dominated
     return on_front
 
 
