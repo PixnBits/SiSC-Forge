@@ -586,12 +586,6 @@ def test_parse_incomplete_scf_not_ok() -> None:
     assert result.status == "failed"
 
 
-@pytest.mark.skipif(
-    __import__("os").environ.get("SISCFORGE_RUN_QE") != "1",
-    reason="Set SISCFORGE_RUN_QE=1 with pw.x on PATH for real DFT+U",
-)
-
-
 def test_qedftu_calculator_defaults_phonon_off_with_plain_dftconfig() -> None:
     from siscforge.calculators.qe.calculator import QEDftuCalculator
     calc = QEDftuCalculator(dft=DFTConfig())
@@ -622,6 +616,10 @@ def test_fingerprint_includes_kpoints_and_sites() -> None:
     assert "sites" in fa
 
 
+@pytest.mark.skipif(
+    __import__("os").environ.get("SISCFORGE_RUN_QE") != "1",
+    reason="Set SISCFORGE_RUN_QE=1 with pw.x on PATH for real DFT+U",
+)
 def test_real_qe_dftu_optional(tmp_path: Path) -> None:
     """Optional real-QE gate (same pattern as NbN phonon golden)."""
     from siscforge.calculators.qe.env import qe_available
