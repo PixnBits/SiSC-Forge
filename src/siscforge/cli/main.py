@@ -1058,14 +1058,28 @@ def run_cmd(
         raise typer.Exit(code=2) from exc
 
     calc_params: dict = {}
-    # Prefer exact calculator name, then fall back to QE alias group.
+    # Prefer exact calculator name, then same-family aliases, then any QE entry.
+    # When the CLI selects ``dftu``, prefer an explicit ``qe-dftu``/``dftu``
+    # campaign entry over a generic ``qe`` so per-calculator parameters win.
     for c in config.calculators:
         if c.name == calc_name:
             calc_params = dict(c.parameters)
             break
     else:
+        dftu_aliases = {"qe-dftu", "dftu"}
+        epw_aliases = {"qe-epw", "epw"}
         qe_aliases = {"qe", "qe-epw", "quantum-espresso", "epw", "qe-dftu", "dftu"}
-        if calc_name in qe_aliases:
+        preferred: set[str] | None = None
+        if calc_name in dftu_aliases:
+            preferred = dftu_aliases
+        elif calc_name in epw_aliases:
+            preferred = epw_aliases
+        if preferred is not None:
+            for c in config.calculators:
+                if c.name in preferred:
+                    calc_params = dict(c.parameters)
+                    break
+        if not calc_params and calc_name in qe_aliases:
             for c in config.calculators:
                 if c.name in qe_aliases:
                     calc_params = dict(c.parameters)

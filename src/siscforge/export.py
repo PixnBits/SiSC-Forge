@@ -902,22 +902,46 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
 
     dftu = getattr(ev, "dftu", None)
     if dftu is not None:
+        # Prefer scalar U/J when uniform; otherwise show per-species maps so
+        # multi-species cells do not print a bare "None".
+        if dftu.U_eV is not None:
+            u_line = f"- U (eV): {dftu.U_eV}"
+        elif dftu.U_by_species:
+            u_line = (
+                "- U (eV): "
+                + ", ".join(f"{k}={v:g}" for k, v in sorted(dftu.U_by_species.items()))
+            )
+        else:
+            u_line = "- U (eV): —"
+        if dftu.J_eV is not None:
+            j_line = f"- J (eV): {dftu.J_eV}"
+        elif dftu.J_by_species:
+            j_line = (
+                "- J (eV): "
+                + ", ".join(f"{k}={v:g}" for k, v in sorted(dftu.J_by_species.items()))
+            )
+        else:
+            j_line = "- J (eV): —"
+        mag = dftu.total_magnetization
+        mag_s = f"{mag:g}" if mag is not None else "—"
+        energy = dftu.total_energy_eV
+        energy_s = f"{energy:g}" if energy is not None else "—"
         lines.extend(
             [
                 "",
                 "#### DFT+U (correlated proxy, P3.1)",
-                f"- U (eV): {dftu.U_eV}",
-                f"- J (eV): {dftu.J_eV}",
+                u_line,
+                j_line,
                 f"- Hubbard species: {', '.join(dftu.hubbard_species) or '—'}",
                 f"- projectors: {dftu.hubbard_projectors or '—'}",
-                f"- total magnetization (μ_B): {dftu.total_magnetization}",
+                f"- total magnetization (μ_B): {mag_s}",
                 f"- occupancy: "
                 + (
                     ", ".join(f"{k}={v}" for k, v in dftu.occupancy_summary.items())
                     if dftu.occupancy_summary
                     else "—"
                 ),
-                f"- total energy (eV): {dftu.total_energy_eV}",
+                f"- total energy (eV): {energy_s}",
                 f"- status / quality: {dftu.status} / {dftu.quality_tag}",
                 f"- summary: {dftu.summary_line()}",
                 "- note: cheap DFT+U proxy only — Wannier (P3.2) / DMFT (P3.3) / "
