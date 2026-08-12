@@ -175,13 +175,12 @@ class QECalculator(BaseCalculator):
                 structure=base.structure,
                 scf=base.scf,
                 phonon=base.phonon,
+                dftu=base.dftu,
                 steps=list(base.steps),
                 relaxed_structure=base.relaxed_structure,
                 success=base.success,
                 message=base.message,
             )
-            # stash dftu on a side channel for evaluation assembly
-            wf.__dict__["_dftu_result"] = base.dftu
         elif want_epw:
             wf = run_relax_scf_phonon_epw(
                 structure,
@@ -210,7 +209,7 @@ class QECalculator(BaseCalculator):
                     force_qe_steps=force_qe,
                     step_log=step_log,
                 )
-                wf.__dict__["_dftu_result"] = dftu_base.dftu
+                wf.dftu = dftu_base.dftu
                 wf.steps = list(wf.steps) + list(dftu_base.steps)
         else:
             base = run_relax_scf_phonon(
@@ -253,7 +252,7 @@ class QECalculator(BaseCalculator):
                     force_qe_steps=force_qe,
                     step_log=step_log,
                 )
-                wf.__dict__["_dftu_result"] = dftu_base.dftu
+                wf.dftu = dftu_base.dftu
                 wf.steps = list(wf.steps) + list(dftu_base.steps)
                 # Additive DFT+U should not fail the whole eval if conventional ok
                 if not dftu_base.success:
@@ -414,7 +413,7 @@ class QECalculator(BaseCalculator):
             err_list.append(f"work_dir={cand_dir}")
             err_list.append(truncate_for_notes(wf.message, max_chars=600))
 
-        dftu_result = getattr(wf, "_dftu_result", None)
+        dftu_result = getattr(wf, "dftu", None)
         if dftu_result is not None:
             notes_parts.append(f"dftu={dftu_result.summary_line()}")
         notes_parts.append(f"do_dftu={want_dftu}")
