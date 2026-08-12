@@ -14,6 +14,7 @@ from siscforge.models.results import (
     PhononResult,
     SCFResult,
     SiFeasibilityScore,
+    WannierResult,
 )
 
 
@@ -120,9 +121,18 @@ class CandidateEvaluation(BaseModel):
     (``dft.do_dftu`` / ``dft.dftu.enabled`` / calculator ``qe-dftu``).
 
     Extension points:
-    - **P3.2** Wannierization quality metrics → ``raw`` / future WannierResult
+    - **P3.2** Wannierization → ``wannier: WannierResult | None`` (sibling field)
     - **P3.3** TRIQS/solid_dmft → parallel ``dmft: DMFTResult | None`` field
     - **P3.4** pairing eigenvalue → maps into ``performance_score``
+    """
+
+    wannier: WannierResult | None = None
+    """Standalone Wannierization quality (P3.2). Optional — leave None for
+    conventional nitride/MgB₂ campaigns. Populated when Wannier is enabled
+    (``dft.do_wannier`` / ``dft.wannier.enabled`` / calculator ``qe-wannier``).
+
+    Distinct from ``electron_phonon.wannier_ok`` (EPW-internal flag).
+    P3.3 TRIQS/solid_dmft consumes this field's artifacts and DMFT gate.
     """
 
     si_feasibility: SiFeasibilityScore | None = None

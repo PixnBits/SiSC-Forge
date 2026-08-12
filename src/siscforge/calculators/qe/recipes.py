@@ -6,7 +6,8 @@ runs the same steps locally (subprocess) so a full job store is not required
 for workstation Phase-0 use.
 
 P3.1 adds :func:`run_dftu_scf` / :func:`run_dftu_workflow` for sequential
-pw.x DFT+U (Hubbard). Wannier / TRIQS / pairing are later packages.
+pw.x DFT+U (Hubbard). P3.2 adds standalone Wannierization after SCF/DFT+U.
+TRIQS / pairing are later packages.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from siscforge.calculators.qe.parser import (
     parse_relaxed_structure,
 )
 from siscforge.models.config import DFTConfig
-from siscforge.models.results import DFTUResult, PhononResult, SCFResult
+from siscforge.models.results import DFTUResult, PhononResult, SCFResult, WannierResult
 
 # Interesting log lines for heartbeat peeks (ph.x / pw.x / epw.x)
 _HEARTBEAT_PEEK_PATTERNS: list[re.Pattern[str]] = [
@@ -68,13 +69,14 @@ class QEStepResult:
 
 @dataclass
 class QEWorkflowResult:
-    """Aggregated relax / SCF / phonon / DFT+U results for one structure."""
+    """Aggregated relax / SCF / phonon / DFT+U / Wannier results for one structure."""
 
     work_dir: Path
     structure: Structure
     scf: SCFResult | None = None
     phonon: PhononResult | None = None
     dftu: DFTUResult | None = None
+    wannier: WannierResult | None = None
     steps: list[QEStepResult] = field(default_factory=list)
     relaxed_structure: Structure | None = None
     success: bool = False
@@ -1435,6 +1437,38 @@ def run_dftu_workflow(
 
 
 
+def run_wannier_after_scf(
+    structure: Structure,
+    config: DFTConfig,
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+    fermi_eV: float | None = None,
+    qe_env: QEEnvironment | None = None,
+    scf_work_dir: Path | str | None = None,
+    step_log: list[str] | None = None,
+) -> WannierResult:
+    """Run standalone Wannierization after a finished SCF / DFT+U.
+
+    Sacred-upstream contract: *scf_work_dir* (and any finished DFT+U artifacts)
+    are never deleted on remediable Wannier failures — same philosophy as
+    EPW-after-DFPT. Wannier work lives under *work_dir* (typically a sibling
+    ``wannier/`` subdirectory).
+    """
+    from siscforge.calculators.qe.wannier import run_wannier_workflow
+
+    return run_wannier_workflow(
+        structure,
+        config,
+        work_dir,
+        prefix=prefix,
+        fermi_eV=fermi_eV,
+        qe_env=qe_env,
+        scf_work_dir=scf_work_dir,
+        step_log=step_log,
+    )
+
+
 def recipe_info() -> dict[str, Any]:
     """Metadata for documentation / CLI help."""
     return {
@@ -1443,14 +1477,15 @@ def recipe_info() -> dict[str, Any]:
             "scf",
             "ph.x DFPT (optional)",
             "dftu SCF+U (optional, P3.1)",
+            "wannierization (optional, P3.2)",
         ],
         "jobflow": detect_qe_environment().jobflow,
         "qe": detect_qe_environment().available,
         "engine": "quantum-espresso",
-        "models": ["SCFResult", "PhononResult", "DFTUResult"],
+        "models": ["SCFResult", "PhononResult", "DFTUResult", "WannierResult"],
         "extension_points": {
-            "p3_2": "Wannierization quality metrics after DFT+U",
-            "p3_3": "TRIQS/solid_dmft → DMFTResult",
+            "p3_2": "Wannierization quality metrics after SCF/DFT+U (shipped)",
+            "p3_3": "TRIQS/solid_dmft → DMFTResult (consumes WannierResult)",
             "p3_4": "pairing eigenvalue → performance_score",
         },
     }

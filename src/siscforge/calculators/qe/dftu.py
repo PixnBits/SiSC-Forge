@@ -424,7 +424,7 @@ def parse_dftu_output(
         "job_done": job_done,
         "pathway": "dftu",
         "extension_hooks": {
-            "p3_2_wannier": "attach WannierResult / quality metrics here",
+            "p3_2_wannier": "CandidateEvaluation.wannier (WannierResult) — P3.2 shipped",
             "p3_3_dmft": "parallel CandidateEvaluation.dmft field (not yet)",
             "p3_4_pairing": "map leading eigenvalue → performance_score",
         },
@@ -520,7 +520,7 @@ def mock_dftu_result(
             "method": "mock_dftu",
             "pathway": "dftu",
             "extension_hooks": {
-                "p3_2_wannier": "attach WannierResult / quality metrics here",
+                "p3_2_wannier": "CandidateEvaluation.wannier (WannierResult) — P3.2 shipped",
                 "p3_3_dmft": "parallel CandidateEvaluation.dmft field (not yet)",
                 "p3_4_pairing": "map leading eigenvalue → performance_score",
             },
