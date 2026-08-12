@@ -1058,15 +1058,40 @@ def run_cmd(
         raise typer.Exit(code=2) from exc
 
     calc_params: dict = {}
+    # Prefer exact calculator name, then same-family aliases, then any QE entry.
+    # When the CLI selects ``dftu``, prefer an explicit ``qe-dftu``/``dftu``
+    # campaign entry over a generic ``qe`` so per-calculator parameters win.
+    # Track match separately from map emptiness: an explicit alias with
+    # ``parameters: {}`` must not fall through to a sibling ``qe`` entry.
+    calc_params_matched = False
     for c in config.calculators:
-        if c.name == calc_name or (
-            calc_name in {"qe", "qe-epw"}
-            and c.name in {"qe", "qe-epw", "quantum-espresso", "epw"}
-        ):
+        if c.name == calc_name:
             calc_params = dict(c.parameters)
+            calc_params_matched = True
             break
+    else:
+        dftu_aliases = {"qe-dftu", "dftu"}
+        epw_aliases = {"qe-epw", "epw"}
+        qe_aliases = {"qe", "qe-epw", "quantum-espresso", "epw", "qe-dftu", "dftu"}
+        preferred: set[str] | None = None
+        if calc_name in dftu_aliases:
+            preferred = dftu_aliases
+        elif calc_name in epw_aliases:
+            preferred = epw_aliases
+        if preferred is not None:
+            for c in config.calculators:
+                if c.name in preferred:
+                    calc_params = dict(c.parameters)
+                    calc_params_matched = True
+                    break
+        if not calc_params_matched and calc_name in qe_aliases:
+            for c in config.calculators:
+                if c.name in qe_aliases:
+                    calc_params = dict(c.parameters)
+                    calc_params_matched = True
+                    break
 
-    if calc_name in {"qe", "qe-epw"}:
+    if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}:
         dft = config.dft
         if calc_name == "qe-epw":
             dft = dft.model_copy(
@@ -1075,10 +1100,31 @@ def run_cmd(
                     "epw": dft.epw.model_copy(update={"enabled": True}),
                 }
             )
+        if calc_name in {"qe-dftu", "dftu"}:
+            # Force DFT+U on. Default phonon/EPW off only when the campaign YAML
+            # did not explicitly set them (preserve model_fields_set values).
+            dft_fields = set(getattr(config.dft, "model_fields_set", set()) or set())
+            updates: dict = {
+                "do_dftu": True,
+                "engine": "qe-dftu",
+                "dftu": dft.dftu.model_copy(update={"enabled": True}),
+            }
+            if "do_phonon" not in dft_fields:
+                updates["do_phonon"] = False
+            if "do_epw" not in dft_fields and "epw" not in dft_fields:
+                updates["do_epw"] = False
+                updates["epw"] = dft.epw.model_copy(update={"enabled": False})
+            dft = dft.model_copy(update=updates)
         # EPW fine-grid: nproc must equal npool (nimage=1). Auto-fix early so
         # users see the message before multi-hour DFPT, not only at epw.x launch.
         # Phonon-only (do_epw false + calculator qe): skip all EPW preflight noise.
+        # DFT+U-only (qe-dftu) also skips EPW preflight.
         want_epw = bool(calc_name == "qe-epw" or dft.do_epw or dft.epw.enabled)
+        want_dftu = bool(
+            calc_name in {"qe-dftu", "dftu"}
+            or dft.do_dftu
+            or dft.dftu.enabled
+        )
         if want_epw:
             from siscforge.calculators.qe.epw_inputs import (
                 default_nbndsub_screening,
@@ -1191,6 +1237,7 @@ def run_cmd(
             f"do_relax={dft.do_relax}",
             f"do_phonon={dft.do_phonon}",
             f"do_epw={want_epw}",
+            f"do_dftu={want_dftu}",
             f"nproc={dft.nproc}",
         ]
         if want_epw:
@@ -1202,7 +1249,9 @@ def run_cmd(
             f"[bold]Calculator[/bold] {calc_name}  ({', '.join(mode_bits)})"
         )
     else:
-        calc_params = {**calc_params, "run_config": run_cfg}
+        # Pass campaign DFT so mock can honor do_dftu / dftu.enabled (P3.1).
+        # Inert when DFT+U is disabled (default).
+        calc_params = {**calc_params, "dft": config.dft, "run_config": run_cfg}
         console.print(f"[bold]Calculator[/bold] {calc_name}")
 
     console.print(
@@ -1213,7 +1262,7 @@ def run_cmd(
         f"heartbeat={run_cfg.heartbeat_seconds}s"
     )
     if (
-        calc_name in {"qe", "qe-epw"}
+        calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}
         and run_cfg.heartbeat_seconds
         and run_cfg.heartbeat_seconds > 0
     ):
@@ -1225,7 +1274,7 @@ def run_cmd(
     # 3b. Desktop walltime bands (qe / qe-epw only; mock unchanged)
     walltime_tracker = None
     walltime_est = None
-    if calc_name in {"qe", "qe-epw"} and getattr(run_cfg, "estimate_walltime", True):
+    if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"} and getattr(run_cfg, "estimate_walltime", True):
         from siscforge.walltime import (
             WalltimeTracker,
             estimate_campaign_walltime,
@@ -1254,7 +1303,7 @@ def run_cmd(
     evaluations: list[CandidateEvaluation] = []
     # Prior successes from this output_dir (for skip-finished).
     # Real QE/EPW must not skip dry-run mock rows (require_real).
-    require_real = calc_name in {"qe", "qe-epw"}
+    require_real = calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}
     resume_by_id, resume_by_fp = (
         store.resume_index(require_real=require_real)
         if run_cfg.resume and not run_cfg.force_rerun

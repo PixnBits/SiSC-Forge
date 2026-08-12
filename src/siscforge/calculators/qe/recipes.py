@@ -4,6 +4,9 @@ When ``jobflow`` is installed, :func:`build_relax_scf_phonon_flow` returns a
 ``Flow``. Execution always goes through :func:`run_relax_scf_phonon`, which
 runs the same steps locally (subprocess) so a full job store is not required
 for workstation Phase-0 use.
+
+P3.1 adds :func:`run_dftu_scf` / :func:`run_dftu_workflow` for sequential
+pw.x DFT+U (Hubbard). Wannier / TRIQS / pairing are later packages.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from siscforge.calculators.qe.parser import (
     parse_relaxed_structure,
 )
 from siscforge.models.config import DFTConfig
-from siscforge.models.results import PhononResult, SCFResult
+from siscforge.models.results import DFTUResult, PhononResult, SCFResult
 
 # Interesting log lines for heartbeat peeks (ph.x / pw.x / epw.x)
 _HEARTBEAT_PEEK_PATTERNS: list[re.Pattern[str]] = [
@@ -65,12 +68,13 @@ class QEStepResult:
 
 @dataclass
 class QEWorkflowResult:
-    """Aggregated relax / SCF / phonon results for one structure."""
+    """Aggregated relax / SCF / phonon / DFT+U results for one structure."""
 
     work_dir: Path
     structure: Structure
     scf: SCFResult | None = None
     phonon: PhononResult | None = None
+    dftu: DFTUResult | None = None
     steps: list[QEStepResult] = field(default_factory=list)
     relaxed_structure: Structure | None = None
     success: bool = False
@@ -286,6 +290,8 @@ def run_pw(
     outdir: Path | None = None,
     extra_system: dict | None = None,
     extra_control: dict | None = None,
+    input_basename: str | None = None,
+    hubbard: bool = False,
 ) -> QEStepResult:
     """Write and run a ``pw.x`` calculation (scf / relax / vc-relax).
 
@@ -294,6 +300,10 @@ def run_pw(
 
     *extra_system* / *extra_control* are merged into the pw.x namelists (e.g.
     ``nosym=.true.`` for a conservative d_matrix recovery SCF).
+
+    When *hubbard* is True, inject DFT+U using exactly one dialect from
+    ``dft.dftu.hubbard_syntax`` (``namelist`` default or ``card``). *input_basename*
+    defaults to *calculation* (e.g. ``scf``, ``dftu``).
     """
     qe_env = qe_env or require_qe(need_phonon=False)
     assert qe_env.pw is not None
@@ -308,18 +318,38 @@ def run_pw(
     if dft.pseudo_dir:
         dft = dft.model_copy(update={"pseudo_dir": str(Path(dft.pseudo_dir).resolve())})
 
+    system_extra = dict(extra_system or {})
+    hubbard_dialect = "namelist"
+    if hubbard:
+        from siscforge.calculators.qe.dftu import hubbard_system_extras
+
+        hubbard_dialect = (dft.dftu.hubbard_syntax or "namelist").lower()
+        system_extra.update(
+            hubbard_system_extras(structure, dft.dftu, syntax=hubbard_dialect)
+        )
+
     pw_in = build_pw_input(
         structure,
         dft,
         calculation=calculation,
         prefix=prefix,
         outdir=str(outdir),
-        extra_system=extra_system,
+        extra_system=system_extra or None,
         extra_control=extra_control,
     )
-    in_path = work_dir / f"{calculation}.in"
-    out_path = work_dir / f"{calculation}.out"
-    write_pw_input(pw_in, in_path)
+    base = input_basename or calculation
+    in_path = work_dir / f"{base}.in"
+    out_path = work_dir / f"{base}.out"
+    if hubbard and hubbard_dialect == "card":
+        # QE ≥ 7.1 HUBBARD card only — no namelist Hubbard_U (dual syntax invalid)
+        from siscforge.calculators.qe.dftu import append_hubbard_card
+        from siscforge.calculators.qe.inputs import write_pw_text
+
+        text = append_hubbard_card(str(pw_in), structure, dft.dftu)
+        write_pw_text(text, in_path)
+    else:
+        # namelist dialect (default) or non-Hubbard: write PWInput as-is
+        write_pw_input(pw_in, in_path)
 
     cmd = [
         *_mpi_prefix(qe_env, config.nproc),
@@ -327,12 +357,17 @@ def run_pw(
         "-in",
         in_path.name,
     ]
+    # Label from *base* (input_basename or calculation) so dftu.in/out steps
+    # are not logged as "pw.x scf" when calculation remains "scf".
     step_label = {
         "vc-relax": "vc-relax (pw.x)",
         "relax": "relax (pw.x)",
         "scf": "SCF (pw.x)",
         "nscf": "NSCF (pw.x)",
-    }.get(calculation, f"pw.x {calculation}")
+        "dftu": "DFT+U SCF (pw.x)",
+    }.get(base, f"pw.x {base}")
+    if hubbard and "DFT+U" not in step_label:
+        step_label = f"DFT+U {base} (pw.x)"
     rc = _run_cmd(
         cmd,
         cwd=work_dir,
@@ -342,7 +377,7 @@ def run_pw(
         heartbeat_eta=_heartbeat_eta_enabled(config),
     )
     ok = rc == 0 and out_path.is_file()
-    msg = f"pw.x {calculation} rc={rc}"
+    msg = f"pw.x {base} rc={rc}"
     if not ok:
         # Include a short tail for debugging
         try:
@@ -351,7 +386,7 @@ def run_pw(
         except OSError:
             pass
     return QEStepResult(
-        name=calculation,
+        name=base,
         work_dir=work_dir,
         returncode=rc,
         stdout_path=out_path,
@@ -1174,12 +1209,248 @@ def build_relax_scf_phonon_flow(
     return Flow(jobs, name=name)
 
 
+
+# ---------------------------------------------------------------------------
+# P3.1 — DFT+U sequential recipe (pw.x Hubbard only; no Wannier/TRIQS)
+# ---------------------------------------------------------------------------
+
+
+def run_dftu_scf(
+    structure: Structure,
+    config: DFTConfig,
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+    qe_env: QEEnvironment | None = None,
+    calculation: str = "scf",
+) -> tuple[QEStepResult, DFTUResult | None]:
+    """Run a single pw.x DFT+U calculation and parse :class:`DFTUResult`.
+
+    Writes ``dftu.in`` / ``dftu.out`` under *work_dir*. Does not require
+    Wannier90 or TRIQS.
+    """
+    from siscforge.calculators.qe.dftu import parse_dftu_output
+
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    qe_env = qe_env or require_qe(need_phonon=False)
+    step = run_pw(
+        structure,
+        config,
+        work_dir,
+        calculation=calculation,
+        prefix=prefix,
+        qe_env=qe_env,
+        hubbard=True,
+        input_basename="dftu",
+    )
+    dftu_result: DFTUResult | None = None
+    if step.stdout_path.is_file():
+        dftu_result = parse_dftu_output(
+            step.stdout_path,
+            dftu=config.dftu,
+            structure=structure,
+            quality_tag=config.quality_tag,
+            extra_raw={
+                "input": str(step.input_path),
+                "returncode": step.returncode,
+                "success": step.success,
+            },
+        )
+        if not step.success and dftu_result.status == "ok":
+            dftu_result = dftu_result.model_copy(update={"status": "failed"})
+        # Persist fingerprint so resume only skips matching U/J/structure
+        if step.success and dftu_result is not None and dftu_result.status == "ok":
+            from siscforge.calculators.qe.dftu import write_dftu_config_sidecar
+
+            write_dftu_config_sidecar(
+                work_dir,
+                structure,
+                config.dftu,
+                dft=config,
+                quality_tag=config.quality_tag,
+                stage="scf",
+            )
+    return step, dftu_result
+
+
+def run_dftu_workflow(
+    structure: Structure,
+    config: DFTConfig,
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+    qe_env: QEEnvironment | None = None,
+    resume_qe_steps: bool | None = None,
+    force_qe_steps: bool | None = None,
+    step_log: list[str] | None = None,
+) -> QEWorkflowResult:
+    """Sequential DFT+U path: optional relax → SCF+U.
+
+    Intended for infinite-layer / perovskite-like small cells. Phonon and EPW
+    are **not** part of this workflow (conventional path remains separate).
+    """
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    qe_env = qe_env or require_qe(need_phonon=False)
+    result = QEWorkflowResult(work_dir=work_dir, structure=structure)
+    current = structure
+    log: list[str] = step_log if step_log is not None else []
+
+    do_resume = _should_resume_qe_steps(config, resume_qe_steps=resume_qe_steps)
+    do_force = _force_qe_steps(config, force_qe_steps=force_qe_steps) or not do_resume
+
+    # Enter the relax stage when global do_relax is on *or* the campaign
+    # explicitly requested U-enabled relaxation (do_relax_with_u), even if
+    # DFTConfig.do_relax is False (reachable from additive DFT+U callers).
+    want_relax = bool(config.do_relax) or bool(
+        getattr(config.dftu, "do_relax_with_u", False)
+    )
+    if want_relax:
+        relax_out = work_dir / "vc-relax.out"
+        use_u = bool(config.dftu.do_relax_with_u)
+        resume_ok = False
+        if do_resume and not do_force and relax_out.is_file():
+            from siscforge.calculators.qe.dftu import dftu_checkpoint_matches
+
+            resume_ok = dftu_checkpoint_matches(
+                work_dir,
+                current,
+                config.dftu,
+                dft=config,
+                quality_tag=config.quality_tag,
+                out_name="vc-relax.out",
+                stage="relax",
+                hubbard_on_relax=use_u,
+            )
+            if not resume_ok:
+                log.append(
+                    "vc-relax checkpoint present but fingerprint mismatch "
+                    "(or missing sidecar) — re-running relax"
+                )
+        if resume_ok:
+            step = _skipped_step(
+                "vc-relax",
+                work_dir,
+                stdout_path=relax_out,
+                message="skip vc-relax (checkpoint)",
+            )
+            result.steps.append(step)
+            log.append("skip vc-relax (checkpoint)")
+            current = _try_read_relaxed_structure(work_dir, current)
+        else:
+            step = run_pw(
+                current,
+                config,
+                work_dir,
+                calculation="vc-relax",
+                prefix=prefix,
+                qe_env=qe_env,
+                hubbard=use_u,
+            )
+            result.steps.append(step)
+            log.append(step.message)
+            if not step.success:
+                result.success = False
+                result.message = step.message
+                if step_log is not None:
+                    step_log[:] = log
+                return result
+            current = _try_read_relaxed_structure(work_dir, current)
+            from siscforge.calculators.qe.dftu import write_dftu_config_sidecar
+
+            write_dftu_config_sidecar(
+                work_dir,
+                structure,
+                config.dftu,
+                dft=config,
+                quality_tag=config.quality_tag,
+                stage="relax",
+                hubbard_on_relax=use_u,
+            )
+        result.relaxed_structure = current
+
+    dftu_out = work_dir / "dftu.out"
+    resume_dftu = False
+    if do_resume and not do_force and dftu_out.is_file():
+        from siscforge.calculators.qe.dftu import dftu_checkpoint_matches
+
+        resume_dftu = dftu_checkpoint_matches(
+            work_dir,
+            current,
+            config.dftu,
+            dft=config,
+            quality_tag=config.quality_tag,
+            out_name="dftu.out",
+            stage="scf",
+        )
+        if not resume_dftu and dftu_out.is_file():
+            log.append(
+                "dftu checkpoint present but config fingerprint mismatch "
+                "(or missing sidecar) — re-running DFT+U"
+            )
+    if resume_dftu:
+        from siscforge.calculators.qe.dftu import parse_dftu_output
+
+        step = _skipped_step(
+            "dftu",
+            work_dir,
+            stdout_path=dftu_out,
+            message="skip dftu (checkpoint)",
+        )
+        result.steps.append(step)
+        log.append("skip dftu (checkpoint)")
+        result.dftu = parse_dftu_output(
+            dftu_out,
+            dftu=config.dftu,
+            structure=current,
+            quality_tag=config.quality_tag,
+            extra_raw={"resumed": True},
+        )
+        result.scf = parse_pw_output(dftu_out, quality_tag=config.quality_tag)
+        result.success = result.dftu.status in {"ok", "mock"}
+        result.message = "DFT+U resumed from checkpoint"
+    else:
+        step, dftu_res = run_dftu_scf(
+            current,
+            config,
+            work_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            calculation="scf",
+        )
+        result.steps.append(step)
+        log.append(step.message)
+        result.dftu = dftu_res
+        if step.stdout_path.is_file():
+            result.scf = parse_pw_output(
+                step.stdout_path, quality_tag=config.quality_tag
+            )
+        result.success = bool(step.success and dftu_res and dftu_res.status == "ok")
+        result.message = step.message if not result.success else "DFT+U SCF ok"
+
+    if step_log is not None:
+        step_log[:] = log
+    return result
+
+
+
 def recipe_info() -> dict[str, Any]:
     """Metadata for documentation / CLI help."""
     return {
-        "steps": ["vc-relax (optional)", "scf", "ph.x DFPT (optional)"],
+        "steps": [
+            "vc-relax (optional)",
+            "scf",
+            "ph.x DFPT (optional)",
+            "dftu SCF+U (optional, P3.1)",
+        ],
         "jobflow": detect_qe_environment().jobflow,
         "qe": detect_qe_environment().available,
         "engine": "quantum-espresso",
-        "models": ["SCFResult", "PhononResult"],
+        "models": ["SCFResult", "PhononResult", "DFTUResult"],
+        "extension_points": {
+            "p3_2": "Wannierization quality metrics after DFT+U",
+            "p3_3": "TRIQS/solid_dmft → DMFTResult",
+            "p3_4": "pairing eigenvalue → performance_score",
+        },
     }

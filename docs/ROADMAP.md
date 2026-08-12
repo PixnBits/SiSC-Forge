@@ -181,7 +181,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 - External: Wannier90, TRIQS, solid_dmft, CTHYB solver, additional training data for correlated systems.
 
 ### Suggested Order of Module Implementation
-1. DFT+U workflow and DFTUResult model.
+1. DFT+U workflow and DFTUResult model. **(P3.1 — this package; see docs/phase3-p31-dftu.md)**
 2. Wannierization pipeline with quality metrics.
 3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser.
 4. Pairing-eigenvalue extraction and mapping onto performance_score.

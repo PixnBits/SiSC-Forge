@@ -11,6 +11,7 @@ from siscforge.calculators.base import BaseCalculator
 from siscforge.calculators.qe.eliashberg import allen_dynes_tc
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.provenance import Provenance
+from siscforge.models.config import DFTConfig
 from siscforge.models.results import (
     ElectronPhononResult,
     PhononResult,
@@ -130,23 +131,57 @@ class MockCalculator(BaseCalculator):
         perf_norm = min(100.0, (performance / 40.0) * 100.0)
         composite = round(0.6 * perf_norm + 0.4 * si.total, 2)
 
+        # P3.1: optional DFT+U mock — inert unless campaign enables it
+        dftu_result = None
+        dft = kwargs.get("dft")
+        enable_dftu = bool(kwargs.get("enable_dftu"))
+        dftu_cfg = None
+        if isinstance(dft, DFTConfig):
+            from siscforge.calculators.qe.dftu import dftu_is_enabled
+
+            enable_dftu = enable_dftu or dftu_is_enabled(dft)
+            dftu_cfg = dft.dftu
+        elif isinstance(dft, dict):
+            enable_dftu = enable_dftu or bool(
+                dft.get("do_dftu") or (dft.get("dftu") or {}).get("enabled")
+            )
+            from siscforge.models.config import DFTUConfig
+
+            raw_u = dft.get("dftu") or {}
+            dftu_cfg = DFTUConfig.model_validate(raw_u) if raw_u else DFTUConfig(enabled=True)
+        if enable_dftu:
+            from siscforge.calculators.qe.dftu import mock_dftu_result
+
+            dftu_result = mock_dftu_result(
+                seed=seed,
+                dftu=dftu_cfg,
+                formula=candidate.formula,
+                material_family=candidate.material_family,
+            )
+
+        notes = "Produced by MockCalculator dry-run path"
+        if dftu_result is not None:
+            notes += f"; DFT+U mock: {dftu_result.summary_line()}"
+
         return CandidateEvaluation(
             candidate=candidate,
             scf=scf,
             phonon=phonon,
             electron_phonon=eph,
+            dftu=dftu_result,
             si_feasibility=si,
             performance_score=performance,
             performance_score_source="mock",
             composite_score=composite,
             status="mock",
             calculator_name=self.name,
-            notes="Produced by MockCalculator dry-run path",
+            notes=notes,
             provenance=Provenance(
                 source="mock_calculator",
                 software={"siscforge": __version__},
                 parent_ids=[candidate.candidate_id],
-                notes="end-to-end mock evaluation",
+                notes="end-to-end mock evaluation"
+                + (" with DFT+U" if dftu_result is not None else ""),
             ),
         )
 

@@ -15,6 +15,7 @@ from siscforge.models.config import (
     CampaignConfig,
     CandidateSpec,
     DFTConfig,
+    DFTUConfig,
     EnumerationConfig,
     EPWConfig,
     FormationFilterConfig,
@@ -29,6 +30,7 @@ from siscforge.models.config import (
 )
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
+    DFTUResult,
     ElectronPhononResult,
     PhononResult,
     SCFResult,
@@ -49,6 +51,8 @@ __all__ = [
     "CandidateEvaluation",
     "CandidateSpec",
     "DFTConfig",
+    "DFTUConfig",
+    "DFTUResult",
     "EPWConfig",
     "ElectronPhononResult",
     "EnumerationConfig",

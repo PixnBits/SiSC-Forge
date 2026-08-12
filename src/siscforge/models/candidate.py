@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
+    DFTUResult,
     ElectronPhononResult,
     PhononResult,
     SCFResult,
@@ -112,6 +113,17 @@ class CandidateEvaluation(BaseModel):
     phonon: PhononResult | None = None
     electron_phonon: ElectronPhononResult | None = None
     """EPW / Eliashberg result (Phase 1); optional on mock path."""
+
+    dftu: DFTUResult | None = None
+    """DFT+U correlated proxy (P3.1). Optional — leave None for conventional
+    nitride/MgB₂ campaigns. Populated only when DFT+U is explicitly enabled
+    (``dft.do_dftu`` / ``dft.dftu.enabled`` / calculator ``qe-dftu``).
+
+    Extension points:
+    - **P3.2** Wannierization quality metrics → ``raw`` / future WannierResult
+    - **P3.3** TRIQS/solid_dmft → parallel ``dmft: DMFTResult | None`` field
+    - **P3.4** pairing eigenvalue → maps into ``performance_score``
+    """
 
     si_feasibility: SiFeasibilityScore | None = None
 

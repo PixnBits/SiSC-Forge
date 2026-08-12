@@ -131,3 +131,4 @@ Thumbs.db
 # Local UPF files (keep README)
 pseudos/**/*.UPF
 pseudos/**/*.upf
+al_state/

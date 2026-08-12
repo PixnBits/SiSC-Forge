@@ -239,8 +239,129 @@ class EPWConfig(BaseModel):
     strict_parallel: bool = False
 
 
+class DFTUConfig(BaseModel):
+    """DFT+U (Hubbard) settings for the unconventional cheap proxy (P3.1).
+
+    **Disabled by default** — existing nitride / MgB₂ / AL examples are
+    unchanged until ``enabled`` is set (or ``DFTConfig.do_dftu`` /
+    calculator ``qe-dftu``).
+
+    Extension points (not implemented here):
+    - **P3.2** Wannierization after DFT+U (quality metrics)
+    - **P3.3** TRIQS / solid_dmft recipe consuming Wannier + this U/J
+    - **P3.4** pairing eigenvalue → ``performance_score``
+    """
+
+    enabled: bool = False
+    """Master switch for DFT+U. Also set via ``dft.do_dftu`` or ``qe-dftu``."""
+
+    U_eV: float = Field(default=4.0, ge=0.0)
+    """Default Hubbard U (eV) applied to every species in ``hubbard_species``
+    that lacks an entry in ``U_by_species``."""
+
+    J_eV: float = Field(default=0.0, ge=0.0)
+    """Default Hund's J (eV). Zero is the simplified rotationally-invariant case."""
+
+    U_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-element U overrides, e.g. ``{Ni: 5.0, Nd: 6.0}``. Values must be ≥ 0."""
+
+    J_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-element J overrides. Values must be ≥ 0."""
+
+    hubbard_species: list[str] = Field(default_factory=list)
+    """Elements receiving Hubbard corrections. Empty → auto-detect correlated
+    metals in the structure (Ni, Cu, Fe, Co, Mn, Cr, V, Ti, rare earths)."""
+
+    hubbard_projectors: Literal["ortho-atomic", "atomic", "pseudo"] = "ortho-atomic"
+    """QE Hubbard projector type.
+
+    * namelist dialect → SYSTEM ``U_projection_type``
+    * card dialect → ``HUBBARD (ortho-atomic)`` header
+    """
+
+    hubbard_manifolds: dict[str, str] = Field(default_factory=dict)
+    """Per-element orbital manifold for the QE ≥7.1 HUBBARD card, e.g.
+    ``{Ni: 3d, O: 2p}``. Required for species without a built-in TM/RE
+    heuristic (p-block oxygen, etc.); avoids silent wrong ``3d`` guesses."""
+
+    lda_plus_u_kind: int = Field(default=0, ge=0, le=1)
+    """0 = simplified (J0), 1 = full Liechtenstein (requires anisotropic J — not
+    expressible via scalar J_eV; use kind 0 or J=0)."""
+
+    nspin: Literal[1, 2, 4] = 2
+    """QE spin polarization: 1 (non-spin), 2 (collinear), or 4 (noncollinear).
+    Value 3 is invalid in pw.x and is rejected at config validation."""
+
+    hubbard_syntax: Literal["namelist", "card"] = "namelist"
+    """Exactly one QE Hubbard input dialect:
+
+    * ``namelist`` — classic ``lda_plus_u`` / ``Hubbard_U(*)`` (QE 6.x–7.x; default)
+    * ``card`` — QE ≥ 7.1 ``HUBBARD (...)`` card only
+
+    Never emit both dialects in one input.
+    """
+
+    starting_magnetization: dict[str, float] = Field(default_factory=dict)
+    """Element → starting magnetization fraction for spin-polarized SCF."""
+
+    default_starting_magnetization: float = Field(default=0.5, ge=-1.0, le=1.0)
+    """Fallback starting magnetization for Hubbard species without overrides."""
+
+    do_relax_with_u: bool = False
+    """If True, run vc-relax under DFT+U before the final SCF+U (heavier).
+
+    Sufficient on its own to enter the relax stage even when ``DFTConfig.do_relax``
+    is False (explicit U-relaxation request).
+    """
+
+    version: str = "0.1"
+
+    @field_validator("U_by_species", "J_by_species")
+    @classmethod
+    def _nonneg_species_maps(cls, v: dict[str, float]) -> dict[str, float]:
+        bad = {k: val for k, val in (v or {}).items() if float(val) < 0.0}
+        if bad:
+            raise ValueError(
+                f"Hubbard per-species values must be ≥ 0; got negative entries {bad}"
+            )
+        return v
+
+    @field_validator("starting_magnetization")
+    @classmethod
+    def _starting_mag_bounds(cls, v: dict[str, float]) -> dict[str, float]:
+        bad = {
+            k: val
+            for k, val in (v or {}).items()
+            if float(val) < -1.0 or float(val) > 1.0
+        }
+        if bad:
+            raise ValueError(
+                f"starting_magnetization values must be in [-1, 1]; got {bad}"
+            )
+        return v
+
+    @field_validator("hubbard_manifolds")
+    @classmethod
+    def _manifold_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        import re
+
+        bad: dict[str, str] = {}
+        out: dict[str, str] = {}
+        for k, val in (v or {}).items():
+            label = str(val).strip()
+            if not re.fullmatch(r"[1-6][spdf]", label):
+                bad[str(k)] = str(val)
+            else:
+                out[str(k)] = label
+        if bad:
+            raise ValueError(
+                "hubbard_manifolds values must look like QE orbital labels "
+                f"(e.g. '3d', '2p', '4f'); got {bad}"
+            )
+        return out
+
 class DFTConfig(BaseModel):
-    engine: Literal["mock", "qe", "qe-epw"] = "mock"
+    engine: Literal["mock", "qe", "qe-epw", "qe-dftu"] = "mock"
     ecutwfc: float = 50.0
     ecutrho: float = 400.0
     kpoints: list[int] = Field(default_factory=lambda: [4, 4, 4])
@@ -269,6 +390,13 @@ class DFTConfig(BaseModel):
     phonon_retry_on_fft_symmetry: bool = True
     do_epw: bool = False
     epw: EPWConfig = Field(default_factory=EPWConfig)
+    # --- P3.1 DFT+U (disabled by default; inert for conventional campaigns) ---
+    do_dftu: bool = False
+    """Enable sequential pw.x DFT+U after (or instead of) the conventional path.
+
+    Equivalent to ``dftu.enabled: true``. Calculator ``qe-dftu`` forces this on.
+    """
+    dftu: DFTUConfig = Field(default_factory=DFTUConfig)
     quality_tag: Literal["screening", "production"] = "screening"
 
 

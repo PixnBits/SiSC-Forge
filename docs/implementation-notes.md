@@ -1,5 +1,95 @@
 # Implementation Notes
 
+## Slice P3.1 (2026-08-11) — DFT+U workflow and DFTUResult model
+
+**Scope**: First vertical slice of the unconventional (nickelate) pathway.
+Adds typed `DFTUResult`, campaign knobs (`dft.do_dftu` / `dft.dftu`, **off by
+default**), QE sequential `pw.x` DFT+U recipe, mock dry-run path, and light
+CSV / synthesis-card export. Conventional nitride / MgB₂ / AL campaigns are
+unchanged when DFT+U is disabled.
+
+| Item | Location |
+|------|----------|
+| Model | `models/results.py` → `DFTUResult` |
+| Evaluation field | `CandidateEvaluation.dftu` (optional) |
+| Config | `DFTUConfig` under `DFTConfig.dftu`; `do_dftu` flag |
+| Helpers | `calculators/qe/dftu.py` |
+| Recipe | `run_dftu_scf`, `run_dftu_workflow` |
+| Calculator | `qe-dftu` / `dftu`; additive on `qe` when enabled |
+| Mock | fills `DFTUResult` only when enabled |
+| Export | `dftu_*` CSV columns + card section |
+| Docs | `docs/phase3-p31-dftu.md` |
+| Example | `examples/ndnio2_dftu_mock.yaml` |
+| Tests | `tests/test_dftu_p31.py` |
+
+**Out of scope**: Wannier (P3.2), TRIQS/DMFT (P3.3), pairing (P3.4),
+O-vacancy (P3.5), mixed AL (P3.6).
+
+### Enable
+
+```yaml
+dft:
+  do_dftu: true
+  dftu:
+    enabled: true
+    U_eV: 5.0
+    hubbard_species: [Ni]
+```
+
+```bash
+siscforge run --dry-run examples/ndnio2_dftu_mock.yaml
+```
+
+---
+
+## Slice P3.1 review fixes (2026-08-11)
+
+Addressed Copilot review on #11:
+
+| Issue | Fix |
+|-------|-----|
+| Explicit `hubbard_species` mismatch silently remapped | Hard error if any listed element missing from structure |
+| `nspin` accepted 3 | `Literal[1, 2, 4]` |
+| Dual Hubbard namelist + HUBBARD card | Exactly one dialect via `hubbard_syntax` (`namelist` default / `card`) |
+| Site moments parsed charge not magn | Regex prefers `magn:` value |
+| Averaged multi-species U/J | Scalar only when all species agree; else `None` + map |
+| `qe` + `do_dftu` + no phonon became dftu-only | dftu-only reserved for `force_dftu` (`qe-dftu`) |
+| Additive DFT+U re-relaxed | `do_relax=False` unless `do_relax_with_u` |
+| CLI `qe-dftu` overwrote explicit phonon/EPW | Respect `model_fields_set` |
+| Workflow untested | Mocked `run_dftu_workflow` + resume + optional real-QE gate |
+| HUBBARD card emitted full `J` for kind 0 | Emit `J0`; reject kind=1 + nonzero scalar J |
+
+---
+
+## Slice P3.1 review round 2 (2026-08-11)
+
+| Issue | Fix |
+|-------|-----|
+| `species_type_index` used site order | Atomic-number order via `qe_atomic_type_symbols` (matches PWInput) |
+| DFT+U checkpoint ignored U/structure | `siscforge_dftu_config.json` fingerprint; mismatch re-runs |
+| `status=ok` without JOB DONE | Require energy **and** JOB DONE |
+| `require_real` missing qe-dftu | Include `qe-dftu`/`dftu` so mock rows are not resumed as real |
+| Calculator params alias order | Exact name first, then QE alias group |
+
+---
+
+## Slice P3.1 review round 5 (2026-08-12)
+
+| Issue | Fix |
+|-------|-----|
+| Namelist used `Hubbard_projectors` | Emit classic SYSTEM `U_projection_type` |
+| Fingerprint missed UPF content | v3: resolved per-species UPF names + sha256 digests |
+| Card dialect silent `3d` for O | `hubbard_manifolds` + hard error for non-TM/RE |
+| `do_relax_with_u` ignored when `do_relax=False` | Enter relax when either flag is true; additive forces `do_relax=True` |
+| `is_metallic` guessed from Fermi/smearing | Leave `None` until gap/DOS parse exists |
+| Empty alias `parameters: {}` fell through to `qe` | Track match separately from map emptiness |
+| Soft real-QE gate | UPF preflight skip; require `status=ok` + energy |
+
+---
+
+
+
+
 ## Slice 28 (2026-08-07) — Phonon `phq_setup` / FFT–symmetry diagnosis + nosym retry
 
 **Scope**: Phonon-map campaigns (`do_epw=false`) were mislabeling

@@ -133,6 +133,102 @@ class ElectronPhononResult(BaseModel):
         return None
 
 
+class DFTUResult(BaseModel):
+    """DFT+U (Hubbard) correlated proxy — Phase 3.1 unconventional pathway.
+
+    Cheap screening result stored alongside SCF/phonon/EPW on a
+    :class:`~siscforge.models.candidate.CandidateEvaluation`. Full DMFT
+    (TRIQS / solid_dmft) and pairing eigenvalues arrive in P3.3–P3.4;
+    Wannierization quality metrics in P3.2.
+
+    This model is intentionally inert for conventional nitride/MgB₂
+    campaigns: leave ``CandidateEvaluation.dftu`` as ``None`` unless
+    DFT+U is explicitly enabled.
+    """
+
+    U_eV: float | None = None
+    """Scalar Hubbard U (eV) when a single effective value is used."""
+
+    J_eV: float | None = None
+    """Scalar Hund's J (eV); 0 for simplified rotationally-invariant DFT+U."""
+
+    U_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-species Hubbard U (eV), e.g. ``{\"Ni\": 5.0}``."""
+
+    J_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-species Hund's J (eV)."""
+
+    hubbard_species: list[str] = Field(default_factory=list)
+    """Species that received Hubbard corrections."""
+
+    hubbard_projectors: str | None = None
+    """Projector type: ``ortho-atomic``, ``atomic``, ``pseudo``, …"""
+
+    occupancy_summary: dict[str, float] = Field(default_factory=dict)
+    """Compact d/f occupancy summary (species or orbital label → electrons)."""
+
+    magnetic_moments: dict[str, float] = Field(default_factory=dict)
+    """Per-site or per-species magnetic moments in μ_B."""
+
+    total_magnetization: float | None = None
+    """Cell total magnetization (μ_B)."""
+
+    absolute_magnetization: float | None = None
+    """Cell absolute magnetization (μ_B)."""
+
+    total_energy_eV: float | None = None
+    """DFT+U total energy in eV."""
+
+    energy_above_hull_eV_per_atom: float | None = None
+    """Optional hull proxy when available."""
+
+    is_metallic: bool | None = None
+    """Whether the DFT+U ground state is metallic."""
+
+    fermi_energy_eV: float | None = None
+    """Fermi energy from the DFT+U SCF (eV)."""
+
+    status: str = "unknown"
+    """Run status: ``ok``, ``failed``, ``mock``, …"""
+
+    quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
+    """Calculation quality tier."""
+
+    raw: dict[str, Any] = Field(default_factory=dict)
+    """Engine-specific extras (input path, parse notes, QE version, …)."""
+
+    provenance: Provenance = Field(default_factory=Provenance)
+
+    def summary_line(self) -> str:
+        """Short human-readable summary for cards / CLI."""
+        bits: list[str] = []
+        if self.U_eV is not None:
+            bits.append(f"U={self.U_eV:g} eV")
+        elif self.U_by_species:
+            u_bits = ",".join(f"{k}:{v:g}" for k, v in sorted(self.U_by_species.items()))
+            bits.append(f"U=[{u_bits}] eV")
+        if self.J_eV is not None and self.J_eV > 0:
+            bits.append(f"J={self.J_eV:g} eV")
+        elif self.J_eV is None and self.J_by_species and any(
+            v > 0 for v in self.J_by_species.values()
+        ):
+            j_bits = ",".join(
+                f"{k}:{v:g}" for k, v in sorted(self.J_by_species.items()) if v > 0
+            )
+            bits.append(f"J=[{j_bits}] eV")
+        if self.total_magnetization is not None:
+            bits.append(f"M={self.total_magnetization:g} μB")
+        if self.occupancy_summary:
+            occ = ",".join(
+                f"{k}={v:g}" for k, v in sorted(self.occupancy_summary.items())[:4]
+            )
+            bits.append(f"occ({occ})")
+        if self.total_energy_eV is not None:
+            bits.append(f"E={self.total_energy_eV:.4f} eV")
+        bits.append(f"status={self.status}")
+        return "; ".join(bits) if bits else f"status={self.status}"
+
+
 class SiFeasibilityComponents(BaseModel):
     """Individual terms that feed the composite Silicon Feasibility Score.
 

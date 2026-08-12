@@ -122,6 +122,15 @@ def write_pw_input(pw_input: PWInput, path: Path | str) -> Path:
     return path
 
 
+def write_pw_text(text: str, path: Path | str) -> Path:
+    """Write raw pw.x input text (e.g. after HUBBARD card injection)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = text if text.endswith("\n") else text + "\n"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
 def uniform_crystal_kpoints(nk1: int, nk2: int, nk3: int) -> list[tuple[float, float, float, float]]:
     """Uniform Γ-centered mesh in crystal coordinates (EPW NSCF convention).
 
