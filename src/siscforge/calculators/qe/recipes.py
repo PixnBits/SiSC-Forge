@@ -1265,7 +1265,9 @@ def run_dftu_scf(
                 work_dir,
                 structure,
                 config.dftu,
+                dft=config,
                 quality_tag=config.quality_tag,
+                stage="scf",
             )
     return step, dftu_result
 
@@ -1298,13 +1300,26 @@ def run_dftu_workflow(
 
     if config.do_relax:
         relax_out = work_dir / "vc-relax.out"
+        use_u = bool(config.dftu.do_relax_with_u)
         resume_ok = False
         if do_resume and not do_force and relax_out.is_file():
-            try:
-                body = relax_out.read_text(encoding="utf-8", errors="replace")
-                resume_ok = "JOB DONE" in body.upper()
-            except OSError:
-                resume_ok = False
+            from siscforge.calculators.qe.dftu import dftu_checkpoint_matches
+
+            resume_ok = dftu_checkpoint_matches(
+                work_dir,
+                current,
+                config.dftu,
+                dft=config,
+                quality_tag=config.quality_tag,
+                out_name="vc-relax.out",
+                stage="relax",
+                hubbard_on_relax=use_u,
+            )
+            if not resume_ok:
+                log.append(
+                    "vc-relax checkpoint present but fingerprint mismatch "
+                    "(or missing sidecar) — re-running relax"
+                )
         if resume_ok:
             step = _skipped_step(
                 "vc-relax",
@@ -1316,7 +1331,6 @@ def run_dftu_workflow(
             log.append("skip vc-relax (checkpoint)")
             current = _try_read_relaxed_structure(work_dir, current)
         else:
-            use_u = bool(config.dftu.do_relax_with_u)
             step = run_pw(
                 current,
                 config,
@@ -1335,6 +1349,17 @@ def run_dftu_workflow(
                     step_log[:] = log
                 return result
             current = _try_read_relaxed_structure(work_dir, current)
+            from siscforge.calculators.qe.dftu import write_dftu_config_sidecar
+
+            write_dftu_config_sidecar(
+                work_dir,
+                structure,
+                config.dftu,
+                dft=config,
+                quality_tag=config.quality_tag,
+                stage="relax",
+                hubbard_on_relax=use_u,
+            )
         result.relaxed_structure = current
 
     dftu_out = work_dir / "dftu.out"
@@ -1346,8 +1371,10 @@ def run_dftu_workflow(
             work_dir,
             current,
             config.dftu,
+            dft=config,
             quality_tag=config.quality_tag,
             out_name="dftu.out",
+            stage="scf",
         )
         if not resume_dftu and dftu_out.is_file():
             log.append(

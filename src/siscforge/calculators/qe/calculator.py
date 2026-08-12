@@ -492,8 +492,23 @@ class QEDftuCalculator(QECalculator):
         dft: DFTConfig | None = None,
         work_root: str | Path | None = None,
     ) -> None:
-        base = dft or DFTConfig(engine="qe-dftu", do_phonon=False, do_epw=False)
-        if not base.do_dftu:
+        # When callers pass DFTConfig() the model default is do_phonon=True.
+        # Only force phonon/EPW off when those fields were not explicitly set —
+        # same contract as the CLI qe-dftu path (model_fields_set).
+        if dft is None:
+            base = DFTConfig(engine="qe-dftu", do_phonon=False, do_epw=False)
+        else:
+            base = dft
+            fields = set(getattr(base, "model_fields_set", set()) or set())
+            updates: dict = {}
+            if "do_phonon" not in fields:
+                updates["do_phonon"] = False
+            if "do_epw" not in fields and "epw" not in fields:
+                updates["do_epw"] = False
+                updates["epw"] = base.epw.model_copy(update={"enabled": False})
+            if updates:
+                base = base.model_copy(update=updates)
+        if not base.do_dftu or base.engine != "qe-dftu":
             base = base.model_copy(
                 update={
                     "do_dftu": True,

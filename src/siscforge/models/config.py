@@ -263,10 +263,10 @@ class DFTUConfig(BaseModel):
     """Default Hund's J (eV). Zero is the simplified rotationally-invariant case."""
 
     U_by_species: dict[str, float] = Field(default_factory=dict)
-    """Per-element U overrides, e.g. ``{Ni: 5.0, Nd: 6.0}``."""
+    """Per-element U overrides, e.g. ``{Ni: 5.0, Nd: 6.0}``. Values must be ≥ 0."""
 
     J_by_species: dict[str, float] = Field(default_factory=dict)
-    """Per-element J overrides."""
+    """Per-element J overrides. Values must be ≥ 0."""
 
     hubbard_species: list[str] = Field(default_factory=list)
     """Elements receiving Hubbard corrections. Empty → auto-detect correlated
@@ -302,6 +302,30 @@ class DFTUConfig(BaseModel):
     """If True, run vc-relax under DFT+U before the final SCF+U (heavier)."""
 
     version: str = "0.1"
+
+    @field_validator("U_by_species", "J_by_species")
+    @classmethod
+    def _nonneg_species_maps(cls, v: dict[str, float]) -> dict[str, float]:
+        bad = {k: val for k, val in (v or {}).items() if float(val) < 0.0}
+        if bad:
+            raise ValueError(
+                f"Hubbard per-species values must be ≥ 0; got negative entries {bad}"
+            )
+        return v
+
+    @field_validator("starting_magnetization")
+    @classmethod
+    def _starting_mag_bounds(cls, v: dict[str, float]) -> dict[str, float]:
+        bad = {
+            k: val
+            for k, val in (v or {}).items()
+            if float(val) < -1.0 or float(val) > 1.0
+        }
+        if bad:
+            raise ValueError(
+                f"starting_magnetization values must be in [-1, 1]; got {bad}"
+            )
+        return v
 
 
 class DFTConfig(BaseModel):

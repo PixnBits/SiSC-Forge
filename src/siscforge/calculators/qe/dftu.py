@@ -496,33 +496,84 @@ def mock_dftu_result(
 
 
 # ---------------------------------------------------------------------------
-# DFT+U checkpoint fingerprint (structure + U/J/projectors)
+# DFT+U checkpoint fingerprint (structure + calc settings + U/J)
 # ---------------------------------------------------------------------------
 
 DFTU_CONFIG_SIDECAR = "siscforge_dftu_config.json"
+DFTU_RELAX_SIDECAR = "siscforge_dftu_relax.json"
+
+
+def _structure_geometry_fp(structure: Structure) -> dict[str, Any]:
+    """Full cell geometry for resume gates (lattice + fractional sites)."""
+    lat = structure.lattice
+    sites: list[dict[str, Any]] = []
+    for site in structure:
+        sites.append(
+            {
+                "el": str(site.specie.symbol),
+                "frac": [round(float(x), 6) for x in site.frac_coords],
+            }
+        )
+    return {
+        "formula": structure.composition.reduced_formula,
+        "nsites": len(structure),
+        "elements": sorted({str(sp.symbol) for sp in structure.composition.elements}),
+        "lattice_abc": [round(float(x), 6) for x in (lat.a, lat.b, lat.c)],
+        "lattice_angles": [
+            round(float(x), 4) for x in (lat.alpha, lat.beta, lat.gamma)
+        ],
+        "sites": sites,
+    }
+
+
+def _dft_calc_fp(dft: DFTConfig | None) -> dict[str, Any]:
+    """Calculation-affecting DFTConfig fields (k-mesh, cutoffs, pseudos, …)."""
+    if dft is None:
+        return {}
+    return {
+        "ecutwfc": float(dft.ecutwfc),
+        "ecutrho": float(dft.ecutrho),
+        "kpoints": [int(x) for x in (dft.kpoints or [])],
+        "conv_thr": float(dft.conv_thr),
+        "forc_conv_thr": float(dft.forc_conv_thr),
+        "press_conv_thr": float(dft.press_conv_thr),
+        "occupations": str(dft.occupations),
+        "smearing": str(dft.smearing),
+        "degauss": float(dft.degauss),
+        "nbnd": dft.nbnd,
+        "pseudo_dir": dft.pseudo_dir,
+        "pseudopotentials": {
+            str(k): str(v) for k, v in sorted((dft.pseudopotentials or {}).items())
+        },
+        "do_relax": bool(dft.do_relax),
+        "quality_tag": str(dft.quality_tag),
+    }
 
 
 def dftu_config_fingerprint(
     structure: Structure,
     dftu: DFTUConfig,
     *,
-    quality_tag: str = "screening",
+    dft: DFTConfig | None = None,
+    quality_tag: str | None = None,
+    stage: str = "scf",
+    hubbard_on_relax: bool | None = None,
 ) -> dict[str, Any]:
-    """Stable fingerprint of Hubbard settings + composition for resume gates.
+    """Fingerprint of structure + Hubbard + DFT settings for resume gates.
 
-    Changing U, J, projectors, spin, syntax, or cell composition invalidates
-    a prior ``dftu.out`` checkpoint so we never re-label old energy as new U.
+    Version 2 includes fractional coordinates and calculation-affecting
+    ``DFTConfig`` fields so changes to k-points, cutoffs, occupations,
+    pseudopotentials, starting magnetization, or atomic positions invalidate
+    checkpoints. ``stage`` is ``\"scf\"`` or ``\"relax\"``.
     """
     species, u_map, j_map = resolve_u_j_maps(structure, dftu)
-    # Round lattice for stable JSON compare across float noise
-    lat = structure.lattice
-    return {
-        "version": 1,
-        "formula": structure.composition.reduced_formula,
-        "nsites": len(structure),
-        "elements": sorted({str(sp.symbol) for sp in structure.composition.elements}),
-        "lattice_abc": [round(float(x), 6) for x in (lat.a, lat.b, lat.c)],
-        "lattice_angles": [round(float(x), 4) for x in (lat.alpha, lat.beta, lat.gamma)],
+    qtag = quality_tag if quality_tag is not None else (
+        str(dft.quality_tag) if dft is not None else "screening"
+    )
+    payload: dict[str, Any] = {
+        "version": 2,
+        "stage": stage,
+        **_structure_geometry_fp(structure),
         "hubbard_species": list(species),
         "U_by_species": {k: round(float(v), 6) for k, v in sorted(u_map.items())},
         "J_by_species": {k: round(float(v), 6) for k, v in sorted(j_map.items())},
@@ -530,8 +581,24 @@ def dftu_config_fingerprint(
         "lda_plus_u_kind": int(dftu.lda_plus_u_kind),
         "nspin": int(dftu.nspin),
         "hubbard_syntax": getattr(dftu, "hubbard_syntax", "namelist"),
-        "quality_tag": quality_tag,
+        "starting_magnetization": {
+            str(k): round(float(v), 6)
+            for k, v in sorted((dftu.starting_magnetization or {}).items())
+        },
+        "default_starting_magnetization": round(
+            float(dftu.default_starting_magnetization), 6
+        ),
+        "do_relax_with_u": bool(dftu.do_relax_with_u),
+        "quality_tag": qtag,
+        "dft": _dft_calc_fp(dft),
     }
+    if stage == "relax":
+        payload["hubbard_on_relax"] = (
+            bool(hubbard_on_relax)
+            if hubbard_on_relax is not None
+            else bool(dftu.do_relax_with_u)
+        )
+    return payload
 
 
 def write_dftu_config_sidecar(
@@ -539,14 +606,28 @@ def write_dftu_config_sidecar(
     structure: Structure,
     dftu: DFTUConfig,
     *,
-    quality_tag: str = "screening",
+    dft: DFTConfig | None = None,
+    quality_tag: str | None = None,
+    stage: str = "scf",
+    hubbard_on_relax: bool | None = None,
+    sidecar_name: str | None = None,
 ) -> Path:
-    """Persist fingerprint next to dftu.out after a successful DFT+U run."""
+    """Persist fingerprint next to dftu.out / vc-relax.out after a successful step."""
     import json
 
     work_dir = Path(work_dir)
-    path = work_dir / DFTU_CONFIG_SIDECAR
-    payload = dftu_config_fingerprint(structure, dftu, quality_tag=quality_tag)
+    name = sidecar_name or (
+        DFTU_RELAX_SIDECAR if stage == "relax" else DFTU_CONFIG_SIDECAR
+    )
+    path = work_dir / name
+    payload = dftu_config_fingerprint(
+        structure,
+        dftu,
+        dft=dft,
+        quality_tag=quality_tag,
+        stage=stage,
+        hubbard_on_relax=hubbard_on_relax,
+    )
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
@@ -556,15 +637,22 @@ def dftu_checkpoint_matches(
     structure: Structure,
     dftu: DFTUConfig,
     *,
-    quality_tag: str = "screening",
+    dft: DFTConfig | None = None,
+    quality_tag: str | None = None,
     out_name: str = "dftu.out",
+    stage: str = "scf",
+    hubbard_on_relax: bool | None = None,
+    sidecar_name: str | None = None,
 ) -> bool:
-    """True when dftu.out is JOB DONE and sidecar matches current config."""
+    """True when output is JOB DONE and sidecar matches current config/structure."""
     import json
 
     work_dir = Path(work_dir)
     out = work_dir / out_name
-    side = work_dir / DFTU_CONFIG_SIDECAR
+    name = sidecar_name or (
+        DFTU_RELAX_SIDECAR if stage == "relax" else DFTU_CONFIG_SIDECAR
+    )
+    side = work_dir / name
     if not out.is_file() or not side.is_file():
         return False
     try:
@@ -577,5 +665,12 @@ def dftu_checkpoint_matches(
         saved = json.loads(side.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    expected = dftu_config_fingerprint(structure, dftu, quality_tag=quality_tag)
+    expected = dftu_config_fingerprint(
+        structure,
+        dftu,
+        dft=dft,
+        quality_tag=quality_tag,
+        stage=stage,
+        hubbard_on_relax=hubbard_on_relax,
+    )
     return saved == expected

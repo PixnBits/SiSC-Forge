@@ -480,7 +480,7 @@ def test_run_dftu_workflow_resume_checkpoint(
         quality_tag="screening",
     )
     (work / "dftu.out").write_text(FIXTURE_DFTU.read_text(encoding="utf-8"), encoding="utf-8")
-    write_dftu_config_sidecar(work, s, cfg.dftu, quality_tag=cfg.quality_tag)
+    write_dftu_config_sidecar(work, s, cfg.dftu, dft=cfg, quality_tag=cfg.quality_tag)
 
     def boom(*_a, **_k):
         raise AssertionError("run_pw should not be called on checkpoint resume")
@@ -510,7 +510,7 @@ def test_run_dftu_workflow_resume_rejects_u_mismatch(
     work.mkdir()
     old_cfg_u = DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=5.0)
     (work / "dftu.out").write_text(FIXTURE_DFTU.read_text(encoding="utf-8"), encoding="utf-8")
-    write_dftu_config_sidecar(work, s, old_cfg_u, quality_tag="screening")
+    write_dftu_config_sidecar(work, s, old_cfg_u, dft=DFTConfig(do_relax=False, do_dftu=True, dftu=old_cfg_u, quality_tag="screening"), quality_tag="screening")
 
     calls = {"n": 0}
 
@@ -590,6 +590,38 @@ def test_parse_incomplete_scf_not_ok() -> None:
     __import__("os").environ.get("SISCFORGE_RUN_QE") != "1",
     reason="Set SISCFORGE_RUN_QE=1 with pw.x on PATH for real DFT+U",
 )
+
+
+def test_qedftu_calculator_defaults_phonon_off_with_plain_dftconfig() -> None:
+    from siscforge.calculators.qe.calculator import QEDftuCalculator
+    calc = QEDftuCalculator(dft=DFTConfig())
+    assert calc.dft.do_phonon is False
+    assert calc.dft.do_epw is False
+    assert calc.dft.do_dftu is True
+    calc2 = QEDftuCalculator(dft=DFTConfig(do_phonon=True))
+    assert calc2.dft.do_phonon is True
+
+
+def test_negative_u_by_species_rejected() -> None:
+    with pytest.raises(ValidationError):
+        DFTUConfig(U_by_species={"Ni": -1.0})
+    with pytest.raises(ValidationError):
+        DFTUConfig(J_by_species={"Ni": -0.5})
+
+
+def test_fingerprint_includes_kpoints_and_sites() -> None:
+    from siscforge.calculators.qe.dftu import dftu_config_fingerprint
+    s = build_binary_nitride("Nb")
+    dftu = DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=5.0)
+    dft_a = DFTConfig(kpoints=[4, 4, 4], ecutwfc=50.0, dftu=dftu)
+    dft_b = DFTConfig(kpoints=[2, 2, 2], ecutwfc=50.0, dftu=dftu)
+    fa = dftu_config_fingerprint(s, dftu, dft=dft_a, stage="scf")
+    fb = dftu_config_fingerprint(s, dftu, dft=dft_b, stage="scf")
+    assert fa != fb
+    assert fa["version"] == 2
+    assert "sites" in fa
+
+
 def test_real_qe_dftu_optional(tmp_path: Path) -> None:
     """Optional real-QE gate (same pattern as NbN phonon golden)."""
     from siscforge.calculators.qe.env import qe_available
