@@ -357,15 +357,17 @@ def run_pw(
         "-in",
         in_path.name,
     ]
+    # Label from *base* (input_basename or calculation) so dftu.in/out steps
+    # are not logged as "pw.x scf" when calculation remains "scf".
     step_label = {
         "vc-relax": "vc-relax (pw.x)",
         "relax": "relax (pw.x)",
         "scf": "SCF (pw.x)",
         "nscf": "NSCF (pw.x)",
         "dftu": "DFT+U SCF (pw.x)",
-    }.get(base, f"pw.x {calculation}")
+    }.get(base, f"pw.x {base}")
     if hubbard and "DFT+U" not in step_label:
-        step_label = f"DFT+U {calculation} (pw.x)"
+        step_label = f"DFT+U {base} (pw.x)"
     rc = _run_cmd(
         cmd,
         cwd=work_dir,
