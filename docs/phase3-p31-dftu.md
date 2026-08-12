@@ -34,8 +34,10 @@ dft:
     U_eV: 5.0
     J_eV: 0.8
     hubbard_species: [Ni]
-    hubbard_projectors: ortho-atomic
-    hubbard_syntax: namelist   # or card (QE ≥ 7.1); never both
+    hubbard_projectors: ortho-atomic   # namelist → U_projection_type; card → HUBBARD (…)
+    hubbard_syntax: namelist           # or card (QE ≥ 7.1); never both
+    # hubbard_manifolds: {O: 2p}       # required for non-TM/RE on card dialect
+    # do_relax_with_u: true            # U-relax even if dft.do_relax is false
 ```
 
 Or calculator choice:

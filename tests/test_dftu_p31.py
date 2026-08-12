@@ -241,6 +241,9 @@ def test_hubbard_input_injection_namelist(tmp_path: Path) -> None:
     extras = hubbard_system_extras(s, dft.dftu, syntax="namelist")
     assert extras["lda_plus_u"] is True
     assert extras["nspin"] == 2
+    # Classic SYSTEM namelist uses U_projection_type, not Hubbard_projectors.
+    assert extras["U_projection_type"] == "ortho-atomic"
+    assert "Hubbard_projectors" not in extras
     assert any(k.startswith("Hubbard_U") for k in extras)
     assert any(k.startswith("Hubbard_J0") for k in extras)
     pw = build_pw_input(s, dft, calculation="scf", extra_system=extras)
@@ -248,6 +251,7 @@ def test_hubbard_input_injection_namelist(tmp_path: Path) -> None:
     assert "HUBBARD" not in text  # namelist dialect only
     lower = text.lower()
     assert "lda_plus_u" in lower or "hubbard_u" in lower
+    assert "u_projection_type" in lower
 
 
 def test_hubbard_input_injection_card_only(tmp_path: Path) -> None:
@@ -612,8 +616,155 @@ def test_fingerprint_includes_kpoints_and_sites() -> None:
     fa = dftu_config_fingerprint(s, dftu, dft=dft_a, stage="scf")
     fb = dftu_config_fingerprint(s, dftu, dft=dft_b, stage="scf")
     assert fa != fb
-    assert fa["version"] == 2
+    assert fa["version"] == 3
     assert "sites" in fa
+    assert "pseudos_resolved" in fa["dft"]
+
+
+def test_fingerprint_changes_with_upf_content(tmp_path: Path) -> None:
+    """In-place UPF replacement must invalidate the resume fingerprint."""
+    from siscforge.calculators.qe.dftu import dftu_config_fingerprint
+
+    s = build_binary_nitride("Nb")
+    dftu = DFTUConfig(enabled=True, hubbard_species=["Nb"], U_eV=5.0)
+    (tmp_path / "Nb.upf").write_text("UPF-A\n", encoding="utf-8")
+    (tmp_path / "N.upf").write_text("UPF-N\n", encoding="utf-8")
+    dft = DFTConfig(
+        kpoints=[2, 2, 2],
+        ecutwfc=40.0,
+        dftu=dftu,
+        pseudo_dir=str(tmp_path),
+        pseudopotentials={"Nb": "Nb.upf", "N": "N.upf"},
+    )
+    fa = dftu_config_fingerprint(s, dftu, dft=dft, stage="scf")
+    (tmp_path / "Nb.upf").write_text("UPF-B-CHANGED\n", encoding="utf-8")
+    fb = dftu_config_fingerprint(s, dftu, dft=dft, stage="scf")
+    assert fa != fb
+    assert fa["dft"]["pseudos_resolved"]["resolved"]["Nb"]["sha256"] != (
+        fb["dft"]["pseudos_resolved"]["resolved"]["Nb"]["sha256"]
+    )
+
+
+def test_namelist_uses_u_projection_type_not_hubbard_projectors() -> None:
+    s = build_binary_nitride("Nb")
+    extras = hubbard_system_extras(
+        s,
+        DFTUConfig(
+            enabled=True,
+            hubbard_species=["Nb"],
+            hubbard_projectors="atomic",
+            hubbard_syntax="namelist",
+        ),
+        syntax="namelist",
+    )
+    assert extras["U_projection_type"] == "atomic"
+    assert "Hubbard_projectors" not in extras
+
+
+def test_card_manifold_requires_explicit_for_oxygen() -> None:
+    from pymatgen.core import Lattice, Structure
+
+    from siscforge.calculators.qe.dftu import append_hubbard_card
+
+    # Minimal oxide-like cell with Ni + O
+    lat = Lattice.cubic(4.0)
+    s = Structure(
+        lat,
+        ["Ni", "O"],
+        [[0, 0, 0], [0.5, 0.5, 0.5]],
+    )
+    dftu_bad = DFTUConfig(
+        enabled=True,
+        hubbard_species=["Ni", "O"],
+        hubbard_syntax="card",
+        U_eV=5.0,
+    )
+    with pytest.raises(ValueError, match="manifold"):
+        append_hubbard_card(" &control\n /\n", s, dftu_bad)
+
+    dftu_ok = DFTUConfig(
+        enabled=True,
+        hubbard_species=["Ni", "O"],
+        hubbard_syntax="card",
+        hubbard_manifolds={"O": "2p"},
+        U_eV=5.0,
+    )
+    text = append_hubbard_card(" &control\n /\n", s, dftu_ok)
+    assert "U Ni-3d" in text
+    assert "U O-2p" in text
+
+
+def test_is_metallic_left_unknown_on_parse() -> None:
+    fixture = Path(__file__).parent / "fixtures" / "qe" / "pw_dftu_snippet.out"
+    text = fixture.read_text(encoding="utf-8")
+    # Inject fermi + smearing markers that previously forced is_metallic=True
+    text = (
+        text
+        + "\n     the Fermi energy is    5.1234 ev\n"
+        + "     occupations = 'smearing'\n"
+    )
+    result = parse_dftu_output(
+        text, dftu=DFTUConfig(enabled=True, U_eV=4.0, hubbard_species=["Ni"])
+    )
+    assert result.is_metallic is None
+
+
+def test_do_relax_with_u_runs_without_global_do_relax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """do_relax_with_u alone must enter the vc-relax stage."""
+    from siscforge.calculators.qe import recipes as recipes_mod
+    from siscforge.calculators.qe.recipes import QEStepResult, run_dftu_workflow
+
+    s = build_binary_nitride("Nb")
+    fixture = FIXTURE_DFTU.read_text(encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_run_pw(structure, config, work_dir, *, calculation="scf", **kwargs):
+        work_dir = Path(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        calls.append(calculation)
+        base = kwargs.get("input_basename") or calculation
+        if calculation == "vc-relax":
+            base = "vc-relax"
+        out = work_dir / f"{base}.out"
+        out.write_text(fixture, encoding="utf-8")
+        inp = work_dir / f"{base}.in"
+        inp.write_text("! mock\n", encoding="utf-8")
+        return QEStepResult(
+            name=str(base),
+            work_dir=work_dir,
+            returncode=0,
+            stdout_path=out,
+            input_path=inp,
+            success=True,
+            message=f"pw.x {base} rc=0",
+        )
+
+    monkeypatch.setattr(recipes_mod, "run_pw", fake_run_pw)
+    monkeypatch.setattr(
+        recipes_mod,
+        "require_qe",
+        lambda **kw: type(
+            "E", (), {"pw": "/bin/true", "ph": None, "epw": None, "mpirun": None}
+        )(),
+    )
+    cfg = DFTConfig(
+        do_relax=False,
+        do_phonon=False,
+        do_dftu=True,
+        dftu=DFTUConfig(
+            enabled=True,
+            hubbard_species=["Nb"],
+            U_eV=4.0,
+            do_relax_with_u=True,
+        ),
+        quality_tag="screening",
+    )
+    result = run_dftu_workflow(s, cfg, tmp_path / "u_relax", prefix="t")
+    assert "vc-relax" in calls
+    assert any(c == "scf" for c in calls)
+    assert result.dftu is not None
 
 
 @pytest.mark.skipif(
@@ -621,14 +772,29 @@ def test_fingerprint_includes_kpoints_and_sites() -> None:
     reason="Set SISCFORGE_RUN_QE=1 with pw.x on PATH for real DFT+U",
 )
 def test_real_qe_dftu_optional(tmp_path: Path) -> None:
-    """Optional real-QE gate (same pattern as NbN phonon golden)."""
+    """Optional real-QE gate (same pattern as NbN phonon golden).
+
+    Preflight: skip when UPFs cannot be resolved. Then require a successful
+    SCF so this gate actually validates the real Hubbard input dialect.
+    """
     from siscforge.calculators.qe.env import qe_available
+    from siscforge.calculators.qe.pseudos import (
+        PseudoResolutionError,
+        resolve_pseudopotentials,
+    )
     from siscforge.calculators.qe.recipes import run_dftu_workflow
 
     if not qe_available():
         pytest.skip("pw.x not available")
     s = build_binary_nitride("Nb")
     pseudo = Path(__file__).resolve().parents[1] / "pseudos"
+    # Prefer screening subdir if present
+    for candidate in (pseudo / "screening", pseudo):
+        if candidate.is_dir() and any(candidate.glob("*.upf")) or any(
+            candidate.glob("*.UPF")
+        ):
+            pseudo = candidate
+            break
     cfg = DFTConfig(
         do_relax=False,
         do_phonon=False,
@@ -639,6 +805,14 @@ def test_real_qe_dftu_optional(tmp_path: Path) -> None:
         pseudo_dir=str(pseudo) if pseudo.is_dir() else None,
         quality_tag="screening",
     )
+    try:
+        resolve_pseudopotentials(s, cfg)
+    except PseudoResolutionError as exc:
+        pytest.skip(f"UPFs not available for real DFT+U: {exc}")
     result = run_dftu_workflow(s, cfg, tmp_path / "real_dftu", prefix="t")
-    # Soft: may fail without UPFs; just ensure workflow returns a result object
-    assert result.dftu is not None or result.message
+    assert result.dftu is not None, result.message
+    assert result.dftu.status == "ok", (
+        f"real DFT+U did not succeed: status={result.dftu.status} "
+        f"message={result.message!r} energy={result.dftu.total_energy_eV}"
+    )
+    assert result.dftu.total_energy_eV is not None

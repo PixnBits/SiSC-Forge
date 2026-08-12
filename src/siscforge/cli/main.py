@@ -1061,9 +1061,13 @@ def run_cmd(
     # Prefer exact calculator name, then same-family aliases, then any QE entry.
     # When the CLI selects ``dftu``, prefer an explicit ``qe-dftu``/``dftu``
     # campaign entry over a generic ``qe`` so per-calculator parameters win.
+    # Track match separately from map emptiness: an explicit alias with
+    # ``parameters: {}`` must not fall through to a sibling ``qe`` entry.
+    calc_params_matched = False
     for c in config.calculators:
         if c.name == calc_name:
             calc_params = dict(c.parameters)
+            calc_params_matched = True
             break
     else:
         dftu_aliases = {"qe-dftu", "dftu"}
@@ -1078,11 +1082,13 @@ def run_cmd(
             for c in config.calculators:
                 if c.name in preferred:
                     calc_params = dict(c.parameters)
+                    calc_params_matched = True
                     break
-        if not calc_params and calc_name in qe_aliases:
+        if not calc_params_matched and calc_name in qe_aliases:
             for c in config.calculators:
                 if c.name in qe_aliases:
                     calc_params = dict(c.parameters)
+                    calc_params_matched = True
                     break
 
     if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu"}:

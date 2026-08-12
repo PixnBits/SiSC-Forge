@@ -195,9 +195,12 @@ class QECalculator(BaseCalculator):
             if want_dftu:
                 dftu_dir = cand_dir / "dftu"
                 # Conventional path already relaxed (if configured). Only re-relax
-                # under U when dftu.do_relax_with_u is explicitly enabled.
-                dft_u = dft
-                if not dft.dftu.do_relax_with_u:
+                # under U when dftu.do_relax_with_u is explicitly enabled — and
+                # force do_relax=True in that case so the stage is entered even
+                # when the campaign-level do_relax is False.
+                if dft.dftu.do_relax_with_u:
+                    dft_u = dft.model_copy(update={"do_relax": True})
+                else:
                     dft_u = dft.model_copy(update={"do_relax": False})
                 dftu_base = run_dftu_workflow(
                     structure if wf.relaxed_structure is None else wf.relaxed_structure,
@@ -238,9 +241,12 @@ class QECalculator(BaseCalculator):
                 dftu_dir = cand_dir / "dftu"
                 struct_for_u = base.relaxed_structure or structure
                 # Conventional path already relaxed (if configured). Only re-relax
-                # under U when dftu.do_relax_with_u is explicitly enabled.
-                dft_u = dft
-                if not dft.dftu.do_relax_with_u:
+                # under U when dftu.do_relax_with_u is explicitly enabled — and
+                # force do_relax=True in that case so the stage is entered even
+                # when the campaign-level do_relax is False.
+                if dft.dftu.do_relax_with_u:
+                    dft_u = dft.model_copy(update={"do_relax": True})
+                else:
                     dft_u = dft.model_copy(update={"do_relax": False})
                 dftu_base = run_dftu_workflow(
                     struct_for_u,

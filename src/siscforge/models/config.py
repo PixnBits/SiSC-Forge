@@ -273,7 +273,16 @@ class DFTUConfig(BaseModel):
     metals in the structure (Ni, Cu, Fe, Co, Mn, Cr, V, Ti, rare earths)."""
 
     hubbard_projectors: Literal["ortho-atomic", "atomic", "pseudo"] = "ortho-atomic"
-    """QE Hubbard projector type (``Hubbard_projectors`` / HUBBARD card)."""
+    """QE Hubbard projector type.
+
+    * namelist dialect → SYSTEM ``U_projection_type``
+    * card dialect → ``HUBBARD (ortho-atomic)`` header
+    """
+
+    hubbard_manifolds: dict[str, str] = Field(default_factory=dict)
+    """Per-element orbital manifold for the QE ≥7.1 HUBBARD card, e.g.
+    ``{Ni: 3d, O: 2p}``. Required for species without a built-in TM/RE
+    heuristic (p-block oxygen, etc.); avoids silent wrong ``3d`` guesses."""
 
     lda_plus_u_kind: int = Field(default=0, ge=0, le=1)
     """0 = simplified (J0), 1 = full Liechtenstein (requires anisotropic J — not
@@ -299,7 +308,11 @@ class DFTUConfig(BaseModel):
     """Fallback starting magnetization for Hubbard species without overrides."""
 
     do_relax_with_u: bool = False
-    """If True, run vc-relax under DFT+U before the final SCF+U (heavier)."""
+    """If True, run vc-relax under DFT+U before the final SCF+U (heavier).
+
+    Sufficient on its own to enter the relax stage even when ``DFTConfig.do_relax``
+    is False (explicit U-relaxation request).
+    """
 
     version: str = "0.1"
 
@@ -327,6 +340,25 @@ class DFTUConfig(BaseModel):
             )
         return v
 
+    @field_validator("hubbard_manifolds")
+    @classmethod
+    def _manifold_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        import re
+
+        bad: dict[str, str] = {}
+        out: dict[str, str] = {}
+        for k, val in (v or {}).items():
+            label = str(val).strip()
+            if not re.fullmatch(r"[1-6][spdf]", label):
+                bad[str(k)] = str(val)
+            else:
+                out[str(k)] = label
+        if bad:
+            raise ValueError(
+                "hubbard_manifolds values must look like QE orbital labels "
+                f"(e.g. '3d', '2p', '4f'); got {bad}"
+            )
+        return out
 
 class DFTConfig(BaseModel):
     engine: Literal["mock", "qe", "qe-epw", "qe-dftu"] = "mock"

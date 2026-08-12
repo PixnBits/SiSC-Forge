@@ -73,6 +73,20 @@ Addressed Copilot review on #11:
 
 ---
 
+## Slice P3.1 review round 5 (2026-08-12)
+
+| Issue | Fix |
+|-------|-----|
+| Namelist used `Hubbard_projectors` | Emit classic SYSTEM `U_projection_type` |
+| Fingerprint missed UPF content | v3: resolved per-species UPF names + sha256 digests |
+| Card dialect silent `3d` for O | `hubbard_manifolds` + hard error for non-TM/RE |
+| `do_relax_with_u` ignored when `do_relax=False` | Enter relax when either flag is true; additive forces `do_relax=True` |
+| `is_metallic` guessed from Fermi/smearing | Leave `None` until gap/DOS parse exists |
+| Empty alias `parameters: {}` fell through to `qe` | Track match separately from map emptiness |
+| Soft real-QE gate | UPF preflight skip; require `status=ok` + energy |
+
+---
+
 
 
 

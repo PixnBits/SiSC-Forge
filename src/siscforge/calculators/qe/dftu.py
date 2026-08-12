@@ -187,7 +187,9 @@ def hubbard_system_extras(
 
     extras["lda_plus_u"] = True
     extras["lda_plus_u_kind"] = int(dftu.lda_plus_u_kind)
-    extras["Hubbard_projectors"] = dftu.hubbard_projectors
+    # Classic SYSTEM namelist uses U_projection_type (not Hubbard_projectors,
+    # which is the parenthesized option of the QE ≥7.1 HUBBARD card only).
+    extras["U_projection_type"] = dftu.hubbard_projectors
     for el in species:
         idx = type_idx.get(el)
         if idx is None:
@@ -219,7 +221,7 @@ def append_hubbard_card(
         return pw_text
     lines = [f"HUBBARD ({dftu.hubbard_projectors})"]
     for el in species:
-        manifold = _default_manifold(el)
+        manifold = resolve_hubbard_manifold(el, dftu)
         lines.append(f"  U {el}-{manifold} {u_map[el]:.4f}")
         j_val = float(j_map.get(el, 0.0))
         if j_val > 0.0:
@@ -230,33 +232,70 @@ def append_hubbard_card(
     return text + card
 
 
-def _default_manifold(element: str) -> str:
-    """Heuristic correlated manifold label for HUBBARD card lines."""
-    re_4f = {
-        "Ce",
-        "Pr",
-        "Nd",
-        "Sm",
-        "Eu",
-        "Gd",
-        "Tb",
-        "Dy",
-        "Ho",
-        "Er",
-        "Tm",
-        "Yb",
-        "Lu",
-    }
-    d4 = {"Ru", "Rh", "Pd", "Ag", "Cd", "Y", "Zr", "Nb", "Mo", "Tc"}
-    d5 = {"Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au"}
-    if element in re_4f:
-        return "4f"
-    if element in d4:
-        return "4d"
-    if element in d5:
-        return "5d"
-    return "3d"
+# Species with a safe built-in orbital heuristic for HUBBARD card lines.
+_RE_4F = {
+    "Ce",
+    "Pr",
+    "Nd",
+    "Sm",
+    "Eu",
+    "Gd",
+    "Tb",
+    "Dy",
+    "Ho",
+    "Er",
+    "Tm",
+    "Yb",
+    "Lu",
+}
+_D4 = {"Ru", "Rh", "Pd", "Ag", "Cd", "Y", "Zr", "Nb", "Mo", "Tc"}
+_D5 = {"Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au"}
+_D3 = {
+    "Sc",
+    "Ti",
+    "V",
+    "Cr",
+    "Mn",
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+}
 
+
+def _default_manifold(element: str) -> str | None:
+    """Heuristic correlated manifold, or None when guessing would be unsafe."""
+    if element in _RE_4F:
+        return "4f"
+    if element in _D4:
+        return "4d"
+    if element in _D5:
+        return "5d"
+    if element in _D3:
+        return "3d"
+    return None
+
+
+def resolve_hubbard_manifold(element: str, dftu: DFTUConfig) -> str:
+    """Resolve the HUBBARD-card orbital label for *element*.
+
+    Prefer ``dftu.hubbard_manifolds[el]``. Fall back to a TM/RE heuristic only
+    for well-known correlated metals; otherwise raise so oxygen *p* (etc.) is
+    never silently emitted as ``3d``.
+    """
+    maps = getattr(dftu, "hubbard_manifolds", None) or {}
+    if element in maps:
+        return str(maps[element])
+    guessed = _default_manifold(element)
+    if guessed is not None:
+        return guessed
+    raise ValueError(
+        f"No Hubbard manifold for element {element!r}. "
+        f"Set dft.dftu.hubbard_manifolds, e.g. {{{element}: '2p'}}, "
+        "or remove it from hubbard_species. Silent 3d fallback is not allowed "
+        "for non-TM/RE species (would mismatch UPF projectors)."
+    )
 
 def parse_magnetization(text: str) -> tuple[float | None, float | None]:
     """Extract total and absolute magnetization (μ_B) from pw.x stdout."""
@@ -363,10 +402,10 @@ def parse_dftu_output(
     total_m, abs_m = parse_magnetization(text)
     moments = parse_atomic_magnetic_moments(text)
     occ = parse_occupancy_proxy(text)
-    is_metallic = bool(
-        re.search(r"the Fermi energy is", text, re.IGNORECASE)
-        or re.search(r"occupations\s*=\s*['\"]?smearing", text, re.IGNORECASE)
-    )
+    # Do not guess metallicity from Fermi-energy lines or smearing: insulating
+    # DFT+U runs commonly use smearing and still print a Fermi level. Leave
+    # unknown until a band-gap / DOS parse exists (P3.x+).
+    is_metallic: bool | None = None
     # Require both a final energy and JOB DONE. Intermediate total-energy lines
     # from a killed SCF must not be treated as success.
     status = "ok" if energy is not None and job_done else "failed"
@@ -526,7 +565,60 @@ def _structure_geometry_fp(structure: Structure) -> dict[str, Any]:
     }
 
 
-def _dft_calc_fp(dft: DFTConfig | None) -> dict[str, Any]:
+def _file_sha256(path: Path) -> str | None:
+    """Content digest of a UPF (or any file); None if unreadable."""
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _resolved_pseudo_fp(
+    structure: Structure,
+    dft: DFTConfig | None,
+) -> dict[str, Any]:
+    """Resolved per-species UPF names + content digests for resume gates.
+
+    Config-only ``pseudopotentials`` maps miss in-place UPF replacement and
+    auto-discovery changes; hashing the resolved files closes that hole.
+    """
+    if dft is None:
+        return {"resolved": {}, "pseudo_dir": None}
+    resolved: dict[str, str] = {}
+    try:
+        from siscforge.calculators.qe.pseudos import resolve_pseudopotentials
+
+        resolved = {
+            str(k): str(v) for k, v in resolve_pseudopotentials(structure, dft).items()
+        }
+    except Exception:
+        # Unit tests / dry paths may lack UPFs; fall back to configured map.
+        resolved = {
+            str(k): str(v) for k, v in sorted((dft.pseudopotentials or {}).items())
+        }
+    pdir = Path(dft.pseudo_dir).resolve() if dft.pseudo_dir else None
+    digests: dict[str, dict[str, Any]] = {}
+    for el, fname in sorted(resolved.items()):
+        entry: dict[str, Any] = {"file": fname, "sha256": None}
+        if pdir is not None:
+            fpath = pdir / fname
+            if fpath.is_file():
+                entry["sha256"] = _file_sha256(fpath)
+        digests[el] = entry
+    return {
+        "pseudo_dir": str(pdir) if pdir is not None else dft.pseudo_dir,
+        "resolved": digests,
+    }
+
+
+def _dft_calc_fp(
+    structure: Structure,
+    dft: DFTConfig | None,
+) -> dict[str, Any]:
     """Calculation-affecting DFTConfig fields (k-mesh, cutoffs, pseudos, …)."""
     if dft is None:
         return {}
@@ -542,9 +634,12 @@ def _dft_calc_fp(dft: DFTConfig | None) -> dict[str, Any]:
         "degauss": float(dft.degauss),
         "nbnd": dft.nbnd,
         "pseudo_dir": dft.pseudo_dir,
+        # Configured map (may be empty when auto-discovery is used).
         "pseudopotentials": {
             str(k): str(v) for k, v in sorted((dft.pseudopotentials or {}).items())
         },
+        # Resolved filenames + content digests (v3).
+        "pseudos_resolved": _resolved_pseudo_fp(structure, dft),
         "do_relax": bool(dft.do_relax),
         "quality_tag": str(dft.quality_tag),
     }
@@ -561,23 +656,39 @@ def dftu_config_fingerprint(
 ) -> dict[str, Any]:
     """Fingerprint of structure + Hubbard + DFT settings for resume gates.
 
-    Version 2 includes fractional coordinates and calculation-affecting
-    ``DFTConfig`` fields so changes to k-points, cutoffs, occupations,
-    pseudopotentials, starting magnetization, or atomic positions invalidate
+    Version 3 includes fractional coordinates, calculation-affecting
+    ``DFTConfig`` fields, and **resolved UPF names + content digests** so
+    in-place pseudo replacement or auto-discovery changes invalidate
     checkpoints. ``stage`` is ``\"scf\"`` or ``\"relax\"``.
     """
     species, u_map, j_map = resolve_u_j_maps(structure, dftu)
     qtag = quality_tag if quality_tag is not None else (
         str(dft.quality_tag) if dft is not None else "screening"
     )
+    # Card dialect always resolves manifolds (raises on unknown non-TM/RE).
+    # Namelist records explicit overrides only (indices, not U el-manifold lines).
+    if getattr(dftu, "hubbard_syntax", "namelist") == "card":
+        manifolds = {el: resolve_hubbard_manifold(el, dftu) for el in species}
+    else:
+        explicit = getattr(dftu, "hubbard_manifolds", None) or {}
+        manifolds = {
+            el: resolve_hubbard_manifold(el, dftu)
+            for el in species
+            if el in explicit
+        }
     payload: dict[str, Any] = {
-        "version": 2,
+        "version": 3,
         "stage": stage,
         **_structure_geometry_fp(structure),
         "hubbard_species": list(species),
         "U_by_species": {k: round(float(v), 6) for k, v in sorted(u_map.items())},
         "J_by_species": {k: round(float(v), 6) for k, v in sorted(j_map.items())},
         "hubbard_projectors": dftu.hubbard_projectors,
+        "hubbard_manifolds": {
+            str(k): str(v)
+            for k, v in sorted((getattr(dftu, "hubbard_manifolds", None) or {}).items())
+        },
+        "resolved_manifolds": {str(k): str(v) for k, v in sorted(manifolds.items())},
         "lda_plus_u_kind": int(dftu.lda_plus_u_kind),
         "nspin": int(dftu.nspin),
         "hubbard_syntax": getattr(dftu, "hubbard_syntax", "namelist"),
@@ -590,7 +701,7 @@ def dftu_config_fingerprint(
         ),
         "do_relax_with_u": bool(dftu.do_relax_with_u),
         "quality_tag": qtag,
-        "dft": _dft_calc_fp(dft),
+        "dft": _dft_calc_fp(structure, dft),
     }
     if stage == "relax":
         payload["hubbard_on_relax"] = (

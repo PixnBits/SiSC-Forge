@@ -1298,7 +1298,13 @@ def run_dftu_workflow(
     do_resume = _should_resume_qe_steps(config, resume_qe_steps=resume_qe_steps)
     do_force = _force_qe_steps(config, force_qe_steps=force_qe_steps) or not do_resume
 
-    if config.do_relax:
+    # Enter the relax stage when global do_relax is on *or* the campaign
+    # explicitly requested U-enabled relaxation (do_relax_with_u), even if
+    # DFTConfig.do_relax is False (reachable from additive DFT+U callers).
+    want_relax = bool(config.do_relax) or bool(
+        getattr(config.dftu, "do_relax_with_u", False)
+    )
+    if want_relax:
         relax_out = work_dir / "vc-relax.out"
         use_u = bool(config.dftu.do_relax_with_u)
         resume_ok = False
