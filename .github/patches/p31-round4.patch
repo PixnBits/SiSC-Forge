@@ -1,0 +1,86 @@
+--- a/src/siscforge/export.py
++++ b/src/siscforge/export.py
+@@ -902,22 +902,46 @@
+ 
+     dftu = getattr(ev, "dftu", None)
+     if dftu is not None:
++        # Prefer scalar U/J when uniform; otherwise show per-species maps so
++        # multi-species cells do not print a bare "None".
++        if dftu.U_eV is not None:
++            u_line = f"- U (eV): {dftu.U_eV}"
++        elif dftu.U_by_species:
++            u_line = (
++                "- U (eV): "
++                + ", ".join(f"{k}={v:g}" for k, v in sorted(dftu.U_by_species.items()))
++            )
++        else:
++            u_line = "- U (eV): —"
++        if dftu.J_eV is not None:
++            j_line = f"- J (eV): {dftu.J_eV}"
++        elif dftu.J_by_species:
++            j_line = (
++                "- J (eV): "
++                + ", ".join(f"{k}={v:g}" for k, v in sorted(dftu.J_by_species.items()))
++            )
++        else:
++            j_line = "- J (eV): —"
++        mag = dftu.total_magnetization
++        mag_s = f"{mag:g}" if mag is not None else "—"
++        energy = dftu.total_energy_eV
++        energy_s = f"{energy:g}" if energy is not None else "—"
+         lines.extend(
+             [
+                 "",
+                 "#### DFT+U (correlated proxy, P3.1)",
+-                f"- U (eV): {dftu.U_eV}",
+-                f"- J (eV): {dftu.J_eV}",
++                u_line,
++                j_line,
+                 f"- Hubbard species: {', '.join(dftu.hubbard_species) or '—'}",
+                 f"- projectors: {dftu.hubbard_projectors or '—'}",
+-                f"- total magnetization (μ_B): {dftu.total_magnetization}",
++                f"- total magnetization (μ_B): {mag_s}",
+                 f"- occupancy: "
+                 + (
+                     ", ".join(f"{k}={v}" for k, v in dftu.occupancy_summary.items())
+                     if dftu.occupancy_summary
+                     else "—"
+                 ),
+-                f"- total energy (eV): {dftu.total_energy_eV}",
++                f"- total energy (eV): {energy_s}",
+                 f"- status / quality: {dftu.status} / {dftu.quality_tag}",
+                 f"- summary: {dftu.summary_line()}",
+                 "- note: cheap DFT+U proxy only — Wannier (P3.2) / DMFT (P3.3) / "
+--- a/src/siscforge/cli/main.py
++++ b/src/siscforge/cli/main.py
+@@ -1058,14 +1058,28 @@
+         raise typer.Exit(code=2) from exc
+ 
+     calc_params: dict = {}
+-    # Prefer exact calculator name, then fall back to QE alias group.
++    # Prefer exact calculator name, then same-family aliases, then any QE entry.
++    # When the CLI selects ``dftu``, prefer an explicit ``qe-dftu``/``dftu``
++    # campaign entry over a generic ``qe`` so per-calculator parameters win.
+     for c in config.calculators:
+         if c.name == calc_name:
+             calc_params = dict(c.parameters)
+             break
+     else:
++        dftu_aliases = {"qe-dftu", "dftu"}
++        epw_aliases = {"qe-epw", "epw"}
+         qe_aliases = {"qe", "qe-epw", "quantum-espresso", "epw", "qe-dftu", "dftu"}
+-        if calc_name in qe_aliases:
++        preferred: set[str] | None = None
++        if calc_name in dftu_aliases:
++            preferred = dftu_aliases
++        elif calc_name in epw_aliases:
++            preferred = epw_aliases
++        if preferred is not None:
++            for c in config.calculators:
++                if c.name in preferred:
++                    calc_params = dict(c.parameters)
++                    break
++        if not calc_params and calc_name in qe_aliases:
+             for c in config.calculators:
+                 if c.name in qe_aliases:
+                     calc_params = dict(c.parameters)
