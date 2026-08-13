@@ -134,19 +134,25 @@ class MockCalculator(BaseCalculator):
         # P3.1: optional DFT+U mock — inert unless campaign enables it
         dftu_result = None
         wannier_result = None
+        dmft_result = None
         dft = kwargs.get("dft")
         enable_dftu = bool(kwargs.get("enable_dftu"))
         enable_wannier = bool(kwargs.get("enable_wannier"))
+        enable_dmft = bool(kwargs.get("enable_dmft"))
         dftu_cfg = None
         wannier_cfg = None
+        dmft_cfg = None
         if isinstance(dft, DFTConfig):
             from siscforge.calculators.qe.dftu import dftu_is_enabled
+            from siscforge.calculators.qe.dmft import dmft_is_enabled
             from siscforge.calculators.qe.wannier import wannier_is_enabled
 
             enable_dftu = enable_dftu or dftu_is_enabled(dft)
             enable_wannier = enable_wannier or wannier_is_enabled(dft)
+            enable_dmft = enable_dmft or dmft_is_enabled(dft)
             dftu_cfg = dft.dftu
             wannier_cfg = dft.wannier
+            dmft_cfg = dft.dmft
         elif isinstance(dft, dict):
             enable_dftu = enable_dftu or bool(
                 dft.get("do_dftu") or (dft.get("dftu") or {}).get("enabled")
@@ -154,7 +160,10 @@ class MockCalculator(BaseCalculator):
             enable_wannier = enable_wannier or bool(
                 dft.get("do_wannier") or (dft.get("wannier") or {}).get("enabled")
             )
-            from siscforge.models.config import DFTUConfig, WannierConfig
+            enable_dmft = enable_dmft or bool(
+                dft.get("do_dmft") or (dft.get("dmft") or {}).get("enabled")
+            )
+            from siscforge.models.config import DFTUConfig, DMFTConfig, WannierConfig
 
             raw_u = dft.get("dftu") or {}
             dftu_cfg = DFTUConfig.model_validate(raw_u) if raw_u else DFTUConfig(enabled=True)
@@ -162,6 +171,8 @@ class MockCalculator(BaseCalculator):
             wannier_cfg = (
                 WannierConfig.model_validate(raw_w) if raw_w else WannierConfig(enabled=True)
             )
+            raw_d = dft.get("dmft") or {}
+            dmft_cfg = DMFTConfig.model_validate(raw_d) if raw_d else DMFTConfig(enabled=True)
         if enable_dftu:
             from siscforge.calculators.qe.dftu import mock_dftu_result
 
@@ -180,18 +191,33 @@ class MockCalculator(BaseCalculator):
                 formula=candidate.formula,
                 material_family=candidate.material_family,
             )
+        if enable_dmft:
+            from siscforge.calculators.qe.dmft import mock_dmft_result
+
+            dmft_result = mock_dmft_result(
+                seed=seed,
+                dmft=dmft_cfg,
+                wannier=wannier_result,
+                dftu=dftu_cfg,
+                formula=candidate.formula,
+                material_family=candidate.material_family,
+            )
 
         notes = "Produced by MockCalculator dry-run path"
         if dftu_result is not None:
             notes += f"; DFT+U mock: {dftu_result.summary_line()}"
         if wannier_result is not None:
             notes += f"; Wannier mock: {wannier_result.summary_line()}"
+        if dmft_result is not None:
+            notes += f"; DMFT mock: {dmft_result.summary_line()}"
 
         extras = []
         if dftu_result is not None:
             extras.append("DFT+U")
         if wannier_result is not None:
             extras.append("Wannier")
+        if dmft_result is not None:
+            extras.append("DMFT")
         extra_note = (" with " + "+".join(extras)) if extras else ""
 
         return CandidateEvaluation(
@@ -201,6 +227,7 @@ class MockCalculator(BaseCalculator):
             electron_phonon=eph,
             dftu=dftu_result,
             wannier=wannier_result,
+            dmft=dmft_result,
             si_feasibility=si,
             performance_score=performance,
             performance_score_source="mock",

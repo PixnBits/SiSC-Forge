@@ -59,7 +59,8 @@ WANNIER_FAILURE_CLASSES: frozenset[str] = frozenset(
 _EXTENSION_HOOKS: dict[str, str] = {
     "p3_3_dmft": (
         "TRIQS/solid_dmft consumes WannierResult.work_dir / .chk / spreads; "
-        "refuse launch when ready_for_dmft is False"
+        "P3.3 refuses launch when ready_for_dmft is False "
+        "(unless mock bypass / allow_without_wannier_gate)"
     ),
     "p3_4_pairing": "map leading eigenvalue → performance_score",
     "limits": (

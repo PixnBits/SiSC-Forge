@@ -9,7 +9,9 @@ from __future__ import annotations
 from siscforge.calculators.qe.calculator import (
     QECalculator,
     QEDftuCalculator,
+    QEDmftCalculator,
     QEEpwCalculator,
+    QEWannierCalculator,
     register_qe_calculators,
 )
 from siscforge.calculators.qe.eliashberg import allen_dynes_tc
@@ -39,7 +41,9 @@ __all__ = [
     "EPWNotAvailableError",
     "QECalculator",
     "QEDftuCalculator",
+    "QEDmftCalculator",
     "QEEpwCalculator",
+    "QEWannierCalculator",
     "QENotFoundError",
     "QENotAvailableError",
     "PseudoResolutionError",

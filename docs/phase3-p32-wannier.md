@@ -142,7 +142,7 @@ as EPW-after-DFPT remediation.
 | Package | Work | Hook |
 |---------|------|------|
 | **P3.2.1** | Minimal nscf + `pw2wannier90` orchestration | Stage `.amn`/`.mmn` automatically |
-| **P3.3** | TRIQS / solid_dmft → `DMFTResult` | Consume `WannierResult` artifacts + gate |
+| **P3.3** | TRIQS / solid_dmft → `DMFTResult` | **Shipped** — consume `WannierResult` artifacts + gate; `docs/phase3-p33-dmft.md` |
 | **P3.4** | Pairing eigenvalue → `performance_score` | Map leading eigenvalue |
 | **P3.5** | Oxygen-vacancy enumeration | Structure generation |
 | **P3.6** | Mixed conventional/unconventional AL | Acquisition updates |

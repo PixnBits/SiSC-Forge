@@ -1073,6 +1073,7 @@ def run_cmd(
         dftu_aliases = {"qe-dftu", "dftu"}
         epw_aliases = {"qe-epw", "epw"}
         wannier_aliases = {"qe-wannier", "wannier"}
+        dmft_aliases = {"qe-dmft", "dmft"}
         qe_aliases = {
             "qe",
             "qe-epw",
@@ -1082,6 +1083,8 @@ def run_cmd(
             "dftu",
             "qe-wannier",
             "wannier",
+            "qe-dmft",
+            "dmft",
         }
         preferred: set[str] | None = None
         if calc_name in dftu_aliases:
@@ -1090,6 +1093,8 @@ def run_cmd(
             preferred = epw_aliases
         elif calc_name in wannier_aliases:
             preferred = wannier_aliases
+        elif calc_name in dmft_aliases:
+            preferred = dmft_aliases
         if preferred is not None:
             for c in config.calculators:
                 if c.name in preferred:
@@ -1103,7 +1108,16 @@ def run_cmd(
                     calc_params_matched = True
                     break
 
-    if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu", "qe-wannier", "wannier"}:
+    if calc_name in {
+        "qe",
+        "qe-epw",
+        "qe-dftu",
+        "dftu",
+        "qe-wannier",
+        "wannier",
+        "qe-dmft",
+        "dmft",
+    }:
         dft = config.dft
         if calc_name == "qe-epw":
             dft = dft.model_copy(
@@ -1140,6 +1154,19 @@ def run_cmd(
                 updates["do_epw"] = False
                 updates["epw"] = dft.epw.model_copy(update={"enabled": False})
             dft = dft.model_copy(update=updates)
+        if calc_name in {"qe-dmft", "dmft"}:
+            dft_fields = set(getattr(config.dft, "model_fields_set", set()) or set())
+            updates: dict = {
+                "do_dmft": True,
+                "engine": "qe-dmft",
+                "dmft": dft.dmft.model_copy(update={"enabled": True}),
+            }
+            if "do_phonon" not in dft_fields:
+                updates["do_phonon"] = False
+            if "do_epw" not in dft_fields and "epw" not in dft_fields:
+                updates["do_epw"] = False
+                updates["epw"] = dft.epw.model_copy(update={"enabled": False})
+            dft = dft.model_copy(update=updates)
         # EPW fine-grid: nproc must equal npool (nimage=1). Auto-fix early so
         # users see the message before multi-hour DFPT, not only at epw.x launch.
         # Phonon-only (do_epw false + calculator qe): skip all EPW preflight noise.
@@ -1154,6 +1181,11 @@ def run_cmd(
             calc_name in {"qe-wannier", "wannier"}
             or dft.do_wannier
             or dft.wannier.enabled
+        )
+        want_dmft = bool(
+            calc_name in {"qe-dmft", "dmft"}
+            or dft.do_dmft
+            or dft.dmft.enabled
         )
         if want_epw:
             from siscforge.calculators.qe.epw_inputs import (
@@ -1269,6 +1301,7 @@ def run_cmd(
             f"do_epw={want_epw}",
             f"do_dftu={want_dftu}",
             f"do_wannier={want_wannier}",
+            f"do_dmft={want_dmft}",
             f"nproc={dft.nproc}",
         ]
         if want_epw:
@@ -1280,7 +1313,7 @@ def run_cmd(
             f"[bold]Calculator[/bold] {calc_name}  ({', '.join(mode_bits)})"
         )
     else:
-        # Pass campaign DFT so mock can honor do_dftu / do_wannier (P3.1/P3.2).
+        # Pass campaign DFT so mock can honor do_dftu / do_wannier / do_dmft.
         # Inert when those features are disabled (default).
         calc_params = {**calc_params, "dft": config.dft, "run_config": run_cfg}
         console.print(f"[bold]Calculator[/bold] {calc_name}")
@@ -1293,7 +1326,16 @@ def run_cmd(
         f"heartbeat={run_cfg.heartbeat_seconds}s"
     )
     if (
-        calc_name in {"qe", "qe-epw", "qe-dftu", "dftu", "qe-wannier", "wannier"}
+        calc_name in {
+            "qe",
+            "qe-epw",
+            "qe-dftu",
+            "dftu",
+            "qe-wannier",
+            "wannier",
+            "qe-dmft",
+            "dmft",
+        }
         and run_cfg.heartbeat_seconds
         and run_cfg.heartbeat_seconds > 0
     ):
@@ -1305,7 +1347,16 @@ def run_cmd(
     # 3b. Desktop walltime bands (qe / qe-epw only; mock unchanged)
     walltime_tracker = None
     walltime_est = None
-    if calc_name in {"qe", "qe-epw", "qe-dftu", "dftu", "qe-wannier", "wannier"} and getattr(run_cfg, "estimate_walltime", True):
+    if calc_name in {
+        "qe",
+        "qe-epw",
+        "qe-dftu",
+        "dftu",
+        "qe-wannier",
+        "wannier",
+        "qe-dmft",
+        "dmft",
+    } and getattr(run_cfg, "estimate_walltime", True):
         from siscforge.walltime import (
             WalltimeTracker,
             estimate_campaign_walltime,
@@ -1334,7 +1385,16 @@ def run_cmd(
     evaluations: list[CandidateEvaluation] = []
     # Prior successes from this output_dir (for skip-finished).
     # Real QE/EPW must not skip dry-run mock rows (require_real).
-    require_real = calc_name in {"qe", "qe-epw", "qe-dftu", "dftu", "qe-wannier", "wannier"}
+    require_real = calc_name in {
+        "qe",
+        "qe-epw",
+        "qe-dftu",
+        "dftu",
+        "qe-wannier",
+        "wannier",
+        "qe-dmft",
+        "dmft",
+    }
     resume_by_id, resume_by_fp = (
         store.resume_index(require_real=require_real)
         if run_cfg.resume and not run_cfg.force_rerun

@@ -443,6 +443,45 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
             if getattr(ev, "wannier", None) is not None
             else ""
         ),
+        # P3.3 DMFT columns (empty when disabled / absent)
+        "dmft_status": (
+            ev.dmft.status if getattr(ev, "dmft", None) is not None else ""
+        ),
+        "dmft_solver": (
+            ev.dmft.solver if getattr(ev, "dmft", None) is not None else ""
+        ),
+        "dmft_converged": (
+            ev.dmft.converged if getattr(ev, "dmft", None) is not None else None
+        ),
+        "dmft_U_eV": (
+            ev.dmft.U_eV if getattr(ev, "dmft", None) is not None else None
+        ),
+        "dmft_J_eV": (
+            ev.dmft.J_eV if getattr(ev, "dmft", None) is not None else None
+        ),
+        "dmft_filling": (
+            ev.dmft.filling if getattr(ev, "dmft", None) is not None else None
+        ),
+        "dmft_mass_enhancement": (
+            ev.dmft.mass_enhancement
+            if getattr(ev, "dmft", None) is not None
+            else None
+        ),
+        "dmft_leading_pairing_eigenvalue": (
+            ev.dmft.leading_pairing_eigenvalue
+            if getattr(ev, "dmft", None) is not None
+            else None
+        ),
+        "dmft_pairing_symmetry": (
+            ev.dmft.pairing_symmetry or ""
+            if getattr(ev, "dmft", None) is not None
+            else ""
+        ),
+        "dmft_summary": (
+            ev.dmft.summary_line()
+            if getattr(ev, "dmft", None) is not None
+            else ""
+        ),
     }
 
 
@@ -532,6 +571,16 @@ CSV_FIELDNAMES = [
     "wannier_failure_class",
     "wannier_status",
     "wannier_summary",
+    "dmft_status",
+    "dmft_solver",
+    "dmft_converged",
+    "dmft_U_eV",
+    "dmft_J_eV",
+    "dmft_filling",
+    "dmft_mass_enhancement",
+    "dmft_leading_pairing_eigenvalue",
+    "dmft_pairing_symmetry",
+    "dmft_summary",
 ]
 
 
@@ -987,8 +1036,8 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- total energy (eV): {energy_s}",
                 f"- status / quality: {dftu.status} / {dftu.quality_tag}",
                 f"- summary: {dftu.summary_line()}",
-                "- note: cheap DFT+U proxy — see Wannier (P3.2) section when present; "
-                "DMFT (P3.3) / pairing (P3.4) not yet attached",
+                "- note: cheap DFT+U proxy — see Wannier (P3.2) / DMFT (P3.3) "
+                "sections when present; pairing → performance_score is P3.4",
             ]
         )
 
@@ -1033,7 +1082,50 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
             "- note: screening defaults may use proj=random + coarse k; "
             "material-specific production projections and spinor/collinear-spin "
             "manifolds are later residuals. "
-            "P3.3 TRIQS/solid_dmft should refuse launch when ready_for_dmft is false."
+            "P3.3 TRIQS/solid_dmft refuses launch when ready_for_dmft is false "
+            "(unless explicit mock bypass / allow_without_wannier_gate)."
+        )
+
+    dmft = getattr(ev, "dmft", None)
+    if dmft is not None:
+        fill = dmft.filling
+        fill_s = f"{fill:g}" if fill is not None else "—"
+        mass = dmft.mass_enhancement
+        mass_s = f"{mass:g}" if mass is not None else "—"
+        occ = (
+            ", ".join(f"{k}={v:g}" for k, v in sorted(dmft.occupancy_summary.items()))
+            if dmft.occupancy_summary
+            else "—"
+        )
+        eig = dmft.leading_pairing_eigenvalue
+        eig_s = f"{eig:g}" if eig is not None else "— (P3.4)"
+        lines.extend(
+            [
+                "",
+                "#### DMFT (TRIQS / solid_dmft, P3.3)",
+                f"- solver: {dmft.solver}",
+                f"- converged: {dmft.converged}",
+                f"- U / J (eV): {dmft.U_eV if dmft.U_eV is not None else '—'} / "
+                f"{dmft.J_eV if dmft.J_eV is not None else '—'}",
+                f"- occupancy: {occ}",
+                f"- filling: {fill_s}",
+                f"- mass enhancement m*/m: {mass_s}",
+                f"- leading pairing eigenvalue: {eig_s}",
+                f"- pairing symmetry: {dmft.pairing_symmetry or '— (P3.4)'}",
+                f"- Wannier input: ready={dmft.wannier_ready_for_dmft} "
+                f"work_dir={dmft.wannier_work_dir or '—'}",
+                f"- status / quality: {dmft.status} / {dmft.quality_tag}",
+                f"- summary: {dmft.summary_line()}",
+            ]
+        )
+        if dmft.gate_notes:
+            lines.append(f"- gate_notes: {dmft.gate_notes}")
+        if dmft.failure_class:
+            lines.append(f"- failure_class: {dmft.failure_class}")
+        lines.append(
+            "- note: pairing eigenvalue is stored but **not** mapped into "
+            "`performance_score` (that is **P3.4**). Conventional ranking "
+            "is unchanged."
         )
 
     if ev.notes:

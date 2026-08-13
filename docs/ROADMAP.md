@@ -183,7 +183,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 ### Suggested Order of Module Implementation
 1. DFT+U workflow and DFTUResult model. **(P3.1 — shipped; see docs/phase3-p31-dftu.md)**
 2. Wannierization pipeline with quality metrics. **(P3.2 — shipped (metrics + mock + gate + prep); residual P3.2.1 nscf+pw2wannier90; see docs/phase3-p32-wannier.md)**
-3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser.
+3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — shipped (model + mock + Wannier gate + optional real skip); pairing → performance_score is P3.4; see docs/phase3-p33-dmft.md)**
 4. Pairing-eigenvalue extraction and mapping onto performance_score.
 5. Oxygen-vacancy structure generation for nickelates.
 6. AL acquisition updates for mixed or separate pools.
