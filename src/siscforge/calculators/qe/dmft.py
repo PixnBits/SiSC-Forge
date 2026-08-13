@@ -399,8 +399,9 @@ def mock_dmft_result(
         mass_orb = {"imp_d": mass}
 
     # Illustrative pairing (P3.4) — NOT literature-validated.
-    # Nickelate-like: λ ≈ 0.55–1.25, d_x2-y2 label. Other families: weaker.
-    if material_family == "nickelate" or "Ni" in (formula or ""):
+    # Stronger λ only for material_family=nickelate (not a "Ni" substring —
+    # alloys / doped formulas must opt in via family). Other families: weaker.
+    if material_family == "nickelate":
         pair_eig = round(0.55 + 0.70 * r, 4)
         pair_sym = "d_x2-y2"
     else:

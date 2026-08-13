@@ -184,7 +184,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 1. DFT+U workflow and DFTUResult model. **(P3.1 — shipped; see docs/phase3-p31-dftu.md)**
 2. Wannierization pipeline with quality metrics. **(P3.2 — shipped (metrics + mock + gate + prep); residual P3.2.1 nscf+pw2wannier90; see docs/phase3-p32-wannier.md)**
 3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — model + Wannier gate + mock + drop-in parser shipped; full automated solid_dmft launch residual; pairing → performance_score is P3.4; see docs/phase3-p33-dmft.md)**
-4. Pairing-eigenvalue extraction and mapping onto performance_score. **(P3.4 — shipped; see docs/phase3-p34-pairing-score.md)**
+4. Pairing-eigenvalue extraction and mapping onto performance_score. **(P3.4 — in review; see docs/phase3-p34-pairing-score.md)**
 5. Oxygen-vacancy structure generation for nickelates.
 6. AL acquisition updates for mixed or separate pools.
 7. Golden-system test on bulk NdNiO₂ (occupancy + mass enhancement).
@@ -196,6 +196,8 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 - AL loop can be demonstrated with synthetic or small real data mixes of conventional and unconventional results.
 
 **Exit criteria**: Nickelate candidates appear in ranked lists with both a pairing-based performance score and a realistic Si-feasibility score; the same ranking code handles both families without forks.
+
+Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization only**. Absolute comparability of the two origins is not claimed. Source-aware / family-normalized acquisition is residual **P3.6**.
 
 ---
 

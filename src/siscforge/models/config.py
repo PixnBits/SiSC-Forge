@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import math
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class QualityConfig(BaseModel):
@@ -536,7 +536,9 @@ class DMFTScoringConfig(BaseModel):
         ge=0.0,
         description=(
             "Linear scale: score_K = (λ − threshold) × kelvin_per_unit × Q. "
-            "Default 25 → λ=1.0 maps to 25 K (mid conventional ranking band)."
+            "25 K/unit is an engineering choice so λ≈1 (typical linearized "
+            "pairing instability) lands mid the conventional 40 K ranking "
+            "band — not a fitted Tc model. See docs/phase3-p34-pairing-score.md."
         ),
     )
     eigenvalue_threshold: float = Field(
@@ -547,8 +549,10 @@ class DMFTScoringConfig(BaseModel):
         default=40.0,
         gt=0.0,
         description=(
-            "Clamp the kelvin proxy to this ceiling. Default matches "
-            "RankingConfig.performance_ceiling_K (40 K)."
+            "Clamp the kelvin proxy. Default 40 matches "
+            "RankingConfig.performance_ceiling_K so a λ-proxy cannot "
+            "saturate the ranker harder than a conventional Tc. The two "
+            "ceilings are independent knobs — set both if you retune one."
         ),
     )
     require_converged: bool = Field(
@@ -559,7 +563,11 @@ class DMFTScoringConfig(BaseModel):
         default=True,
         description=(
             "Allow mock/illustrative eigenvalues to produce a score tagged "
-            "dmft_pairing_mock. Mock data is never labelled as production Tc."
+            "dmft_pairing_mock. Default true so the dry-run path (the only "
+            "working DMFT path until real launch) exercises ranking. Mock "
+            "data is never labelled as production Tc; CLI ranks print a "
+            "banner when these rows participate. Set false for a stricter "
+            "production posture."
         ),
     )
     quality_demotion: bool = Field(
@@ -572,10 +580,27 @@ class DMFTScoringConfig(BaseModel):
     mass_enhancement_soft_cap: float = Field(
         default=8.0,
         gt=0.0,
-        description="m*/m above this applies a light multiplicative demotion.",
+        description=(
+            "m*/m above this applies a light multiplicative demotion. "
+            "8.0 is a loose screening fence (typical nickelate m* is ~2–5); "
+            "not a literature cutoff."
+        ),
     )
-    occupancy_soft_min: float = Field(default=1.0)
-    occupancy_soft_max: float = Field(default=12.0)
+    occupancy_soft_min: float = Field(
+        default=1.0,
+        description=(
+            "Filling below this is treated as wildly unphysical for the "
+            "soft Q demotion. Loose fence (d-shell / impurity fillings "
+            "are typically a few electrons), not a physics bound."
+        ),
+    )
+    occupancy_soft_max: float = Field(
+        default=12.0,
+        description=(
+            "Filling above this is treated as wildly unphysical for the "
+            "soft Q demotion. 12 ≈ a full d + leftover count; loose fence."
+        ),
+    )
 
     @field_validator(
         "kelvin_per_unit",
@@ -590,6 +615,15 @@ class DMFTScoringConfig(BaseModel):
         if not math.isfinite(v):
             raise ValueError("DMFT scoring parameter must be finite")
         return v
+
+    @model_validator(mode="after")
+    def _occupancy_range(self) -> DMFTScoringConfig:
+        if self.occupancy_soft_min > self.occupancy_soft_max:
+            raise ValueError(
+                "occupancy_soft_min must be <= occupancy_soft_max "
+                f"(got {self.occupancy_soft_min} > {self.occupancy_soft_max})"
+            )
+        return self
 
 
 class DMFTConfig(BaseModel):

@@ -627,7 +627,8 @@ class QECalculator(BaseCalculator):
                 ),
             ),
         )
-        # P3.4: trusted EPW Tc wins; else map DMFT pairing onto the common axis.
+        # P3.4: default precedence only (scoring knobs). Campaign
+        # ranking.performance_precedence is re-applied in CLI finalize / rank.
         from siscforge.scoring.pairing import apply_performance_score
 
         scoring = getattr(getattr(dft, "dmft", None), "scoring", None)

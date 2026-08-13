@@ -77,6 +77,51 @@ class PerformanceDecision:
     pairing: PairingMapResult | None = None
 
 
+def _same_score(a: float | None, b: float | None) -> bool:
+    """True when *a* and *b* are the same finite headline score.
+
+    ``None`` matches only ``None``. Non-finite values (NaN / ±inf) never
+    compare equal, so a re-apply will rewrite a corrupt stored score.
+    """
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    try:
+        fa = float(a)
+        fb = float(b)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(fa) or not math.isfinite(fb):
+        return False
+    return fa == fb
+
+
+def mock_pairing_headline_count(evaluations: list[CandidateEvaluation]) -> int:
+    """How many rows have a mock DMFT pairing headline source."""
+    n = 0
+    for ev in evaluations:
+        if getattr(ev, "performance_score_source", None) == SOURCE_DMFT_PAIRING_MOCK:
+            n += 1
+    return n
+
+
+def mock_ranking_warning(evaluations: list[CandidateEvaluation]) -> str | None:
+    """Operator banner when illustrative mock pairing scores are ranked.
+
+    Returns ``None`` when no ``dmft_pairing_mock`` headlines are present.
+    """
+    n = mock_pairing_headline_count(evaluations)
+    if n <= 0:
+        return None
+    noun = "row" if n == 1 else "rows"
+    return (
+        f"{n} ranked {noun} use illustrative mock DMFT pairing scores "
+        "(source=dmft_pairing_mock) — not quantitative Tc. Ranking is for "
+        "prioritization only; do not cite these numbers."
+    )
+
+
 def _is_mock_dmft(dmft: DMFTResult) -> bool:
     return (
         (dmft.solver or "").lower() == "mock"
@@ -351,7 +396,9 @@ def resolve_performance_score(
 
     def _epw_decision() -> PerformanceDecision:
         assert epw_tc is not None
-        changed = existing_score != epw_tc or existing_source != SOURCE_EPW
+        changed = (
+            not _same_score(existing_score, epw_tc) or existing_source != SOURCE_EPW
+        )
         return PerformanceDecision(
             score=float(epw_tc),
             source=SOURCE_EPW,
@@ -364,7 +411,8 @@ def resolve_performance_score(
     def _dmft_decision() -> PerformanceDecision:
         assert pairing.usable and pairing.score is not None
         changed = (
-            existing_score != pairing.score or existing_source != pairing.source
+            not _same_score(existing_score, pairing.score)
+            or existing_source != pairing.source
         )
         return PerformanceDecision(
             score=float(pairing.score),
@@ -420,7 +468,10 @@ def apply_performance_score(
     """Return a copy of *evaluation* with headline performance applied.
 
     Idempotent when the decision matches the current score/source.
-    Appends a short note when the headline is (re)written from DMFT pairing.
+
+    Calculators call this with *scoring* only (default
+    ``epw_then_dmft``). Campaign ``ranking.performance_precedence`` is
+    applied later by CLI ``_finalize_eval`` / ``rank --config``.
     """
     decision = resolve_performance_score(
         evaluation, scoring=scoring, ranking=ranking

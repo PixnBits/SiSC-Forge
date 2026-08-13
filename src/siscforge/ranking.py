@@ -296,6 +296,10 @@ def rank_evaluations(
     """Return a new list of evaluations sorted by composite score (desc).
 
     Applies :func:`apply_quality_assessment` first, then scores and ranks.
+    Headline ``performance_score`` / ``performance_score_source`` must
+    already be set (P3.4 ``apply_performance_score`` runs in finalize /
+    ``rank --config`` *before* this function) so quality flags reflect
+    the pairing vs EPW origin.
     Updates ``composite_score``, ``rank``, Pareto flag, ranking provenance,
     and quality fields on copies.
 

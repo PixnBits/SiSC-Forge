@@ -242,8 +242,8 @@ class MockCalculator(BaseCalculator):
                 notes="end-to-end mock evaluation" + extra_note,
             ),
         )
-        # P3.4: when a usable DMFT pairing signal is present, map it onto
-        # the common performance_score (mock EPW is not trusted vs pairing).
+        # P3.4: default precedence only (scoring knobs). Campaign
+        # ranking.performance_precedence is re-applied in CLI finalize / rank.
         from siscforge.scoring.pairing import apply_performance_score
 
         scoring = getattr(dmft_cfg, "scoring", None) if dmft_cfg is not None else None

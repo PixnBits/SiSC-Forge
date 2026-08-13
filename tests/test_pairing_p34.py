@@ -6,8 +6,10 @@ import math
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from siscforge.calculators import get
+from siscforge.calculators.qe.dmft import mock_dmft_result, parse_dmft_observables
 from siscforge.export import write_evaluations_csv, write_synthesis_cards
 from siscforge.models import (
     CampaignConfig,
@@ -32,6 +34,7 @@ from siscforge.scoring.pairing import (
     SOURCE_DMFT_PAIRING,
     SOURCE_DMFT_PAIRING_MOCK,
     apply_performance_score,
+    mock_ranking_warning,
     performance_score_from_pairing,
     resolve_performance_score,
     trusted_epw_tc_K,
@@ -420,3 +423,86 @@ def test_docs_exist() -> None:
     assert "epw_then_dmft" in doc
     assert "not literature-validated" in doc
     assert "pairing_symmetry" in doc
+    assert "Why 25" in doc
+    assert "prioritization only" in doc
+    assert "double-apply" in doc
+    assert "allow_mock" in doc
+    assert "in review" in doc.lower()
+
+
+def test_occupancy_range_validator() -> None:
+    with pytest.raises(ValidationError):
+        DMFTScoringConfig(occupancy_soft_min=10.0, occupancy_soft_max=2.0)
+
+
+def test_nan_existing_score_is_rewritten() -> None:
+    ev = _ev(
+        dmft=_dmft(eig=1.0),
+        tc=float("nan"),
+        source="epw",
+    )
+    # Unreliable EPW (we also leave eph unset) → pairing should apply
+    applied = apply_performance_score(ev)
+    assert applied.performance_score == pytest.approx(25.0)
+    assert applied.performance_score_source == SOURCE_DMFT_PAIRING
+
+
+def test_observables_parse_flows_to_dmft_pairing_source() -> None:
+    """Non-mock drop-in pairing keys map to dmft_pairing (no TRIQS needed)."""
+    metrics = parse_dmft_observables(
+        {
+            "filling": 8.8,
+            "mass_enhancement": 3.0,
+            "converged": True,
+            "leading_pairing_eigenvalue": 0.80,
+            "pairing_symmetry": "d_x2-y2",
+        }
+    )
+    dmft = DMFTResult(
+        status="ok",
+        quality_tag="screening",
+        converged=True,
+        solver="solid_dmft",
+        leading_pairing_eigenvalue=metrics["leading_pairing_eigenvalue"],
+        pairing_symmetry=metrics["pairing_symmetry"],
+        filling=metrics["filling"],
+        mass_enhancement=metrics["mass_enhancement"],
+    )
+    ev = apply_performance_score(_ev(dmft=dmft, si=40.0))
+    assert ev.performance_score_source == SOURCE_DMFT_PAIRING
+    assert ev.performance_score == pytest.approx(20.0)
+    ranked = rank_evaluations([ev])
+    assert "dmft_pairing" in (ranked[0].quality_flags or [])
+    assert ranked[0].result_quality != "production"
+
+
+def test_mock_pairing_uses_family_not_ni_substring() -> None:
+    nick = mock_dmft_result(
+        seed="fam-nick",
+        formula="LaNiO2",
+        material_family="nickelate",
+    )
+    other = mock_dmft_result(
+        seed="fam-nick",
+        formula="LaNiO2",
+        material_family="other",
+    )
+    assert nick.pairing_symmetry == "d_x2-y2"
+    assert other.pairing_symmetry == "unknown"
+    assert nick.leading_pairing_eigenvalue != other.leading_pairing_eigenvalue
+
+
+def test_mock_ranking_warning_banner() -> None:
+    mock_ev = apply_performance_score(
+        _ev(
+            dmft=_dmft(eig=1.0, status="mock", quality_tag="mock", solver="mock"),
+            cid="m1",
+        )
+    )
+    real_ev = apply_performance_score(_ev(dmft=_dmft(eig=1.0), cid="r1"))
+    assert mock_ranking_warning([real_ev]) is None
+    note = mock_ranking_warning([mock_ev, real_ev])
+    assert note is not None
+    assert "1 ranked row" in note
+    assert "dmft_pairing_mock" in note
+    assert "not quantitative" in note

@@ -1,6 +1,6 @@
 # P3.4 — DMFT pairing eigenvalue → `performance_score`
 
-**Status**: shipped — deterministic mapping + evaluation wiring  
+**Status**: in review — deterministic mapping + evaluation wiring  
 **Prerequisite**: P3.3 `DMFTResult` (`docs/phase3-p33-dmft.md`)  
 **Next**: **P3.5** — oxygen-vacancy enumeration (out of scope here)
 
@@ -29,8 +29,8 @@ score_K = clamp( (λ − threshold) × kelvin_per_unit × Q,  0,  ceiling_K )
 |--------|---------|---------|
 | `λ` | `DMFTResult.leading_pairing_eigenvalue` | Leading pairing eigenvalue |
 | `threshold` | `0.0` | Subtracted before scaling |
-| `kelvin_per_unit` | `25.0` | λ = 1.0 → 25 K (mid conventional band) |
-| `ceiling_K` | `40.0` | Same default as `ranking.performance_ceiling_K` |
+| `kelvin_per_unit` | `25.0` | See “Why 25 / 40” below |
+| `ceiling_K` | `40.0` | Independent clamp; default matches ranking ceiling |
 | `Q` | `1.0` (soft ∈ [0.70, 1]) | Optional occupancy / m* demotion |
 
 **Typical bands** (defaults, Q = 1):
@@ -44,6 +44,26 @@ score_K = clamp( (λ − threshold) × kelvin_per_unit × Q,  0,  ceiling_K )
 
 This is a **ranking proxy**, not a Tc calculation and not a fitted
 Eliashberg / FLEX / DΓA model. Do not cite the number as a predicted Tc.
+
+### Why 25 K / unit and a 40 K ceiling
+
+These numbers are an **engineering ranking convenience**, not a physical
+map from pairing eigenvalue to Tc:
+
+- Linearized pairing eigenvalues approach ~1 near an instability. Mapping
+  λ = 1 → **25 K** puts a “just unstable” signal in the middle of the
+  existing conventional ranking band (NbN-like screening Tcs).
+- The **40 K** clamp matches the default `ranking.performance_ceiling_K`
+  so a pairing proxy cannot saturate the 0–100 performance axis harder
+  than a conventional Eliashberg Tc. The two ceilings are **independent
+  knobs** — if you retune one, set the other too.
+- PRD intermediate scientific targets are 40–80 K. This map does **not**
+  try to reach that range; it only shares the Phase-0/1 ranker axis.
+
+Mixed-family lists (a nitride with real EPW Tc next to a nickelate with
+a pairing proxy) are for **prioritization only**. Absolute comparability
+of the two origins is not claimed. Source-aware or family-normalized
+acquisition / axes are residual **P3.6**.
 
 ### `pairing_symmetry`
 
@@ -66,20 +86,40 @@ enters the score.
 
 When `quality_demotion: true` (default):
 
-- `mass_enhancement` above `mass_enhancement_soft_cap` (8.0) multiplies Q
-  by `max(0.70, 1 − 0.10 × (m*/cap − 1))`
+- `mass_enhancement` above `mass_enhancement_soft_cap` (**8.0**) multiplies Q
+  by `max(0.70, 1 − 0.10 × (m*/cap − 1))`. 8 is a loose screening fence
+  (typical nickelate m* is ~2–5), not a literature cutoff.
 - `filling` (or occupancy sum) outside `[occupancy_soft_min, occupancy_soft_max]`
-  (default 1–12) multiplies Q by 0.90
+  (default **1–12**) multiplies Q by 0.90. Loose fence around a few-electron
+  d / impurity filling; 12 ≈ a full d-shell plus leftover.
 
 Missing occupancy / m* → no demotion. Floor is 0.70.
+`occupancy_soft_min` must be `<= occupancy_soft_max`.
 
-### Mock eigenvalues
+### Mock eigenvalues and dry-run ranking
 
 The mock solver **fills** an illustrative `leading_pairing_eigenvalue`
-(nickelate-like ≈ 0.55–1.25, `d_x2-y2`; other families weaker). These
-numbers are **seeded hashes, not literature-validated**. Source is
+when `material_family == "nickelate"` (≈ 0.55–1.25, `d_x2-y2`). Other
+families get a weaker placeholder. Family is the only switch — a `"Ni"`
+substring in the formula is **not** used (brittle for alloys).
+
+These numbers are **seeded hashes, not literature-validated**. Source is
 always `dmft_pairing_mock`. `raw["pairing_label"]` and provenance notes
 repeat the disclaimer.
+
+`allow_mock` defaults to **true** so the dry-run path (the only working
+DMFT path until residual real launch) exercises ranking. That is
+intentional: **illustrative mock λ participates in rank/Pareto**.
+Mitigations:
+
+- source tag `dmft_pairing_mock` (never `epw`)
+- quality tier stays screening; `do_not_cite_tc` stays true
+- synthesis-card origin line + mock disclaimer
+- `siscforge run` / `siscforge rank` print a yellow banner when any
+  ranked row has this source
+
+Set `dft.dmft.scoring.allow_mock: false` for a stricter production
+posture (no mock headline score).
 
 ## Precedence
 
@@ -99,7 +139,8 @@ score, tagged `dmft_pairing_mock`.
 Overrides: `dmft_then_epw`, `epw_only`, `dmft_only`.
 
 Ranking (`rank_evaluations`) and Pareto **do not** branch on family.
-They only see `performance_score`.
+They only see `performance_score`. Quality assessment runs **after**
+the headline source is set, so flags/tier reflect pairing vs EPW.
 
 ## Config (inert defaults)
 
@@ -112,7 +153,7 @@ dft:
       eigenvalue_threshold: 0.0
       score_ceiling_K: 40.0
       require_converged: true
-      allow_mock: true
+      allow_mock: true         # dry-run ranks on illustrative λ (see above)
       quality_demotion: true
       mass_enhancement_soft_cap: 8.0
       occupancy_soft_min: 1.0
@@ -125,14 +166,20 @@ ranking:
 Omitting these keys preserves P3.3 / conventional behaviour when DMFT
 is off.
 
-## Wiring
+## Wiring (double-apply contract)
 
 | Site | Behaviour |
 |------|-----------|
-| `MockCalculator` | After mock EPW fill, `apply_performance_score` |
-| `QECalculator` | After EPW/DMFT attach, `apply_performance_score` |
-| `siscforge run` `_finalize_eval` | Re-apply with campaign ranking precedence; surrogate only if still unset |
-| `siscforge rank --config` | Re-apply so older stores pick up P3.4 |
+| `MockCalculator` / `QECalculator` | `apply_performance_score(scoring=…)` only — **default** `epw_then_dmft`. Campaign precedence is not available here. |
+| `siscforge run` `_finalize_eval` | Re-apply with campaign `ranking.performance_precedence`; surrogate only if still unset |
+| `siscforge rank --config` | Re-apply so older stores pick up P3.4 + campaign precedence |
+
+Inspecting a raw calculator result can therefore differ from the
+final campaign row when precedence is not the default. The finalize /
+rank step is the contract.
+
+Quality (`apply_quality_assessment`) is invoked inside `rank_evaluations`
+after the headline source is set.
 
 ## Trust / export
 
@@ -144,10 +191,12 @@ is off.
 - `do_not_cite_tc` stays true unless `result_quality=production` **and**
   the headline is not a pairing proxy
 
-## Hard out of scope
+## Residual (not this package)
 
-- Oxygen-vacancy structure generation (**P3.5**)
-- Mixed conventional/unconventional AL (**P3.6**)
-- Real solid_dmft / CTHYB launch (residual `p3_x_real_launch`)
-- Changing Si-feasibility science or the P2.5 process-recommendation schema
-- Inventing a full pairing / Tc physics model
+- Non-mock `observables.json` → tagged `dmft_pairing` is exercised by a
+  unit test of parse + apply. End-to-end real CTHYB launch remains
+  `p3_x_real_launch`.
+- Source-aware / family-normalized AL acquisition (**P3.6**).
+- Oxygen-vacancy structure generation (**P3.5**).
+- Changing Si-feasibility science or the P2.5 process-recommendation schema.
+- Inventing a full pairing / Tc physics model.

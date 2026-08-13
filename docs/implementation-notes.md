@@ -1,6 +1,27 @@
 # Implementation Notes
 
+## Slice P3.4 review (2026-08-13) — language, mock posture, scale, wiring
+
+Addressed Product Owner + Software Engineer review on #14. Mapping /
+precedence / ranking contracts unchanged.
+
+| Issue | Fix |
+|-------|-----|
+| README / ROADMAP said **Done / shipped** while PR open | Tempered to **in review** |
+| Mock pairing scores participate in rank unnoticed | CLI yellow banner via `mock_ranking_warning`; phase doc “dry-run ranks on illustrative λ” |
+| 25 / 40 look like a physical Tc map | “Why 25 / 40” + mixed-origin prioritization-only note; P3.6 residual |
+| Calculators omit `ranking=` | Documented double-apply contract; comments at call sites |
+| `"Ni" in formula` mock λ heuristic | Pairing fill uses `material_family == "nickelate"` only |
+| Occupancy / m* bounds undocumented | Field descriptions + occupancy min≤max validator |
+| Float `!=` fragile with NaN | `_same_score` treats non-finite as not-equal |
+| Quality timing | Confirmed `rank_evaluations` assesses after headline source; documented |
+
+**Still residual:** real CTHYB launch, P3.5 O-vacancy, P3.6 source-aware AL.
+
+---
+
 ## Slice P3.4 (2026-08-13) — pairing eigenvalue → performance_score
+
 
 **Scope**: Map `DMFTResult.leading_pairing_eigenvalue` onto the common
 `performance_score` so ranking / Pareto / export stay family-agnostic.

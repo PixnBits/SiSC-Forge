@@ -1844,6 +1844,11 @@ def _print_rank_table(
             f"uncertainty={rw.get('uncertainty', '—')} · "
             f"ceiling={rw.get('performance_ceiling_K', 40)} K"
         )
+    from siscforge.scoring.pairing import mock_ranking_warning
+
+    mock_note = mock_ranking_warning(ranked)
+    if mock_note:
+        console.print(f"[yellow]{mock_note}[/yellow]")
 
     table = Table(title=title)
     table.add_column("#", justify="right", style="cyan")

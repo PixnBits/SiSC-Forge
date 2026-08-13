@@ -176,16 +176,17 @@ text (`wannier_gate`, `solver_missing`, `import_error`, `binary_missing`,
 `not_converged`, `other`). It is not a structured solver API. Treat
 labels as diagnostic, not a contract for downstream ranking.
 
-## P3.4 pairing map (shipped in a follow-on package)
+## P3.4 pairing map (follow-on package)
 
 `DMFTResult` has:
 
 - `leading_pairing_eigenvalue: float | None`
 - `pairing_symmetry: str | None`
 
-**P3.4** maps the leading eigenvalue onto the common `performance_score`
-(`siscforge.scoring.pairing`; `docs/phase3-p34-pairing-score.md`).
-`pairing_symmetry` is metadata only. Mock eigenvalues are illustrative.
+**P3.4** (in review) maps the leading eigenvalue onto the common
+`performance_score` (`siscforge.scoring.pairing`;
+`docs/phase3-p34-pairing-score.md`). `pairing_symmetry` is metadata only.
+Mock eigenvalues are illustrative.
 
 `status` is a free `str` (same pattern as other Result models);
 `quality_tag` is a `Literal`. Tightening `status` can wait.
