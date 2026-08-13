@@ -369,9 +369,10 @@ class WannierConfig(BaseModel):
     calculator ``qe-wannier``).
 
     Distinct from the EPW-internal Wannier90 step (``proj=random`` inside EPW
-    screening). This config drives a **first-class** Wannierization after SCF
+    screening). This config drives a **first-class prep + quality-metrics** step after SCF
     or DFT+U that produces :class:`~siscforge.models.results.WannierResult`
-    for the P3.3 DMFT gate.
+    for the P3.3 DMFT gate. Full nscf + pw2wannier90 orchestration is residual
+    (P3.2.1 / under P3.3).
 
     Lessons reused from EPW screening (coarse-k safety, frozen-window
     classification) without weakening the conventional EPW remediation path.
@@ -437,11 +438,43 @@ class WannierConfig(BaseModel):
     """Raise coarse k to Wannier-safe floors (same policy as EPW)."""
 
     # Quality / DMFT gate thresholds
-    max_avg_spread_ang2: float = Field(default=12.0, gt=0.0)
-    """DMFT gate: average WF spread (Å²) above this → not ready for DMFT."""
+    max_avg_spread_ang2: float = Field(
+        default=12.0,
+        gt=0.0,
+        description=(
+            "DMFT gate: average WF spread (Å²) above this → not ready for DMFT. "
+            "Conservative screening default pending nickelate-specific calibration. "
+            "With proj=random many candidates will gate out — intentional for P3.3 "
+            "safety. Tighten for production / explicit projections; loosen only with "
+            "documented local validation. Not derived from a single literature cutoff."
+        ),
+    )
+    """DMFT gate: average WF spread (Å²) above this → not ready for DMFT.
 
-    max_spread_ang2: float = Field(default=25.0, gt=0.0)
-    """DMFT gate: any individual WF spread above this → not ready."""
+    Conservative **screening** default pending nickelate-specific calibration.
+    With ``proj=random`` many candidates will gate out — intentional for P3.3
+    safety. Tighten for production / explicit projections; loosen only with
+    documented local validation. Not derived from a single literature cutoff.
+    """
+
+    max_spread_ang2: float = Field(
+        default=25.0,
+        gt=0.0,
+        description=(
+            "DMFT gate: any individual WF spread (Å²) above this → not ready. "
+            "Same rationale as max_avg_spread_ang2: conservative screening floor so "
+            "P3.3 does not consume obviously delocalized / failed MLWFs. Expect to "
+            "retune once material-specific projections and workstation validation data "
+            "exist."
+        ),
+    )
+    """DMFT gate: any individual WF spread (Å²) above this → not ready.
+
+    Same rationale as ``max_avg_spread_ang2``: conservative screening floor so
+    P3.3 does not consume obviously delocalized / failed MLWFs. Expect to
+    retune once material-specific projections and workstation validation data
+    exist.
+    """
 
     require_chk: bool = True
     """DMFT gate: require a ``.chk`` (or mock equivalent) artifact handle."""

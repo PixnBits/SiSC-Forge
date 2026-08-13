@@ -1,4 +1,4 @@
-"""Standalone Wannierization pipeline with quality metrics — Phase 3.2.
+"""Standalone Wannier prep + quality metrics — Phase 3.2.
 
 Provides:
 - enablement helper from :class:`~siscforge.models.config.WannierConfig`
@@ -6,11 +6,16 @@ Provides:
 - Wannier90 log parse → spreads / failure classes
 - DMFT readiness gate for **P3.3** (TRIQS / solid_dmft)
 - mock :class:`~siscforge.models.results.WannierResult` for dry-run
+- gated ``wannier90.x`` when ``.amn``/``.mmn`` are already staged
 - sequential recipe glue after SCF / DFT+U (sacred upstream artifacts)
+
+This is **prep + metrics + gated wannier90.x**, not a turnkey nscf +
+pw2wannier90 orchestration. Residual **P3.2.1** (or under P3.3) covers
+minimal automated nscf + ``pw2wannier90`` when binaries are present.
 
 **Out of scope (later packages):** TRIQS/solid_dmft (P3.3), pairing
 eigenvalue (P3.4), oxygen-vacancy enumeration (P3.5), material-specific
-production projection libraries.
+production projection libraries, spinor / collinear-spin Wannier manifolds.
 
 The conventional EPW pathway still owns its own internal Wannier90 step
 (``proj=random``, coarse grids, remediation). This module does **not**
@@ -140,7 +145,7 @@ def primary_wannier_failure_reason(
         "kmesh_bvector": "wannier: kmesh_get_bvector / not enough bvectors",
         "disentanglement": "wannier: disentanglement failure",
         "spread_divergence": "wannier: Wannier spreads diverged / unusable",
-        "missing_files": "wannier: missing .amn/.mmn/.chk inputs",
+        "missing_files": "wannier: missing .amn/.mmn — stage nscf+pw2wannier90 into work_dir",
         "binary_missing": "wannier: wannier90.x not found",
         "projection": "wannier: projection specification error",
         "nscf_failed": "wannier: nscf prerequisite failed",
@@ -309,7 +314,13 @@ def default_num_wann_screening(
     explicit: int | None = None,
     auto: bool = True,
 ) -> int:
-    """Screening floor for ``num_wann`` (mirrors EPW ``auto_nbndsub`` spirit)."""
+    """Screening floor for ``num_wann`` (same *spirit* as EPW ``auto_nbndsub``).
+
+    Intentionally **not identical** to EPW: uses ``max(16 if n_at>=4 else 8,
+    2*n_at, nbnd//2)`` rather than EPW's ``max(16, 4*n_atoms, nbnd//2)``.
+    Standalone correlated screening often wants a smaller manifold than the
+    conventional EPW interpolation subspace.
+    """
     n_bands = int(num_bands) if num_bands and int(num_bands) > 0 else 20
     n_at = len(structure) if structure is not None else 2
     auto_val = max(8, min(n_bands, max(16 if n_at >= 4 else 8, 2 * n_at, n_bands // 2)))
@@ -364,9 +375,9 @@ def _window_block(
     ):
         # Mix: if relative requested and Ef known, only fill missing slots from
         # EPW-style defaults; absolute overrides take precedence.
-        from siscforge.calculators.qe.epw_inputs import _wannier_window_lines
+        from siscforge.calculators.qe.epw_inputs import wannier_window_lines
 
-        defaults = _wannier_window_lines(
+        defaults = wannier_window_lines(
             fermi_eV if cfg.use_fermi_relative_windows else None,
             screening_tight_froz=cfg.screening_tight_froz,
         )
@@ -386,9 +397,9 @@ def _window_block(
             parsed["dis_froz_max"] = float(cfg.dis_froz_max)
         return [f"  {k} = {v:.4f}" for k, v in parsed.items()]
 
-    from siscforge.calculators.qe.epw_inputs import _wannier_window_lines
+    from siscforge.calculators.qe.epw_inputs import wannier_window_lines
 
-    return _wannier_window_lines(
+    return wannier_window_lines(
         fermi_eV, screening_tight_froz=cfg.screening_tight_froz
     )
 
@@ -565,7 +576,11 @@ def parse_wannier_result(
         if returncode not in (None, 0) and fail_cls == "other" and not job_done:
             fail_cls = "other"
 
-    # Success: finished + spreads present + no hard failure class
+    # Success: finished + spreads present + no hard failure class.
+    # ``convergence`` is classified from logs but is **not** a hard_fail
+    # fingerprint on its own — returncode / job_done checks below still mark
+    # wannier_ok=False. Hard-fail classes force failure even when spread-like
+    # text is present.
     hard_fail = fail_cls in {
         "frozen_window",
         "kmesh_bvector",
@@ -656,7 +671,11 @@ def parse_wannier_result(
         spreads_ang2=list(metrics["spreads_ang2"] or []),
         disentanglement_notes=dis_notes,
         frozen_window_notes=frozen_notes,
-        kmesh=list(cfg.kmesh or []),
+        kmesh=list(
+            (extra_raw or {}).get("actual_kmesh")
+            or cfg.kmesh
+            or []
+        ),
         work_dir=arts.get("work_dir"),  # type: ignore[arg-type]
         win_path=arts.get("win_path"),  # type: ignore[arg-type]
         amn_path=arts.get("amn_path"),  # type: ignore[arg-type]
@@ -671,6 +690,9 @@ def parse_wannier_result(
                 "projection_mode": mode,
                 "num_wann": n_wann,
                 "seedname": cfg.seedname,
+                "kmesh": list(
+                    (extra_raw or {}).get("actual_kmesh") or cfg.kmesh or []
+                ),
             },
             notes="Wannier90 parse (P3.2)",
         ),
@@ -901,18 +923,14 @@ def mock_wannier_result(
 
 
 def require_wannier90():
-    """Return QE env with wannier90.x or raise."""
-    from siscforge.calculators.qe.env import QENotAvailableError, detect_qe_environment
+    """Return QE env with wannier90.x or raise.
 
-    env = detect_qe_environment()
-    if not env.wannier90:
-        raise QENotAvailableError(
-            "wannier90.x not found. Standalone Wannierization (P3.2) requires "
-            "Wannier90 on PATH or under QE_BIN.\n"
-            "For dry-run: siscforge run --dry-run <campaign.yaml>\n"
-            "Or disable: dft.do_wannier: false / dft.wannier.enabled: false"
-        )
-    return env
+    Single source of truth lives in :mod:`siscforge.calculators.qe.env`;
+    this is a thin re-export for callers already importing from wannier.
+    """
+    from siscforge.calculators.qe.env import require_wannier90 as _require
+
+    return _require()
 
 
 def run_wannier90_on_artifacts(
@@ -993,7 +1011,7 @@ def run_wannier90_on_artifacts(
         result = WannierResult(
             wannier_ok=False,
             ready_for_dmft=False,
-            dmft_gate_notes="not ready for DMFT: missing .amn/.mmn (run pw2wannier90)",
+            dmft_gate_notes="not ready for DMFT: missing .amn/.mmn (stage nscf+pw2wannier90 into work_dir)",
             status="failed",
             quality_tag=dft.quality_tag,
             failure_class="missing_files",
@@ -1051,13 +1069,16 @@ def run_wannier90_on_artifacts(
         message=f"wannier90.x rc={rc}",
     )
 
+    actual_kmesh = resolve_kmesh(dft, structure) if structure is not None else list(
+        dft.wannier.kmesh or []
+    )
     return parse_wannier_result(
         wout if wout.is_file() else (proc.stdout or ""),
         dft=dft,
         work_dir=work_dir,
         quality_tag=dft.quality_tag,
         returncode=rc,
-        extra_raw={"cmd": cmd, "rc": rc},
+        extra_raw={"cmd": cmd, "rc": rc, "actual_kmesh": actual_kmesh},
     )
 
 
@@ -1072,7 +1093,12 @@ def run_wannier_workflow(
     scf_work_dir: Path | str | None = None,
     step_log: list[str] | None = None,
 ) -> WannierResult:
-    """Prep + run standalone Wannierization under *work_dir*.
+    """Prep + optional gated ``wannier90.x`` under *work_dir*.
+
+    Writes ``.win`` always. Invokes ``wannier90.x`` only when ``.amn``/``.mmn``
+    are already staged (no automated nscf / pw2wannier90 in P3.2 — residual
+    **P3.2.1**). Missing prep returns ``failure_class=missing_files`` with an
+    operator next-step; upstream SCF/DFT+U is never touched.
 
     Parameters
     ----------
@@ -1104,7 +1130,8 @@ def run_wannier_workflow(
             ready_for_dmft=False,
             dmft_gate_notes=(
                 "not ready for DMFT: .amn/.mmn not present — "
-                "pw2wannier90 prep required for real Wannier90 run"
+                "stage nscf + pw2wannier90 outputs into this work_dir, "
+                "then re-invoke or call run_wannier90_on_artifacts"
             ),
             status="failed",
             quality_tag=config.quality_tag,
@@ -1132,9 +1159,16 @@ def run_wannier_workflow(
                 "prefix": prefix,
                 "scf_work_dir": str(scf_work_dir) if scf_work_dir else None,
                 "extension_hooks": dict(_EXTENSION_HOOKS),
+                "actual_kmesh": resolve_kmesh(config, structure),
                 "note": (
-                    "Real path: run nscf + pw2wannier90 into this work_dir, "
-                    "then re-invoke; mock path fills full WannierResult"
+                    "Real path is prep + gated wannier90.x only (P3.2). "
+                    "Stage nscf + pw2wannier90 (.amn/.mmn) into this work_dir, "
+                    "then re-invoke or call run_wannier90_on_artifacts. "
+                    "Automated nscf/pw2wannier90 orchestration is residual P3.2.1."
+                ),
+                "operator_next_step": (
+                    "stage nscf+pw2wannier90 (.amn/.mmn) into work_dir, "
+                    "then re-invoke / run_wannier90_on_artifacts"
                 ),
             },
             provenance=Provenance(

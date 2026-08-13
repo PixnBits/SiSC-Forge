@@ -232,8 +232,9 @@ class DFTUResult(BaseModel):
 class WannierResult(BaseModel):
     """Standalone Wannierization quality result — Phase 3.2.
 
-    First-class reusable step after SCF / DFT+U for correlated (nickelate)
-    candidates. Consumed later by TRIQS / solid_dmft (**P3.3**).
+    First-class prep + quality-metrics step after SCF / DFT+U for correlated
+    (nickelate) candidates. Consumed later by TRIQS / solid_dmft (**P3.3**).
+    Full automated nscf + pw2wannier90 orchestration is residual **P3.2.1**.
 
     Inert for conventional nitride / MgB₂ campaigns: leave
     ``CandidateEvaluation.wannier`` as ``None`` unless Wannier is enabled
@@ -241,6 +242,8 @@ class WannierResult(BaseModel):
 
     The conventional EPW pathway still runs its own internal Wannier90 step
     (``proj=random``, coarse grids); that path is unchanged by this model.
+    Standalone ``CandidateEvaluation.wannier`` is independent of
+    ``electron_phonon.wannier_ok``.
     """
 
     wannier_ok: bool = False
@@ -268,7 +271,12 @@ class WannierResult(BaseModel):
     Known values include: ``frozen_window``, ``kmesh_bvector``,
     ``disentanglement``, ``spread_divergence``, ``missing_files``,
     ``binary_missing``, ``projection``, ``nscf_failed``, ``pw2wannier_failed``,
-    ``other``. Never reuse phonon-only or EPW-only labels for this step.
+    ``convergence``, ``other``. Never reuse phonon-only or EPW-only labels.
+
+    ``convergence`` is classified from logs but is **not** a hard-fail
+    fingerprint on its own — a non-zero returncode / incomplete job still
+    marks ``wannier_ok=False``. Hard-fail classes (frozen window, missing
+    files, …) force failure even when partial spread text is present.
     """
 
     num_wann: int | None = None
@@ -302,7 +310,10 @@ class WannierResult(BaseModel):
     """Frozen-window notes (tight screening windows, overflow, …)."""
 
     kmesh: list[int] = Field(default_factory=list)
-    """Coarse k-mesh used for Wannierization (Wannier-safe policy)."""
+    """Actual coarse k-mesh written into ``.win`` / used for the run.
+
+    Prefer the post-``resolve_kmesh`` mesh (may be auto-raised above config).
+    """
 
     # Artifact handles (paths or opaque workdir references)
     work_dir: str | None = None
@@ -343,6 +354,11 @@ class WannierResult(BaseModel):
             bits.append(f"Ω_avg={self.avg_spread_ang2:.3f} Å²")
         if self.failure_class:
             bits.append(f"fail={self.failure_class}")
+            if self.failure_class == "missing_files":
+                bits.append(
+                    "next=stage nscf+pw2wannier90 (.amn/.mmn) into work_dir, "
+                    "then re-invoke / run_wannier90_on_artifacts"
+                )
         bits.append(f"status={self.status}")
         return "; ".join(bits)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from siscforge.models.config import DFTConfig
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import SiFeasibilityScore
 from siscforge.silicon.feasibility import score_si_feasibility
+
+_LOG = logging.getLogger(__name__)
 
 __all__ = ["QECalculator", "QENotAvailableError", "QEEpwCalculator", "QEDftuCalculator", "QEWannierCalculator"]
 
@@ -322,6 +325,10 @@ class QECalculator(BaseCalculator):
                 from siscforge.models.provenance import Provenance
                 from siscforge import __version__ as _sf_ver
 
+                _LOG.exception(
+                    "Wannier step failed (upstream preserved) work_dir=%s",
+                    wannier_dir,
+                )
                 step_log.append(f"Wannier exception (upstream kept): {exc}")
                 wf.wannier = WannierResult(
                     wannier_ok=False,
@@ -605,11 +612,12 @@ class QEDftuCalculator(QECalculator):
 
 
 class QEWannierCalculator(QECalculator):
-    """QE calculator that forces standalone Wannierization (P3.2).
+    """QE calculator that forces standalone Wannier prep + metrics (P3.2).
 
     Registration name: ``qe-wannier``. Forces ``do_wannier``. Defaults phonon/EPW
     off unless the campaign re-enables them. Prefer pairing with DFT+U for
-    nickelates (``do_dftu`` remains independent). Does not require TRIQS.
+    nickelates (``do_dftu`` remains independent). Prep + gated wannier90.x only;
+    automated nscf/pw2wannier90 is residual P3.2.1. Does not require TRIQS.
     """
 
     name = "qe-wannier"

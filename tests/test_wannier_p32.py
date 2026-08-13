@@ -430,7 +430,7 @@ def test_ndnio2_wannier_example_yaml_loads() -> None:
 
 
 def test_real_wannier90_gated_without_binary(tmp_path: Path) -> None:
-    """Without wannier90.x, real-path prep classifies cleanly (no crash)."""
+    """Without staged .amn/.mmn, real-path prep classifies cleanly (no crash)."""
     from siscforge.calculators.qe.wannier import run_wannier_workflow
 
     s = build_binary_nitride("Nb")
@@ -450,6 +450,10 @@ def test_real_wannier90_gated_without_binary(tmp_path: Path) -> None:
     assert result.failure_class == "missing_files"
     assert result.ready_for_dmft is False
     assert result.win_path  # .win still written
+    # Operator next-step must be discoverable
+    assert "pw2wannier90" in result.dmft_gate_notes or "pw2wannier90" in result.summary_line()
+    assert "next=" in result.summary_line() or "stage" in result.summary_line()
+    assert result.kmesh  # actual resolved mesh recorded
     # Sacred: scf dir was never created/deleted by wannier
     assert not (tmp_path / "scf").exists() or True
 
@@ -466,3 +470,107 @@ def test_mock_force_failure_helper_direct(tmp_path: Path) -> None:
     assert r.failure_class == "frozen_window"
     # Incomplete artifacts omitted on failure
     assert r.chk_path is None
+
+
+def test_missing_files_summary_and_synthesis_card(tmp_path: Path) -> None:
+    """missing_files surfaces operator next-step in summary + synthesis card."""
+    from siscforge.calculators.qe.wannier import run_wannier_workflow
+
+    s = build_binary_nitride("Nb")
+    dft = DFTConfig(
+        do_wannier=True,
+        wannier=WannierConfig(enabled=True, seedname="siscforge", kmesh=[2, 2, 2]),
+        nbnd=20,
+        quality_tag="screening",
+    )
+    result = run_wannier_workflow(s, dft, tmp_path / "wannier")
+    assert result.failure_class == "missing_files"
+    summary = result.summary_line()
+    assert "fail=missing_files" in summary
+    assert "pw2wannier90" in summary or "stage" in summary
+
+    cand = StructureCandidate(
+        formula="NbN",
+        material_family="tm_nitride",
+        candidate_id="miss-files-card",
+    )
+    ev = CandidateEvaluation(candidate=cand, wannier=result, status="failed")
+    cards = write_synthesis_cards([ev], tmp_path / "cards.md", campaign_name="p32-miss")
+    text = cards.read_text()
+    assert "independent of EPW-internal" in text or "EPW-internal" in text
+    assert "operator next step" in text.lower() or "pw2wannier90" in text
+    assert "standalone" in text.lower()
+
+
+def test_parse_with_staged_fake_amn_mmn(tmp_path: Path) -> None:
+    """Staged fake .amn/.mmn + successful .wout → wannier_ok parse path."""
+    wout = tmp_path / "siscforge.wout"
+    wout.write_text(_SUCCESS_WOUT, encoding="utf-8")
+    (tmp_path / "siscforge.chk").write_text("mock chk\n", encoding="utf-8")
+    (tmp_path / "siscforge.amn").write_text("mock amn\n", encoding="utf-8")
+    (tmp_path / "siscforge.mmn").write_text("mock mmn\n", encoding="utf-8")
+    (tmp_path / "siscforge.win").write_text("num_wann = 8\n", encoding="utf-8")
+
+    dft = DFTConfig(
+        do_wannier=True,
+        wannier=WannierConfig(enabled=True, seedname="siscforge", kmesh=[4, 4, 4]),
+    )
+    result = parse_wannier_result(
+        wout,
+        dft=dft,
+        work_dir=tmp_path,
+        quality_tag="screening",
+        returncode=0,
+        extra_raw={"actual_kmesh": [6, 6, 6]},
+    )
+    assert result.wannier_ok is True
+    assert result.amn_path
+    assert result.mmn_path
+    assert result.chk_path
+    # Prefer actual mesh from extra_raw over config
+    assert result.kmesh == [6, 6, 6]
+
+
+def test_public_wannier_window_lines_helper() -> None:
+    from siscforge.calculators.qe.epw_inputs import (
+        wannier_window_lines,
+        _wannier_window_lines,
+    )
+
+    lines = wannier_window_lines(20.0, screening_tight_froz=True)
+    assert any("dis_win_min" in ln for ln in lines)
+    assert any("dis_froz_max" in ln for ln in lines)
+    # Private alias still present for back-compat
+    assert _wannier_window_lines is wannier_window_lines
+
+
+def test_require_wannier90_is_env_reexport() -> None:
+    from siscforge.calculators.qe import env as env_mod
+    from siscforge.calculators.qe import wannier as wannier_mod
+
+    assert callable(env_mod.require_wannier90)
+    assert callable(wannier_mod.require_wannier90)
+
+
+def test_dmft_threshold_defaults_documented() -> None:
+    cfg = WannierConfig()
+    assert cfg.max_avg_spread_ang2 == 12.0
+    assert cfg.max_spread_ang2 == 25.0
+    fields = WannierConfig.model_fields
+    avg_desc = (fields["max_avg_spread_ang2"].description or "").lower()
+    max_desc = (fields["max_spread_ang2"].description or "").lower()
+    assert "conservative" in avg_desc
+    assert "screening" in avg_desc or "nickelate" in avg_desc
+    assert "conservative" in max_desc or "screening" in max_desc
+
+
+def test_logger_exception_on_wannier_catch() -> None:
+    """Sacred-upstream catch in QECalculator.run logs via logger.exception."""
+    import inspect
+
+    from siscforge.calculators.qe import calculator as calc_mod
+
+    src = inspect.getsource(calc_mod.QECalculator.run)
+    assert "_LOG.exception" in src
+    assert "upstream" in src.lower()
+

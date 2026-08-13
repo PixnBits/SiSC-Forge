@@ -999,14 +999,20 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         ssum = wannier.spread_sum_ang2
         ssum_s = f"{ssum:.3f}" if ssum is not None else "—"
         gate = "yes" if wannier.ready_for_dmft else "no"
+        kmesh = list(wannier.kmesh or [])
+        kmesh_s = "×".join(str(x) for x in kmesh) if kmesh else "—"
         lines.extend(
             [
                 "",
-                "#### Wannierization (quality metrics, P3.2)",
+                "#### Wannierization (standalone quality metrics, P3.2)",
+                "- **independent of EPW-internal Wannier** "
+                "(`electron_phonon.wannier_ok`); this is the correlated-pathway "
+                "prep + metrics step, not the conventional EPW Wannierization.",
                 f"- wannier_ok: {wannier.wannier_ok}",
                 f"- ready_for_dmft (P3.3 gate): {gate}",
                 f"- num_wann / num_bands: {wannier.num_wann} / {wannier.num_bands}",
                 f"- projection: {wannier.projection_summary or wannier.projection_mode or '—'}",
+                f"- k-mesh (actual): {kmesh_s}",
                 f"- spread sum / avg (Å²): {ssum_s} / {avg_s}",
                 f"- failure_class: {wannier.failure_class or '—'}",
                 f"- work_dir: {wannier.work_dir or '—'}",
@@ -1016,9 +1022,17 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         )
         if wannier.dmft_gate_notes:
             lines.append(f"- dmft_gate_notes: {wannier.dmft_gate_notes}")
+        if wannier.failure_class == "missing_files":
+            lines.append(
+                "- **operator next step**: stage nscf + pw2wannier90 outputs "
+                "(`.amn`/`.mmn`) into `work_dir`, then re-invoke or call "
+                "`run_wannier90_on_artifacts`. Automated nscf/pw2wannier90 is "
+                "residual P3.2.1."
+            )
         lines.append(
-            "- note: screening Wannier may use proj=random + coarse k; "
-            "material-specific production projections are a later residual. "
+            "- note: screening defaults may use proj=random + coarse k; "
+            "material-specific production projections and spinor/collinear-spin "
+            "manifolds are later residuals. "
             "P3.3 TRIQS/solid_dmft should refuse launch when ready_for_dmft is false."
         )
 

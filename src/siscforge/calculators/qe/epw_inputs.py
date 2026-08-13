@@ -128,16 +128,17 @@ def default_nbndsub_screening(
     return auto_val if auto else 10
 
 
-def _wannier_window_lines(
+def wannier_window_lines(
     fermi_eV: float | None,
     *,
     screening_tight_froz: bool = True,
 ) -> list[str]:
-    """Disentanglement windows.
+    """Disentanglement / frozen-window lines for Wannier90 ``.win`` / EPW.
 
-    Absolute eigenvalue windows must **bracket the Fermi level**. Hard-coded
-    ``dis_win_max = 20`` fails for NbN (E_F ≈ 21 eV) and causes EPW
-    ``efermig: cannot bracket Ef`` after Wannier interpolation.
+    Public helper shared by EPW input generation and standalone P3.2
+    Wannierization. Absolute eigenvalue windows must **bracket the Fermi
+    level**. Hard-coded ``dis_win_max = 20`` fails for NbN (E_F ≈ 21 eV) and
+    causes EPW ``efermig: cannot bracket Ef`` after Wannier interpolation.
 
     Screening uses a **tighter frozen window** (``screening_tight_froz``) so
     ``proj=random`` + moderate nbndsub does not trip Wannier90
@@ -173,6 +174,10 @@ def _wannier_window_lines(
         f"  dis_froz_min= {fermi_eV - 12.0:.4f}",
         f"  dis_froz_max= {fermi_eV + 2.0:.4f}",
     ]
+
+
+# Back-compat private alias (prefer :func:`wannier_window_lines`)
+_wannier_window_lines = wannier_window_lines
 
 
 # ---------------------------------------------------------------------------
@@ -691,7 +696,7 @@ def build_epw_input(
         ]
     )
     lines.extend(
-        _wannier_window_lines(fermi_eV, screening_tight_froz=screening_tight)
+        wannier_window_lines(fermi_eV, screening_tight_froz=screening_tight)
     )
     lines.extend(
         [

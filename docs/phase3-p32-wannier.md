@@ -1,21 +1,27 @@
-# P3.2 — Wannierization pipeline with quality metrics
+# P3.2 — Wannierization prep + quality metrics
 
-**Status**: shipped (Phase 3 vertical slice 2)  
-**Prerequisite**: P3.1 DFT+U (`docs/phase3-p31-dftu.md`)
+**Status**: shipped (metrics + mock + gate + prep)  
+**Prerequisite**: P3.1 DFT+U (`docs/phase3-p31-dftu.md`)  
+**Residual**: **P3.2.1** — minimal automated nscf + `pw2wannier90` orchestration (or under P3.3)
 
 ## Goal
 
-Provide a **first-class, reusable Wannierization step** with explicit quality
-metrics that:
+Provide a **first-class prep + quality-metrics step** for standalone Wannierization that:
 
 1. Can run after SCF / DFT+U for correlated (nickelate) candidates.
 2. Produces a typed `WannierResult` with success/failure and quality diagnostics.
 3. Remains optional and inert for conventional nitride / MgB₂ campaigns.
 4. Sets a clean extension point for **P3.3** (TRIQS / solid_dmft).
 
+This package is **not** a turnkey end-to-end Wannierization pipeline. It writes
+`.win`, classifies missing `.amn`/`.mmn`, and will invoke `wannier90.x` only when
+those artifacts are already staged. Automated nscf + `pw2wannier90` is residual
+**P3.2.1**.
+
 The conventional EPW pathway still runs its **own** internal Wannier90 step
 (`proj=random`, coarse grids, frozen-window remediation). That path is
-**unchanged** by this package.
+**unchanged** by this package. Standalone `CandidateEvaluation.wannier` is
+independent of `electron_phonon.wannier_ok`.
 
 ## What shipped
 
@@ -25,7 +31,7 @@ The conventional EPW pathway still runs its **own** internal Wannier90 step
 | Optional on evaluation | `CandidateEvaluation.wannier` (default `None`) |
 | YAML knobs | `dft.do_wannier`, `dft.wannier.*` (`WannierConfig`, **disabled by default**) |
 | QE helpers | `siscforge.calculators.qe.wannier` |
-| Sequential recipe | `run_wannier_after_scf` in `qe/recipes.py` |
+| Sequential recipe | `run_wannier_after_scf` in `qe/recipes.py` (prep + gated `wannier90.x`) |
 | Calculator | `qe-wannier` / `wannier` alias; additive when `do_wannier` on `qe` |
 | Mock path | `MockCalculator` fills success/failure `WannierResult` |
 | Export | CSV columns `wannier_*` + synthesis-card section |
@@ -45,7 +51,8 @@ dft:
     num_wann: 10                     # optional override
     screening_tight_froz: true       # EPW-aligned tight frozen window
     kmesh: [4, 4, 4]                 # auto-raised to Wannier-safe floors
-    max_avg_spread_ang2: 12.0        # DMFT gate threshold
+    # DMFT gate: conservative screening defaults pending Ni calibration
+    max_avg_spread_ang2: 12.0
     max_spread_ang2: 25.0
     require_chk: true
     # mock_force_failure: true       # dry-run failed WannierResult
@@ -55,11 +62,25 @@ dft:
 Or calculator choice:
 
 ```bash
-siscforge run --calculator qe-wannier campaign.yaml   # real wannier90.x when present
+siscforge run --calculator qe-wannier campaign.yaml   # prep + gated wannier90.x when present
 siscforge run --dry-run examples/ndnio2_wannier_mock.yaml
 ```
 
 Conventional examples omit these knobs → behaviour unchanged.
+
+## Real path: prep + gated wannier90.x
+
+Operator sequence today:
+
+1. Finish SCF (or DFT+U SCF) — artifacts remain sacred on Wannier failure.
+2. SiSC-Forge writes `{seed}.win` under a sibling `wannier/` directory.
+3. **You** (or residual P3.2.1 automation) stage nscf + `pw2wannier90` outputs
+   (`.amn` / `.mmn`, optionally `.chk` precursors) into that workdir.
+4. Re-invoke or call `run_wannier90_on_artifacts` so `wannier90.x` runs and
+   spreads are parsed into `WannierResult`.
+
+When `.amn`/`.mmn` are missing, `failure_class=missing_files` and the synthesis
+card / `summary_line` surface the next concrete step.
 
 ## Quality metrics & failure classes
 
@@ -69,11 +90,15 @@ Conventional examples omit these knobs → behaviour unchanged.
 - Spreads: `spread_sum_ang2`, `avg_spread_ang2`, `max_spread_ang2`, `spreads_ang2`
 - Projection / band summary: `num_wann`, `num_bands`, `projection_mode`, `projection_summary`
 - Window notes: `disentanglement_notes`, `frozen_window_notes`
+- `kmesh`: **actual** mesh written (post-`resolve_kmesh`, may be auto-raised)
 - Artifact handles: `work_dir`, `.win` / `.amn` / `.mmn` / `.chk` / `.wout` paths
 - Step-aware `failure_class` (never phonon-only labels):
   `frozen_window`, `kmesh_bvector`, `disentanglement`, `spread_divergence`,
   `missing_files`, `binary_missing`, `projection`, `nscf_failed`,
   `pw2wannier_failed`, `convergence`, `other`
+
+`convergence` is classified from logs but is **not** a hard-fail fingerprint on
+its own; a non-zero returncode / incomplete job still marks `wannier_ok=False`.
 
 ### DMFT gate (P3.3 hook)
 
@@ -82,6 +107,13 @@ Conventional examples omit these knobs → behaviour unchanged.
 - `wannier_ok` is False, or
 - required `.chk` is missing (`require_chk`), or
 - average / max spreads exceed thresholds.
+
+**Threshold rationale:** `max_avg_spread_ang2=12` and `max_spread_ang2=25` are
+**conservative screening defaults** pending nickelate-specific calibration.
+With `proj=random` many candidates will gate out — intentional so P3.3 does not
+consume obviously delocalized / failed MLWFs. Tighten for production / explicit
+projections; loosen only with documented local validation. Not derived
+from a single literature cutoff.
 
 P3.3 should refuse to launch TRIQS/solid_dmft when `ready_for_dmft` is False.
 See `WannierResult.raw["extension_hooks"]["p3_3_dmft"]`.
@@ -96,15 +128,20 @@ as EPW-after-DFPT remediation.
 
 - Screening defaults use `proj=random` + coarse k (EPW lessons).
 - Material-specific production projection libraries are a **later residual**.
-- Real path still needs nscf + `pw2wannier90` prep for `.amn`/`.mmn`; the
-  pipeline writes `.win`, classifies missing prep cleanly, and runs
-  `wannier90.x` when artifacts exist. Mock path fills complete metrics without
-  binaries.
+- **Real path is prep + gated `wannier90.x` only** — automated nscf +
+  `pw2wannier90` is residual **P3.2.1**.
+- **Spin / nspin:** NdNiO₂ examples may enable DFT+U with `nspin: 2`. The `.win`
+  builder currently has **no** spinor / spin-component / separate-manifold
+  support. P3.3 must not assume collinear-spin Wannier is ready out of the box.
+- `default_num_wann_screening` shares *spirit* with EPW `auto_nbndsub` but uses
+  a slightly different floor (often smaller manifolds for correlated screening).
+- Mock path fills complete metrics without binaries.
 
 ## Extension points (explicitly out of this package)
 
 | Package | Work | Hook |
 |---------|------|------|
+| **P3.2.1** | Minimal nscf + `pw2wannier90` orchestration | Stage `.amn`/`.mmn` automatically |
 | **P3.3** | TRIQS / solid_dmft → `DMFTResult` | Consume `WannierResult` artifacts + gate |
 | **P3.4** | Pairing eigenvalue → `performance_score` | Map leading eigenvalue |
 | **P3.5** | Oxygen-vacancy enumeration | Structure generation |
@@ -117,6 +154,8 @@ as EPW-after-DFPT remediation.
 - Oxygen-vacancy structure generation  
 - Mixed AL acquisition  
 - Material-specific production Wannier projection libraries  
+- Automated nscf + pw2wannier90 (residual P3.2.1)  
+- Spinor / collinear-spin Wannier manifolds  
 - Changes to EPW-internal Wannier remediation  
 - Josephson, GNN heads, GPU QE  
 
@@ -126,4 +165,5 @@ as EPW-after-DFPT remediation.
 - Conventional campaigns unchanged with Wannier off  
 - Mock path: run → store → CSV/cards with `WannierResult` quality fields  
 - Failed Wannier classified clearly; upstream SCF/DFT+U kept  
-- Real Wannier90 path gated/skipped without `wannier90.x`  
+- Real path: prep + gated `wannier90.x` when artifacts present; clean
+  `missing_files` classification without binaries  
