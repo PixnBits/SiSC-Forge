@@ -1,0 +1,48 @@
+# P3.5 dry-run: infinite-layer nickelate + curated oxygen-vacancy enumeration.
+# Usage:
+#   siscforge enumerate -c examples/ndnio2_ovac_enumerate.yaml
+#   siscforge run --dry-run examples/ndnio2_ovac_enumerate.yaml
+#
+# Screening enumeration only — not defect formation energies / thermodynamics.
+# Feature is opt-in: nitride / MgB₂ campaigns omit material_families: [nickelate].
+
+name: ndnio2_ovac_enumerate
+description: >
+  Phase 3.5 smoke campaign — first-class infinite-layer NdNiO2 plus a small
+  documented set of ordered in-plane O-vacancy and apical-O variants. Scores
+  may be heuristic (mock calculator). Conventional nitride campaigns leave
+  this family off.
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families: [nickelate]
+  nickelate_rare_earths: [Nd]
+  nickelate_patterns: [stoichiometric, inplane_vacancy, apical_o]
+  nickelate_max_patterns: 3
+  nickelate_supercell: [2, 2, 1]
+  substrates: [Si(001)]
+  # Si(001) for Si-feasibility ranking. Physics-oriented IL films are
+  # usually grown on SrTiO3 / NGO; those labels are accepted and fall
+  # back to requested biaxial strain (metadata.biaxial_fallback: true).
+  # substrates: [SrTiO3]
+  strain_values: [0.0, -0.01]
+  max_candidates: 8
+
+calculators:
+  - name: mock
+
+dft:
+  engine: mock
+  do_phonon: false
+  do_epw: false
+
+formation_filter:
+  enabled: false
+
+ranking:
+  performance_weight: 0.5
+  si_feasibility_weight: 0.5
+
+output_dir: outputs/ndnio2_ovac_enumerate
+export_formats: [json, csv, markdown]

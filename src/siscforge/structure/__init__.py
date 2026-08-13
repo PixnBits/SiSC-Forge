@@ -7,6 +7,13 @@ from siscforge.structure.generator import (
     structure_to_candidate,
 )
 from siscforge.structure.mgb2 import build_mgb2, mgb2_metadata
+from siscforge.structure.nickelates import (
+    INFINITE_LAYER_LATTICE,
+    build_apical_oxygen,
+    build_infinite_layer,
+    build_inplane_vacancy,
+    enumerate_nickelates,
+)
 from siscforge.structure.nitrides import (
     ROCKSALT_LATTICE_CONSTANTS,
     build_binary_nitride,
@@ -26,18 +33,23 @@ from siscforge.structure.strain import (
 )
 
 __all__ = [
+    "INFINITE_LAYER_LATTICE",
     "ROCKSALT_LATTICE_CONSTANTS",
     "SI_LATTICE_CONSTANT",
     "apply_biaxial_strain",
     "apply_epitaxial_strain",
+    "build_apical_oxygen",
     "build_b_doped_si",
     "build_binary_nitride",
+    "build_infinite_layer",
+    "build_inplane_vacancy",
     "build_mgb2",
     "build_rocksalt_conventional",
     "build_rocksalt_primitive",
     "build_ternary_nitride",
     "effective_film_spacing",
     "enumerate_b_doped_si",
+    "enumerate_nickelates",
     "mgb2_metadata",
     "enumerate_from_config",
     "enumerate_nitrides",

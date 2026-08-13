@@ -1,5 +1,29 @@
 # Implementation Notes
 
+## Slice P3.5 (2026-08-13) — oxygen-vacancy / infinite-layer enumeration
+
+**Scope**: First-class, opt-in structure generation for infinite-layer
+RNiO₂ (Nd/Pr/La) plus a **curated** O-vacancy / apical-O set. Ordinary
+`StructureCandidate`s; no ranking / pairing / AL / DMFT-launch changes.
+Status in README/ROADMAP is **this PR / pending merge** until #15 lands.
+
+| Item | Location |
+|------|----------|
+| Builders | `siscforge.structure.nickelates` |
+| Enumerate hook | `generator.enumerate_from_config` family `nickelate` |
+| Config | `EnumerationConfig.nickelate_*` (inert unless family enabled) |
+| Example | `examples/ndnio2_ovac_enumerate.yaml` |
+| Docs | `docs/phase3-p35-oxygen-vacancy.md` |
+| Tests | `tests/test_nickelates_p35.py` |
+
+Default patterns: stoichiometric IL, ordered single in-plane vacancy
+(2×2×1, symmetry-unique), apical-O RNiO₃. Screening only — not defect
+thermodynamics.
+
+**Out of scope**: mixed AL (P3.6), bilayer/cuprate, real CTHYB launch.
+
+---
+
 ## Slice P3.4 review (2026-08-13) — language, mock posture, scale, wiring
 
 Addressed Product Owner + Software Engineer review on #14. Mapping /
@@ -16,7 +40,7 @@ precedence / ranking contracts unchanged.
 | Float `!=` fragile with NaN | `_same_score` treats non-finite as not-equal |
 | Quality timing | Confirmed `rank_evaluations` assesses after headline source; documented |
 
-**Still residual:** real CTHYB launch, P3.5 O-vacancy, P3.6 source-aware AL.
+**Still residual:** real CTHYB launch, P3.6 source-aware AL.
 
 ---
 
