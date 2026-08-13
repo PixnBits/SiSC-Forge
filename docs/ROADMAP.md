@@ -1,7 +1,7 @@
 # SiSC-Forge Development Roadmap
 
-**Version 0.3.1 – Active-learning flywheel**  
-Aligned with [PRD v0.3.1](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.4.1](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
+**Version 0.4.0 – Phase 2 complete + Phase 3 P3.1–P3.5**  
+Aligned with [PRD v0.4.0](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.5.0](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
 
 Workstation production-path features (resume, trust layer, EPW coarse-k + Phase B,
 phonon-first stable_only, phonon FFT/symmetry retry, Docker QE≥7.2) are **required
@@ -168,34 +168,34 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 **Goal**: Bring the DFT+U / DMFT + pairing pathway online so nickelates (and later cuprates) can be ranked on the same footing as conventional candidates, and harden the active-learning loop for mixed conventional/unconventional campaigns.
 
 ### Key Deliverables
-- Automated DFT → Wannier → TRIQS/solid_dmft pipeline for infinite-layer RNiO₂.
-- `DMFTResult` with leading pairing eigenvalue, symmetry, occupancy, mass enhancement.
-- DFT+U always run as a cheap proxy and stored alongside full DMFT.
-- Oxygen-vacancy enumeration as a first-class structure-generation option.
-- Normalization of pairing eigenvalue into the common `performance_score` so ranking and AL need no special cases.
-- Mature active-learning acquisition functions that can handle separate or joint conventional/unconventional pools.
-- Basic bilayer nickelate and early cuprate prototypes (optional at this stage).
+- **P3.1 Done:** DFT+U workflow + `DFTUResult` (see [phase3-p31-dftu.md](phase3-p31-dftu.md)).
+- **P3.2 Done (scaffold + residual):** Wannier prep + quality metrics + `ready_for_dmft` gate; residual **P3.2.1** automated nscf + pw2wannier90 (see [phase3-p32-wannier.md](phase3-p32-wannier.md)).
+- **P3.3 Scaffold:** `DMFTResult` model + Wannier gate + mock path + optional drop-in `observables.json` parser; **full automated solid_dmft / CTHYB launch is residual** (see [phase3-p33-dmft.md](phase3-p33-dmft.md)).
+- **P3.4 Done:** Pairing eigenvalue → common `performance_score` with documented `epw_then_dmft` precedence (see [phase3-p34-pairing-score.md](phase3-p34-pairing-score.md)).
+- **P3.5 Done:** Oxygen-vacancy / infinite-layer enumeration for nickelates (see [phase3-p35-oxygen-vacancy.md](phase3-p35-oxygen-vacancy.md)).
+- **P3.6 Residual:** Mature active-learning acquisition that can handle separate or joint conventional/unconventional pools.
+- Basic bilayer nickelate and early cuprate prototypes (optional / later).
 
 ### Dependencies
 - Phase 1 (Calculator registry, ranking, AL skeleton + bootstrap) and Phase 2 (Si-feasibility mature).
 - External: Wannier90, TRIQS, solid_dmft, CTHYB solver, additional training data for correlated systems.
 
 ### Suggested Order of Module Implementation
-1. DFT+U workflow and DFTUResult model. **(P3.1 — shipped; see docs/phase3-p31-dftu.md)**
-2. Wannierization pipeline with quality metrics. **(P3.2 — shipped (metrics + mock + gate + prep); residual P3.2.1 nscf+pw2wannier90; see docs/phase3-p32-wannier.md)**
-3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — model + Wannier gate + mock + drop-in parser shipped; full automated solid_dmft launch residual; pairing → performance_score is P3.4; see docs/phase3-p33-dmft.md)**
-4. Pairing-eigenvalue extraction and mapping onto performance_score. **(P3.4 — shipped; see docs/phase3-p34-pairing-score.md)**
-5. Oxygen-vacancy structure generation for nickelates. **(P3.5 — this PR, pending merge; see docs/phase3-p35-oxygen-vacancy.md)**
-6. AL acquisition updates for mixed or separate pools. **(P3.6 — next)**
-7. Golden-system test on bulk NdNiO₂ (occupancy + mass enhancement).
-8. End-to-end strained nickelate campaign on shortlist.
+1. DFT+U workflow and DFTUResult model. **(P3.1 — Done; see docs/phase3-p31-dftu.md)**
+2. Wannierization pipeline with quality metrics. **(P3.2 — Done (metrics + mock + gate + prep); residual P3.2.1 nscf+pw2wannier90; see docs/phase3-p32-wannier.md)**
+3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — Scaffold: model + Wannier gate + mock + drop-in parser; full automated solid_dmft launch residual; see docs/phase3-p33-dmft.md)**
+4. Pairing-eigenvalue extraction and mapping onto performance_score. **(P3.4 — Done; see docs/phase3-p34-pairing-score.md)**
+5. Oxygen-vacancy structure generation for nickelates. **(P3.5 — Done; see docs/phase3-p35-oxygen-vacancy.md)**
+6. AL acquisition updates for mixed or separate pools. **(P3.6 — next / residual)**
+7. Golden-system test on bulk NdNiO₂ (occupancy + mass enhancement) — residual.
+8. End-to-end strained nickelate campaign on shortlist — residual until real DMFT launch.
 
 ### What Can Be Validated Without Large-Scale Compute
 - Bulk NdNiO₂ recovers literature DMFT occupancy and mass enhancement under standard U, J on a workstation (or small cluster).
 - A small set of strained infinite-layer candidates produces complete DMFTResult objects and is correctly ranked against nitride references.
 - AL loop can be demonstrated with synthetic or small real data mixes of conventional and unconventional results.
 
-**Exit criteria**: Nickelate candidates appear in ranked lists with both a pairing-based performance score and a realistic Si-feasibility score; the same ranking code handles both families without forks.
+**Exit criteria (partial)**: Nickelate candidates appear in ranked lists with both a pairing-based performance score (from mock or drop-in) and a realistic Si-feasibility score; the same ranking code handles both families without forks. Full automated solid_dmft/CTHYB and mixed AL remain open.
 
 Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization only**. Absolute comparability of the two origins is not claimed. Source-aware / family-normalized acquisition is residual **P3.6**.
 
