@@ -183,7 +183,7 @@ labels as diagnostic, not a contract for downstream ranking.
 - `leading_pairing_eigenvalue: float | None`
 - `pairing_symmetry: str | None`
 
-**P3.4** (in review) maps the leading eigenvalue onto the common
+**P3.4** (Done) maps the leading eigenvalue onto the common
 `performance_score` (`siscforge.scoring.pairing`;
 `docs/phase3-p34-pairing-score.md`). `pairing_symmetry` is metadata only.
 Mock eigenvalues are illustrative.
@@ -191,7 +191,7 @@ Mock eigenvalues are illustrative.
 `status` is a free `str` (same pattern as other Result models);
 `quality_tag` is a `Literal`. Tightening `status` can wait.
 
-## Hard out of scope (this PR)
+## Hard out of scope (this package)
 
 - Pairing eigenvalue normalization into `performance_score` (**P3.4**)
 - Oxygen-vacancy structure generation (**P3.5**)
