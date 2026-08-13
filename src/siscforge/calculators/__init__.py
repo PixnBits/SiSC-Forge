@@ -17,6 +17,7 @@ ensure_builtins_loaded()
 from siscforge.calculators.qe import (  # noqa: E402
     QECalculator,
     QEDftuCalculator,
+    QEDmftCalculator,
     QEEpwCalculator,
     QENotAvailableError,
     epw_available,
@@ -29,6 +30,7 @@ __all__ = [
     "MockCalculator",
     "QECalculator",
     "QEDftuCalculator",
+    "QEDmftCalculator",
     "QEEpwCalculator",
     "QENotAvailableError",
     "clear_registry",

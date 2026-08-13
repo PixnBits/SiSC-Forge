@@ -1,5 +1,71 @@
 # Implementation Notes
 
+## Slice P3.3 review (2026-08-13) — language, SETUP, residuals
+
+Addressed Product Owner + Software Engineer review on #13. No change to
+the mock/gate/export contract; docs and labels made honest about the
+thin real path.
+
+| Issue | Fix |
+|-------|-----|
+| Real path is sidecar + drop-in parser, not a jobflow launcher | Tempered README / ROADMAP / phase docs; operator workflow + residual `p3_x_real_launch` hook |
+| SETUP stopped at Tier C | Added **Tier D — optional DMFT (TRIQS / solid_dmft)** |
+| Optimistic “Done / shipped” while real launch is residual | Status now “scaffold: model + gate + mock + parser” |
+| Three gate knobs easy to misread | Operator mental model + first-match table in `docs/phase3-p33-dmft.md` |
+| Mock filling / m* look calibrated | Labelled “illustrative / not literature-validated” in phase doc, example YAML, `raw["physics_label"]`, provenance |
+| Residual P3.2.1 easy to miss | Explicit chain diagram in the phase doc |
+| Failure classification / unused `n_loops` / `QEDmftCalculator` independence | Documented as best-effort / future / independent of `do_wannier` |
+
+**Still residual (not this slice):** automated solid_dmft launch,
+P3.2.1 nscf+pw2wannier90, P3.4 pairing → `performance_score`.
+
+---
+
+## Slice P3.3 (2026-08-12) — DMFTResult model and solid_dmft/mock recipe
+
+
+**Scope**: Third vertical slice of the unconventional (nickelate) pathway.
+Adds typed `DMFTResult`, campaign knobs (`dft.do_dmft` / `dft.dmft`, **off
+by default**), Wannier `ready_for_dmft` gate, mock dry-run path, and a
+thin optional solid_dmft/TRIQS wrapper that skips cleanly when the stack
+is absent. Conventional nitride / MgB₂ / AL campaigns are unchanged when
+DMFT is disabled. Pairing → `performance_score` is **P3.4**.
+
+| Item | Location |
+|------|----------|
+| Model | `models/results.py` → `DMFTResult` |
+| Evaluation field | `CandidateEvaluation.dmft` (optional) |
+| Config | `DMFTConfig` under `DFTConfig.dmft`; `do_dmft` flag |
+| Helpers | `calculators/qe/dmft.py` |
+| Recipe | `run_dmft_after_wannier`, `run_dmft_workflow` |
+| Calculator | `qe-dmft` / `dmft`; additive on `qe` when enabled |
+| Mock | fills `DMFTResult` only when enabled |
+| Export | `dmft_*` CSV columns + card section |
+| Docs | `docs/phase3-p33-dmft.md` |
+| Example | `examples/ndnio2_dmft_mock.yaml` |
+| Tests | `tests/test_dmft_p33.py` |
+
+**Out of scope**: pairing → performance_score (P3.4), O-vacancy (P3.5),
+mixed AL (P3.6), residual nscf+pw2wannier90 (P3.2.1), TRIQS as a hard dep.
+
+### Enable
+
+```yaml
+dft:
+  do_dmft: true
+  dmft:
+    enabled: true
+    solver: mock
+    U_eV: 5.0
+    J_eV: 0.8
+```
+
+```bash
+siscforge run --dry-run examples/ndnio2_dmft_mock.yaml
+```
+
+---
+
 ## Slice P3.1 (2026-08-11) — DFT+U workflow and DFTUResult model
 
 **Scope**: First vertical slice of the unconventional (nickelate) pathway.

@@ -21,7 +21,14 @@ from siscforge.silicon.feasibility import score_si_feasibility
 
 _LOG = logging.getLogger(__name__)
 
-__all__ = ["QECalculator", "QENotAvailableError", "QEEpwCalculator", "QEDftuCalculator", "QEWannierCalculator"]
+__all__ = [
+    "QECalculator",
+    "QENotAvailableError",
+    "QEEpwCalculator",
+    "QEDftuCalculator",
+    "QEWannierCalculator",
+    "QEDmftCalculator",
+]
 
 
 def _merge_dft_config(
@@ -51,12 +58,15 @@ class QECalculator(BaseCalculator):
     Enable standalone Wannier (P3.2) with ``dft.do_wannier: true`` /
     ``dft.wannier.enabled: true``, or :class:`QEWannierCalculator`
     (``qe-wannier``). Does not alter EPW-internal Wannier.
+    Enable DMFT (P3.3) with ``dft.do_dmft: true`` / ``dft.dmft.enabled: true``,
+    or :class:`QEDmftCalculator` (``qe-dmft``). Inert by default.
     """
 
     name = "qe"
     force_epw: bool = False
     force_dftu: bool = False
     force_wannier: bool = False
+    force_dmft: bool = False
 
     def __init__(
         self,
@@ -66,22 +76,26 @@ class QECalculator(BaseCalculator):
         force_epw: bool = False,
         force_dftu: bool = False,
         force_wannier: bool = False,
+        force_dmft: bool = False,
     ) -> None:
         self.dft = dft or DFTConfig(engine="qe")
         self.work_root = Path(work_root) if work_root else Path("qe_work")
         self.force_epw = force_epw
         self.force_dftu = force_dftu
         self.force_wannier = force_wannier
+        self.force_dmft = force_dmft
 
     def run(self, candidate: StructureCandidate, **kwargs: Any) -> CandidateEvaluation:
         """Execute the QE (+ optional EPW / DFT+U) workflow for *candidate*."""
         from siscforge.calculators.qe.dftu import dftu_is_enabled
+        from siscforge.calculators.qe.dmft import dmft_is_enabled
         from siscforge.calculators.qe.wannier import wannier_is_enabled
 
         dft = _merge_dft_config(self.dft, kwargs)
         want_epw = self.force_epw or dft.do_epw or dft.epw.enabled
         want_dftu = dftu_is_enabled(dft, force=self.force_dftu)
         want_wannier = wannier_is_enabled(dft, force=self.force_wannier)
+        want_dmft = dmft_is_enabled(dft, force=self.force_dmft)
         if want_dftu:
             dft = dft.model_copy(
                 update={
@@ -94,6 +108,13 @@ class QECalculator(BaseCalculator):
                 update={
                     "do_wannier": True,
                     "wannier": dft.wannier.model_copy(update={"enabled": True}),
+                }
+            )
+        if want_dmft:
+            dft = dft.model_copy(
+                update={
+                    "do_dmft": True,
+                    "dmft": dft.dmft.model_copy(update={"enabled": True}),
                 }
             )
         if want_epw:
@@ -346,6 +367,55 @@ class QECalculator(BaseCalculator):
                     ),
                 )
 
+        # P3.3: additive DMFT after Wannier (gated on ready_for_dmft).
+        # Sacred upstream: DMFT failures never delete finished SCF/DFT+U/Wannier.
+        if want_dmft:
+            from siscforge.calculators.qe.recipes import run_dmft_after_wannier
+
+            dmft_dir = cand_dir / "dmft"
+            try:
+                dres = run_dmft_after_wannier(
+                    dft,
+                    dmft_dir,
+                    wannier=getattr(wf, "wannier", None),
+                    formula=candidate.formula,
+                    material_family=candidate.material_family,
+                    seed=candidate.candidate_id,
+                    step_log=step_log,
+                )
+                wf.dmft = dres
+                if dres.status not in {"ok", "mock"}:
+                    step_log.append(
+                        "DMFT did not succeed (upstream SCF/DFT+U/Wannier kept): "
+                        + dres.summary_line()
+                    )
+            except Exception as exc:  # noqa: BLE001 — never destroy upstream
+                from siscforge import __version__ as _sf_ver
+                from siscforge.calculators.qe.dmft import classify_dmft_failure
+                from siscforge.models.provenance import Provenance
+                from siscforge.models.results import DMFTResult
+
+                _LOG.exception(
+                    "DMFT step failed (upstream preserved) work_dir=%s",
+                    dmft_dir,
+                )
+                step_log.append(f"DMFT exception (upstream kept): {exc}")
+                wf.dmft = DMFTResult(
+                    status="failed",
+                    quality_tag=dft.quality_tag,
+                    converged=False,
+                    solver=dft.dmft.solver,
+                    failure_class=classify_dmft_failure(str(exc)),
+                    gate_notes=f"DMFT exception: {exc}",
+                    work_dir=str(dmft_dir),
+                    raw={"error": str(exc), "pathway": "dmft"},
+                    provenance=Provenance(
+                        source="qe_dmft",
+                        software={"siscforge": _sf_ver},
+                        notes=str(exc),
+                    ),
+                )
+
         precomputed = kwargs.get("si_feasibility")
         if isinstance(precomputed, SiFeasibilityScore):
             si = precomputed
@@ -507,6 +577,10 @@ class QECalculator(BaseCalculator):
         if wannier_result is not None:
             notes_parts.append(f"wannier={wannier_result.summary_line()}")
         notes_parts.append(f"do_wannier={want_wannier}")
+        dmft_result = getattr(wf, "dmft", None)
+        if dmft_result is not None:
+            notes_parts.append(f"dmft={dmft_result.summary_line()}")
+        notes_parts.append(f"do_dmft={want_dmft}")
 
         return CandidateEvaluation(
             candidate=out_candidate,
@@ -515,6 +589,7 @@ class QECalculator(BaseCalculator):
             electron_phonon=eph,
             dftu=dftu_result,
             wannier=wannier_result,
+            dmft=dmft_result,
             si_feasibility=si,
             performance_score=performance,
             composite_score=None,
@@ -539,6 +614,7 @@ class QECalculator(BaseCalculator):
                     "do_epw": want_epw,
                     "do_dftu": want_dftu,
                     "do_wannier": want_wannier,
+                    "do_dmft": want_dmft,
                 },
                 parent_ids=[candidate.candidate_id],
                 notes=(
@@ -546,6 +622,7 @@ class QECalculator(BaseCalculator):
                     + ("/EPW" if want_epw else "")
                     + ("/DFT+U" if want_dftu else "")
                     + ("/Wannier" if want_wannier else "")
+                    + ("/DMFT" if want_dmft else "")
                     + " evaluation"
                 ),
             ),
@@ -651,8 +728,54 @@ class QEWannierCalculator(QECalculator):
         super().__init__(dft=base, work_root=work_root, force_wannier=True)
 
 
+class QEDmftCalculator(QECalculator):
+    """QE calculator that forces the DMFT step (P3.3).
+
+    Registration name: ``qe-dmft``. Forces ``do_dmft``. Defaults phonon/EPW
+    off unless the campaign re-enables them.
+
+    Does **not** force ``do_wannier`` (independence is intentional).
+    Non-mock solvers still expect a ready :class:`WannierResult`
+    (``ready_for_dmft``) or an explicit bypass
+    (``allow_without_wannier_gate``). Pair with ``do_wannier: true`` /
+    ``qe-wannier`` for a real chain; mock + ``mock_bypass_gate`` covers
+    dry-run without the gate. TRIQS is never required to import this
+    calculator. Real launch of solid_dmft remains residual.
+    """
+
+    name = "qe-dmft"
+    force_dmft = True
+
+    def __init__(
+        self,
+        dft: DFTConfig | None = None,
+        work_root: str | Path | None = None,
+    ) -> None:
+        if dft is None:
+            base = DFTConfig(engine="qe-dmft", do_phonon=False, do_epw=False)
+        else:
+            base = dft
+            fields = set(getattr(base, "model_fields_set", set()) or set())
+            updates: dict = {}
+            if "do_phonon" not in fields:
+                updates["do_phonon"] = False
+            if "do_epw" not in fields and "epw" not in fields:
+                updates["do_epw"] = False
+                updates["epw"] = base.epw.model_copy(update={"enabled": False})
+            if updates:
+                base = base.model_copy(update=updates)
+        base = base.model_copy(
+            update={
+                "do_dmft": True,
+                "dmft": base.dmft.model_copy(update={"enabled": True}),
+                "engine": "qe-dmft",
+            }
+        )
+        super().__init__(dft=base, work_root=work_root, force_dmft=True)
+
+
 def register_qe_calculators() -> None:
-    """Register ``qe``, ``qe-epw``, ``qe-dftu``, and ``qe-wannier`` aliases."""
+    """Register ``qe``, ``qe-epw``, ``qe-dftu``, ``qe-wannier``, and ``qe-dmft`` aliases."""
     from siscforge.calculators import registry
 
     calc = QECalculator()
@@ -664,3 +787,5 @@ def register_qe_calculators() -> None:
     registry.register(QEDftuCalculator(), name="dftu", overwrite=True)
     registry.register(QEWannierCalculator(), name="qe-wannier", overwrite=True)
     registry.register(QEWannierCalculator(), name="wannier", overwrite=True)
+    registry.register(QEDmftCalculator(), name="qe-dmft", overwrite=True)
+    registry.register(QEDmftCalculator(), name="dmft", overwrite=True)

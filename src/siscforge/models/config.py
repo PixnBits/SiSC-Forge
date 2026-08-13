@@ -248,7 +248,7 @@ class DFTUConfig(BaseModel):
 
     Extension points:
     - **P3.2** Wannierization after DFT+U (``dft.wannier`` / ``WannierResult``)
-    - **P3.3** TRIQS / solid_dmft recipe consuming Wannier + this U/J
+    - **P3.3** TRIQS / solid_dmft recipe consuming Wannier + this U/J (**shipped**)
     - **P3.4** pairing eigenvalue → ``performance_score``
     """
 
@@ -378,7 +378,6 @@ class WannierConfig(BaseModel):
     classification) without weakening the conventional EPW remediation path.
 
     Extension points (not implemented here):
-    - **P3.3** TRIQS / solid_dmft consumes ``WannierResult`` artifacts
     - **P3.4** pairing eigenvalue → ``performance_score``
     - Material-specific production projection libraries (later residual)
     """
@@ -499,8 +498,145 @@ class WannierConfig(BaseModel):
     version: str = "0.1"
 
 
+class DMFTConfig(BaseModel):
+    """TRIQS / solid_dmft settings for the unconventional pathway (P3.3).
+
+    **Disabled by default** — conventional nitride / MgB₂ / AL examples are
+    unchanged until ``enabled`` is set (or ``DFTConfig.do_dmft`` /
+    calculator ``qe-dmft``).
+
+    Consumes :class:`~siscforge.models.results.WannierResult` from P3.2.
+    Non-mock solvers require ``WannierResult.ready_for_dmft`` unless
+    ``allow_without_wannier_gate`` is True. The mock solver is a documented
+    dry-run bypass (``mock_bypass_gate``, default True).
+
+    Screening defaults below are **thin workstation knobs**, not production
+    CTHYB settings. Retune for nickelate calibration.
+
+    Extension points (not implemented here):
+    - **P3.4** pairing eigenvalue → ``performance_score``
+    - **P3.5** oxygen-vacancy enumeration
+    - **P3.6** mixed conventional/unconventional AL
+    """
+
+    enabled: bool = False
+    """Master switch. Also set via ``dft.do_dmft`` or ``qe-dmft``."""
+
+    solver: Literal["mock", "solid_dmft", "cthyb"] = "mock"
+    """Backend. ``mock`` is always available (no TRIQS). Real
+    Real ``solid_dmft`` / ``cthyb`` write a sidecar and parse a drop-in
+    ``observables.json``; they do **not** launch CTHYB. TRIQS is never a
+    hard dependency of siscforge. Full automated launch is residual
+    (``p3_x_real_launch``).
+    """
+
+    U_eV: float = Field(
+        default=5.0,
+        ge=0.0,
+        description=(
+            "Screening default Hubbard U (eV) for the impurity. Conservative "
+            "nickelate-style starting point; not a fitted production value."
+        ),
+    )
+    """Screening default Hubbard U (eV)."""
+
+    J_eV: float = Field(
+        default=0.8,
+        ge=0.0,
+        description=(
+            "Screening default Hund's J (eV). Typical infinite-layer nickelate "
+            "starting guess; retune with local validation."
+        ),
+    )
+    """Screening default Hund's J (eV)."""
+
+    U_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-element U overrides. Values must be ≥ 0."""
+
+    J_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-element J overrides. Values must be ≥ 0."""
+
+    beta: float = Field(
+        default=40.0,
+        gt=0.0,
+        description=(
+            "Inverse temperature β (1/eV). Screening default ~290 K; "
+            "not a production low-T CTHYB setting."
+        ),
+    )
+    """Inverse temperature β (1/eV). Screening default."""
+
+    n_cycles: int = Field(
+        default=10_000,
+        ge=1,
+        description="Requested QMC / solver cycles (thin screening knob).",
+    )
+    """Requested QMC / solver cycles (screening default)."""
+
+    n_warmup_cycles: int = Field(
+        default=2_000,
+        ge=0,
+        description="Requested warmup / thermalization cycles.",
+    )
+    """Requested warmup cycles (screening default)."""
+
+    n_loops: int = Field(
+        default=4,
+        ge=1,
+        description=(
+            "Requested DMFT self-consistency loops (screening default). "
+            "Stored on the sidecar for a future launcher; unused by the "
+            "thin P3.3 observables parser."
+        ),
+    )
+    """Requested outer DMFT loops (screening default).
+
+    Unused by the thin real path (sidecar + drop-in parse). Residual
+    launcher hook: ``raw["extension_hooks"]["p3_x_real_launch"]``.
+    """
+
+    # Wannier gate
+    require_wannier_gate: bool = True
+    """When True (default), non-mock solvers refuse unless Wannier is
+    ``ready_for_dmft``. Ignored when ``allow_without_wannier_gate`` is True.
+    """
+
+    allow_without_wannier_gate: bool = False
+    """Explicit escape hatch: launch even when Wannier is missing or not
+    ready. Default False. Intended for operator override, not screening.
+    """
+
+    mock_bypass_gate: bool = True
+    """Documented mock/dry-run bypass: when ``solver=mock`` and this is True,
+    DMFT may run without ``ready_for_dmft``. Set False to exercise the gate
+    even on the mock path.
+    """
+
+    # Mock path control
+    mock_force_failure: bool = False
+    """When True under mock solver, emit a failed DMFTResult."""
+
+    mock_failure_class: str = "not_converged"
+    """Failure class used when ``mock_force_failure`` is True."""
+
+    seedname: str = "siscforge"
+    """Work-directory seedname for written config / mock artifacts."""
+
+    version: str = "0.1"
+
+    @field_validator("U_by_species", "J_by_species")
+    @classmethod
+    def _nonneg_species_maps(cls, v: dict[str, float]) -> dict[str, float]:
+        bad = {k: val for k, val in (v or {}).items() if float(val) < 0.0}
+        if bad:
+            raise ValueError(
+                f"DMFT per-species values must be ≥ 0; got negative entries {bad}"
+            )
+        return v
+
+
 class DFTConfig(BaseModel):
-    engine: Literal["mock", "qe", "qe-epw", "qe-dftu", "qe-wannier"] = "mock"
+    engine: Literal["mock", "qe", "qe-epw", "qe-dftu", "qe-wannier", "qe-dmft"] = "mock"
     ecutwfc: float = 50.0
     ecutrho: float = 400.0
     kpoints: list[int] = Field(default_factory=lambda: [4, 4, 4])
@@ -544,6 +680,14 @@ class DFTConfig(BaseModel):
     Does **not** replace EPW-internal Wannier; conventional EPW path unchanged.
     """
     wannier: WannierConfig = Field(default_factory=WannierConfig)
+    # --- P3.3 DMFT (disabled by default; inert for conventional) ---
+    do_dmft: bool = False
+    """Enable sequential DMFT after Wannier (P3.3).
+
+    Equivalent to ``dmft.enabled: true``. Calculator ``qe-dmft`` forces this.
+    Disabled by default — conventional nitride / MgB₂ / EPW paths unchanged.
+    """
+    dmft: DMFTConfig = Field(default_factory=DMFTConfig)
     quality_tag: Literal["screening", "production"] = "screening"
 
 

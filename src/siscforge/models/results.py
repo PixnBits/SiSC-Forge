@@ -363,6 +363,126 @@ class WannierResult(BaseModel):
         return "; ".join(bits)
 
 
+class DMFTResult(BaseModel):
+    """DMFT / solid_dmft result — Phase 3.3 unconventional pathway.
+
+    Optional attachment on :class:`~siscforge.models.candidate.CandidateEvaluation`.
+    Produced only when DMFT is explicitly enabled (``dft.do_dmft`` /
+    ``dft.dmft.enabled`` / calculator ``qe-dmft``). Conventional nitride /
+    MgB₂ campaigns leave this ``None``.
+
+    Pairing eigenvalue → ``performance_score`` mapping is **P3.4**; this
+    model already reserves ``leading_pairing_eigenvalue`` and
+    ``pairing_symmetry`` so that later work has a typed home.
+    """
+
+    status: str = "unknown"
+    """Run status: ``ok``, ``failed``, ``mock``, ``skipped``, ``refused``, …"""
+
+    quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
+    """Calculation quality tier."""
+
+    converged: bool = False
+    """Whether the impurity solver reported a successful self-consistency."""
+
+    U_eV: float | None = None
+    """Effective Hubbard U used by the solver (eV)."""
+
+    J_eV: float | None = None
+    """Effective Hund's J used by the solver (eV)."""
+
+    U_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-species U (eV) when a map is used."""
+
+    J_by_species: dict[str, float] = Field(default_factory=dict)
+    """Per-species J (eV) when a map is used."""
+
+    occupancy_summary: dict[str, float] = Field(default_factory=dict)
+    """Compact orbital / species occupancy (label → electrons)."""
+
+    filling: float | None = None
+    """Total impurity filling (electrons) when a single number is reported."""
+
+    mass_enhancement: float | None = None
+    """Quasiparticle mass enhancement m*/m (≈ 1/Z) when available."""
+
+    mass_enhancement_by_orbital: dict[str, float] = Field(default_factory=dict)
+    """Per-orbital mass enhancement when the solver reports it."""
+
+    leading_pairing_eigenvalue: float | None = None
+    """P3.4 home: leading pairing eigenvalue (None until a solver fills it)."""
+
+    pairing_symmetry: str | None = None
+    """P3.4 home: pairing symmetry label (e.g. ``d_x2-y2``); None until filled."""
+
+    solver: str = "unknown"
+    """Solver identity: ``mock``, ``cthyb``, ``solid_dmft``, …"""
+
+    beta: float | None = None
+    """Inverse temperature β (1/eV) used by the solver."""
+
+    n_cycles: int | None = None
+    """Requested QMC / solver cycles (screening knob)."""
+
+    n_warmup_cycles: int | None = None
+    """Requested warmup / thermalization cycles."""
+
+    # Wannier input refs (P3.2 contract)
+    wannier_work_dir: str | None = None
+    """Handle to the Wannier work directory consumed as input."""
+
+    wannier_chk_path: str | None = None
+    """Handle to the Wannier ``.chk`` (preferred P3.2 artifact) when used."""
+
+    wannier_ready_for_dmft: bool | None = None
+    """Snapshot of ``WannierResult.ready_for_dmft`` at launch (or bypass)."""
+
+    gate_notes: str = ""
+    """Human reason for the Wannier-gate decision or refusal."""
+
+    failure_class: str | None = None
+    """Primary failure class when not ok.
+
+    Known values: ``wannier_gate``, ``solver_missing``, ``not_converged``,
+    ``binary_missing``, ``import_error``, ``other``.
+    """
+
+    work_dir: str | None = None
+    """DMFT work directory (sibling ``dmft/``; never overwrites Wannier/DFT+U)."""
+
+    raw: dict[str, Any] = Field(default_factory=dict)
+    """Catch-all: parse notes, solver stdout excerpts, P3.4 extension hooks."""
+
+    provenance: Provenance = Field(default_factory=Provenance)
+
+    def summary_line(self) -> str:
+        """Short human-readable summary for cards / CLI."""
+        bits: list[str] = []
+        bits.append(f"solver={self.solver}")
+        bits.append(f"converged={self.converged}")
+        if self.U_eV is not None:
+            bits.append(f"U={self.U_eV:g} eV")
+        if self.J_eV is not None and self.J_eV > 0:
+            bits.append(f"J={self.J_eV:g} eV")
+        if self.filling is not None:
+            bits.append(f"n={self.filling:g}")
+        elif self.occupancy_summary:
+            occ = ",".join(
+                f"{k}={v:g}" for k, v in sorted(self.occupancy_summary.items())[:4]
+            )
+            bits.append(f"occ({occ})")
+        if self.mass_enhancement is not None:
+            bits.append(f"m*/m={self.mass_enhancement:g}")
+        if self.leading_pairing_eigenvalue is not None:
+            bits.append(f"λ_pair={self.leading_pairing_eigenvalue:g}")
+        if self.pairing_symmetry:
+            bits.append(f"sym={self.pairing_symmetry}")
+        if self.failure_class:
+            bits.append(f"fail={self.failure_class}")
+        bits.append(f"status={self.status}")
+        return "; ".join(bits)
+
+
 class SiFeasibilityComponents(BaseModel):
     """Individual terms that feed the composite Silicon Feasibility Score.
 

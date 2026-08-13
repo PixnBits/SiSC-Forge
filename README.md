@@ -43,7 +43,7 @@ In short: the search is for the missing manufacturing link that would let an alr
 | **1.5a** | AL bootstrap data hygiene (promotion gate, snapshots, retrain CLI) | **Done** — [phase15-exit](docs/phase15-exit.md) |
 | **1.5b** | Trained predictions change rankings; run-loop provenance; operator UX | **Done** — [phase15b-exit](docs/phase15b-exit.md) |
 | **2** | Si-integration maturity + ranking polish (P2.1–P2.5) | **Done** — [phase2-exit](docs/phase2-exit.md) |
-| 3 | DMFT / unconventional | Future |
+| 3 | Unconventional / DMFT | **In progress** — P3.1 DFT+U + P3.2 Wannier shipped; **P3.3** model + gate + mock + parser scaffold (real launch residual) |
 | 4 | Josephson device metrics | Future |
 
 
@@ -88,7 +88,21 @@ P2.1–P2.5 are shipped: first-class Si component weights, multi-layer buffer st
 
 Validation: [docs/validation-phase1.md](docs/validation-phase1.md).
 
+### Phase 3 unconventional pathway — in progress
 
+| WP | Focus | Status |
+|----|-------|--------|
+| P3.1 | DFT+U + `DFTUResult` | **Done** — [phase3-p31-dftu](docs/phase3-p31-dftu.md) |
+| P3.2 | Wannier prep + `ready_for_dmft` | **Done** — [phase3-p32-wannier](docs/phase3-p32-wannier.md) |
+| **P3.3** | TRIQS/solid_dmft + `DMFTResult` | **Scaffold** — model + gate + mock + parser; full launch residual — [phase3-p33-dmft](docs/phase3-p33-dmft.md) |
+| P3.4 | Pairing eigenvalue → `performance_score` | Next |
+| P3.5–P3.6 | O-vacancy enum; mixed AL pools | Later |
+
+```bash
+siscforge run --dry-run examples/ndnio2_dmft_mock.yaml
+```
+
+DMFT is **off by default**. Conventional nitride / MgB₂ / EPW campaigns are unchanged.
 
 ## Quick start (Python only — no QE)
 
@@ -126,6 +140,9 @@ Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).
 | `examples/mgb2_epw.yaml` | MgB₂ EPW golden |
 | `examples/mgb2_epw_skeleton.yaml` | **Compat alias** → prefer `mgb2_epw.yaml` |
 | `examples/dummy_campaign.yaml` | Minimal CLI smoke |
+| `examples/ndnio2_dftu_mock.yaml` | P3.1 DFT+U mock (nickelate) |
+| `examples/ndnio2_wannier_mock.yaml` | P3.2 Wannier mock + DMFT gate |
+| `examples/ndnio2_dmft_mock.yaml` | P3.3 DMFT mock (occupancy / m*) |
 
 Walkthroughs: [docs/examples/](docs/examples/).
 

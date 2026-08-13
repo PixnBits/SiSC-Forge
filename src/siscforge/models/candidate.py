@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
     DFTUResult,
+    DMFTResult,
     ElectronPhononResult,
     PhononResult,
     SCFResult,
@@ -122,7 +123,7 @@ class CandidateEvaluation(BaseModel):
 
     Extension points:
     - **P3.2** Wannierization → ``wannier: WannierResult | None`` (sibling field)
-    - **P3.3** TRIQS/solid_dmft → parallel ``dmft: DMFTResult | None`` field
+    - **P3.3** TRIQS/solid_dmft → ``dmft: DMFTResult | None`` (sibling field)
     - **P3.4** pairing eigenvalue → maps into ``performance_score``
     """
 
@@ -133,6 +134,16 @@ class CandidateEvaluation(BaseModel):
 
     Distinct from ``electron_phonon.wannier_ok`` (EPW-internal flag).
     P3.3 TRIQS/solid_dmft consumes this field's artifacts and DMFT gate.
+    """
+
+    dmft: DMFTResult | None = None
+    """DMFT / solid_dmft result (P3.3). Optional — leave None for
+    conventional nitride/MgB₂ campaigns. Populated when DMFT is enabled
+    (``dft.do_dmft`` / ``dft.dmft.enabled`` / calculator ``qe-dmft``).
+
+    Pairing fields (``leading_pairing_eigenvalue``, ``pairing_symmetry``)
+    are reserved for **P3.4** and are not mapped into ``performance_score``
+    in this package.
     """
 
     si_feasibility: SiFeasibilityScore | None = None

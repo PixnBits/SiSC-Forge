@@ -16,6 +16,7 @@ from siscforge.models.config import (
     CandidateSpec,
     DFTConfig,
     DFTUConfig,
+    DMFTConfig,
     EnumerationConfig,
     EPWConfig,
     FormationFilterConfig,
@@ -32,6 +33,7 @@ from siscforge.models.config import (
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
     DFTUResult,
+    DMFTResult,
     ElectronPhononResult,
     PhononResult,
     SCFResult,
@@ -55,6 +57,8 @@ __all__ = [
     "DFTConfig",
     "DFTUConfig",
     "DFTUResult",
+    "DMFTConfig",
+    "DMFTResult",
     "EPWConfig",
     "ElectronPhononResult",
     "EnumerationConfig",

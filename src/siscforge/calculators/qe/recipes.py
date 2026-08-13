@@ -7,7 +7,8 @@ for workstation Phase-0 use.
 
 P3.1 adds :func:`run_dftu_scf` / :func:`run_dftu_workflow` for sequential
 pw.x DFT+U (Hubbard). P3.2 adds standalone Wannierization after SCF/DFT+U.
-TRIQS / pairing are later packages.
+P3.3 adds optional DMFT after Wannier (mock or gated solid_dmft).
+Pairing → performance_score is P3.4.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from siscforge.calculators.qe.parser import (
     parse_relaxed_structure,
 )
 from siscforge.models.config import DFTConfig
-from siscforge.models.results import DFTUResult, PhononResult, SCFResult, WannierResult
+from siscforge.models.results import DFTUResult, DMFTResult, PhononResult, SCFResult, WannierResult
 
 # Interesting log lines for heartbeat peeks (ph.x / pw.x / epw.x)
 _HEARTBEAT_PEEK_PATTERNS: list[re.Pattern[str]] = [
@@ -77,6 +78,7 @@ class QEWorkflowResult:
     phonon: PhononResult | None = None
     dftu: DFTUResult | None = None
     wannier: WannierResult | None = None
+    dmft: DMFTResult | None = None
     steps: list[QEStepResult] = field(default_factory=list)
     relaxed_structure: Structure | None = None
     success: bool = False
@@ -1469,6 +1471,35 @@ def run_wannier_after_scf(
     )
 
 
+def run_dmft_after_wannier(
+    config: DFTConfig,
+    work_dir: Path | str,
+    *,
+    wannier: WannierResult | None = None,
+    formula: str = "",
+    material_family: str = "other",
+    seed: str = "dmft",
+    step_log: list[str] | None = None,
+) -> DMFTResult:
+    """Run (or mock / skip) DMFT after a finished Wannier step.
+
+    Sacred-upstream contract: finished SCF / DFT+U / Wannier artifacts are
+    never deleted on remediable DMFT failures. DMFT work lives under
+    *work_dir* (typically a sibling ``dmft/`` subdirectory).
+    """
+    from siscforge.calculators.qe.dmft import run_dmft_workflow
+
+    return run_dmft_workflow(
+        config,
+        work_dir,
+        wannier=wannier,
+        formula=formula,
+        material_family=material_family,
+        seed=seed,
+        step_log=step_log,
+    )
+
+
 def recipe_info() -> dict[str, Any]:
     """Metadata for documentation / CLI help."""
     return {
@@ -1478,14 +1509,25 @@ def recipe_info() -> dict[str, Any]:
             "ph.x DFPT (optional)",
             "dftu SCF+U (optional, P3.1)",
             "wannierization (optional, P3.2)",
+            "dmft (optional, P3.3)",
         ],
         "jobflow": detect_qe_environment().jobflow,
         "qe": detect_qe_environment().available,
         "engine": "quantum-espresso",
-        "models": ["SCFResult", "PhononResult", "DFTUResult", "WannierResult"],
+        "models": [
+            "SCFResult",
+            "PhononResult",
+            "DFTUResult",
+            "WannierResult",
+            "DMFTResult",
+        ],
         "extension_points": {
             "p3_2": "Wannierization quality metrics after SCF/DFT+U (shipped)",
-            "p3_3": "TRIQS/solid_dmft → DMFTResult (consumes WannierResult)",
+            "p3_3": (
+                "TRIQS/solid_dmft → DMFTResult "
+                "(scaffold: model + gate + mock + drop-in parser; "
+                "full automated launch residual)"
+            ),
             "p3_4": "pairing eigenvalue → performance_score",
         },
     }
