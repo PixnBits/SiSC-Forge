@@ -1,5 +1,50 @@
 # Implementation Notes
 
+## Slice P3.4 review (2026-08-13) — language, mock posture, scale, wiring
+
+Addressed Product Owner + Software Engineer review on #14. Mapping /
+precedence / ranking contracts unchanged.
+
+| Issue | Fix |
+|-------|-----|
+| README / ROADMAP said **Done / shipped** while PR open | Tempered to **in review** |
+| Mock pairing scores participate in rank unnoticed | CLI yellow banner via `mock_ranking_warning`; phase doc “dry-run ranks on illustrative λ” |
+| 25 / 40 look like a physical Tc map | “Why 25 / 40” + mixed-origin prioritization-only note; P3.6 residual |
+| Calculators omit `ranking=` | Documented double-apply contract; comments at call sites |
+| `"Ni" in formula` mock λ heuristic | Pairing fill uses `material_family == "nickelate"` only |
+| Occupancy / m* bounds undocumented | Field descriptions + occupancy min≤max validator |
+| Float `!=` fragile with NaN | `_same_score` treats non-finite as not-equal |
+| Quality timing | Confirmed `rank_evaluations` assesses after headline source; documented |
+
+**Still residual:** real CTHYB launch, P3.5 O-vacancy, P3.6 source-aware AL.
+
+---
+
+## Slice P3.4 (2026-08-13) — pairing eigenvalue → performance_score
+
+
+**Scope**: Map `DMFTResult.leading_pairing_eigenvalue` onto the common
+`performance_score` so ranking / Pareto / export stay family-agnostic.
+Mock eigenvalues are illustrative. Conventional campaigns unchanged.
+
+| Item | Location |
+|------|----------|
+| Pure map | `siscforge.scoring.pairing.performance_score_from_pairing` |
+| Precedence | `resolve_performance_score` / `apply_performance_score` |
+| Config | `dft.dmft.scoring` (`DMFTScoringConfig`); `ranking.performance_precedence` |
+| Mock fill | `mock_dmft_result` now sets illustrative λ / `d_x2-y2` |
+| Wiring | `MockCalculator`, `QECalculator`, CLI `_finalize_eval`, `rank --config` |
+| Trust | `dmft_pairing` / `dmft_pairing_mock` source + quality flags |
+| Docs | `docs/phase3-p34-pairing-score.md` |
+| Tests | `tests/test_pairing_p34.py` |
+
+Default formula: `score_K = clamp(λ × 25, 0, 40)`. Default precedence:
+trusted EPW Tc, else DMFT pairing, else existing mock/surrogate.
+
+**Out of scope**: O-vacancy (P3.5), mixed AL (P3.6), real CTHYB launch.
+
+---
+
 ## Slice P3.3 review (2026-08-13) — language, SETUP, residuals
 
 Addressed Product Owner + Software Engineer review on #13. No change to

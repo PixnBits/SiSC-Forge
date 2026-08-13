@@ -220,7 +220,7 @@ class MockCalculator(BaseCalculator):
             extras.append("DMFT")
         extra_note = (" with " + "+".join(extras)) if extras else ""
 
-        return CandidateEvaluation(
+        ev = CandidateEvaluation(
             candidate=candidate,
             scf=scf,
             phonon=phonon,
@@ -242,6 +242,12 @@ class MockCalculator(BaseCalculator):
                 notes="end-to-end mock evaluation" + extra_note,
             ),
         )
+        # P3.4: default precedence only (scoring knobs). Campaign
+        # ranking.performance_precedence is re-applied in CLI finalize / rank.
+        from siscforge.scoring.pairing import apply_performance_score
+
+        scoring = getattr(dmft_cfg, "scoring", None) if dmft_cfg is not None else None
+        return apply_performance_score(ev, scoring=scoring)
 
 
 # Self-register on import

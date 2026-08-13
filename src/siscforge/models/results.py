@@ -371,9 +371,9 @@ class DMFTResult(BaseModel):
     ``dft.dmft.enabled`` / calculator ``qe-dmft``). Conventional nitride /
     MgB₂ campaigns leave this ``None``.
 
-    Pairing eigenvalue → ``performance_score`` mapping is **P3.4**; this
-    model already reserves ``leading_pairing_eigenvalue`` and
-    ``pairing_symmetry`` so that later work has a typed home.
+    Pairing eigenvalue → ``performance_score`` mapping is **P3.4**
+    (``siscforge.scoring.pairing``). ``leading_pairing_eigenvalue`` is the
+    scalar input; ``pairing_symmetry`` is metadata only.
     """
 
     status: str = "unknown"
@@ -410,10 +410,10 @@ class DMFTResult(BaseModel):
     """Per-orbital mass enhancement when the solver reports it."""
 
     leading_pairing_eigenvalue: float | None = None
-    """P3.4 home: leading pairing eigenvalue (None until a solver fills it)."""
+    """Leading pairing eigenvalue (P3.4 maps this onto ``performance_score``)."""
 
     pairing_symmetry: str | None = None
-    """P3.4 home: pairing symmetry label (e.g. ``d_x2-y2``); None until filled."""
+    """Pairing symmetry label (e.g. ``d_x2-y2``). Metadata only — not scored."""
 
     solver: str = "unknown"
     """Solver identity: ``mock``, ``cthyb``, ``solid_dmft``, …"""

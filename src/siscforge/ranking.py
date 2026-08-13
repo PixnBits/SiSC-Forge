@@ -3,6 +3,10 @@
 P2.4 — configurable weights (performance, Si-feasibility, optional certainty),
 Pareto non-dominated set on primary axes, and ranking-weight provenance on
 each ranked row. Trust-layer / stable-first / hull behaviour is unchanged.
+
+P3.4 — ranking stays family-agnostic. Conventional EPW Tc and DMFT pairing
+both land on ``performance_score`` *before* this module runs
+(``siscforge.scoring.pairing``). Do **not** add nickelate/nitride forks here.
 """
 
 from __future__ import annotations
@@ -292,6 +296,10 @@ def rank_evaluations(
     """Return a new list of evaluations sorted by composite score (desc).
 
     Applies :func:`apply_quality_assessment` first, then scores and ranks.
+    Headline ``performance_score`` / ``performance_score_source`` must
+    already be set (P3.4 ``apply_performance_score`` runs in finalize /
+    ``rank --config`` *before* this function) so quality flags reflect
+    the pairing vs EPW origin.
     Updates ``composite_score``, ``rank``, Pareto flag, ranking provenance,
     and quality fields on copies.
 

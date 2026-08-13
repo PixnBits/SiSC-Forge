@@ -5,6 +5,7 @@ thin optional drop-in parser. **Full automated solid_dmft / CTHYB launch
 is residual** (operator-driven or a later follow-up).  
 **Prerequisite**: P3.2 Wannier prep + `ready_for_dmft` (`docs/phase3-p32-wannier.md`)  
 **Next**: **P3.4** — pairing eigenvalue → common `performance_score`
+(**shipped** — `docs/phase3-p34-pairing-score.md`)
 
 This package is **not** a turnkey TRIQS/solid_dmft jobflow. It ships the
 consumption contract P3.4 needs (typed `DMFTResult`, gate, mock, parser)
@@ -175,16 +176,17 @@ text (`wannier_gate`, `solver_missing`, `import_error`, `binary_missing`,
 `not_converged`, `other`). It is not a structured solver API. Treat
 labels as diagnostic, not a contract for downstream ranking.
 
-## P3.4 extension point (explicitly not this package)
+## P3.4 pairing map (follow-on package)
 
-`DMFTResult` already has:
+`DMFTResult` has:
 
 - `leading_pairing_eigenvalue: float | None`
 - `pairing_symmetry: str | None`
 
-P3.4 will map the leading eigenvalue onto the common `performance_score`
-so ranking / AL need no special cases. **This package does not change
-`performance_score`.** See `DMFTResult.raw["extension_hooks"]["p3_4_pairing"]`.
+**P3.4** (in review) maps the leading eigenvalue onto the common
+`performance_score` (`siscforge.scoring.pairing`;
+`docs/phase3-p34-pairing-score.md`). `pairing_symmetry` is metadata only.
+Mock eigenvalues are illustrative.
 
 `status` is a free `str` (same pattern as other Result models);
 `quality_tag` is a `Literal`. Tightening `status` can wait.

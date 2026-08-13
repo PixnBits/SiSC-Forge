@@ -67,7 +67,7 @@ object experimental tools can consume without scraping Markdown.
 |-----|------|---------|
 | `composite_score` | number \| null | Multi-objective composite |
 | `performance_score` | number \| null | Tc proxy (K) |
-| `performance_score_source` | string \| null | `epw` / `mock` / `surrogate` / … |
+| `performance_score_source` | string \| null | `epw` / `mock` / `surrogate` / `dmft_pairing` / `dmft_pairing_mock` / … |
 | `si_feasibility_total` | number \| null | Si score 0–100 |
 | `si_scorer_version` | string \| null | e.g. `"0.5"` (Si rules version, not this schema) |
 

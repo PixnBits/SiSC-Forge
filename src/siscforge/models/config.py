@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import math
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class QualityConfig(BaseModel):
@@ -84,6 +84,11 @@ class RankingConfig(BaseModel):
     Trust-layer multipliers, ``prefer_dynamically_stable``, and
     ``prefer_low_hull`` are applied **after** the weighted blend and are
     independent of these weights.
+
+    ``performance_precedence`` (P3.4) selects how the headline
+    ``performance_score`` is filled *before* ranking: trusted EPW Tc,
+    else DMFT pairing proxy, else existing mock/surrogate. Ranking itself
+    stays family-agnostic.
     """
 
     performance_weight: float = Field(default=0.6, ge=0.0)
@@ -111,6 +116,19 @@ class RankingConfig(BaseModel):
     prefer_dynamically_stable: bool = True
     prefer_low_hull: bool = True
     quality: QualityConfig = Field(default_factory=QualityConfig)
+    performance_precedence: Literal[
+        "epw_then_dmft",
+        "dmft_then_epw",
+        "epw_only",
+        "dmft_only",
+    ] = Field(
+        default="epw_then_dmft",
+        description=(
+            "P3.4 headline-score precedence. Default: trusted EPW Eliashberg/"
+            "Allen–Dynes Tc, else DMFT pairing proxy, else existing "
+            "mock/surrogate. Conventional campaigns without DMFT are unchanged."
+        ),
+    )
     version: str = "0.2"
 
     @field_validator(
@@ -498,6 +516,116 @@ class WannierConfig(BaseModel):
     version: str = "0.1"
 
 
+class DMFTScoringConfig(BaseModel):
+    """P3.4 pairing-eigenvalue → ``performance_score`` knobs.
+
+    Defaults leave conventional (no-DMFT) campaigns numerically unchanged.
+    Mapping is applied only when a usable ``DMFTResult`` pairing signal is
+    present. See ``docs/phase3-p34-pairing-score.md``.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Map a usable DMFT pairing eigenvalue onto performance_score. "
+            "Default on: inert unless a DMFTResult with pairing is attached."
+        ),
+    )
+    kelvin_per_unit: float = Field(
+        default=25.0,
+        ge=0.0,
+        description=(
+            "Linear scale: score_K = (λ − threshold) × kelvin_per_unit × Q. "
+            "25 K/unit is an engineering choice so λ≈1 (typical linearized "
+            "pairing instability) lands mid the conventional 40 K ranking "
+            "band — not a fitted Tc model. See docs/phase3-p34-pairing-score.md."
+        ),
+    )
+    eigenvalue_threshold: float = Field(
+        default=0.0,
+        description="Subtracted from λ before scaling. Default 0 (no offset).",
+    )
+    score_ceiling_K: float = Field(
+        default=40.0,
+        gt=0.0,
+        description=(
+            "Clamp the kelvin proxy. Default 40 matches "
+            "RankingConfig.performance_ceiling_K so a λ-proxy cannot "
+            "saturate the ranker harder than a conventional Tc. The two "
+            "ceilings are independent knobs — set both if you retune one."
+        ),
+    )
+    require_converged: bool = Field(
+        default=True,
+        description="Refuse to score when DMFTResult.converged is False.",
+    )
+    allow_mock: bool = Field(
+        default=True,
+        description=(
+            "Allow mock/illustrative eigenvalues to produce a score tagged "
+            "dmft_pairing_mock. Default true so the dry-run path (the only "
+            "working DMFT path until real launch) exercises ranking. Mock "
+            "data is never labelled as production Tc; CLI ranks print a "
+            "banner when these rows participate. Set false for a stricter "
+            "production posture."
+        ),
+    )
+    quality_demotion: bool = Field(
+        default=True,
+        description=(
+            "Soft occupancy / mass-enhancement demotion only. Not a physics "
+            "model; floors at 0.70."
+        ),
+    )
+    mass_enhancement_soft_cap: float = Field(
+        default=8.0,
+        gt=0.0,
+        description=(
+            "m*/m above this applies a light multiplicative demotion. "
+            "8.0 is a loose screening fence (typical nickelate m* is ~2–5); "
+            "not a literature cutoff."
+        ),
+    )
+    occupancy_soft_min: float = Field(
+        default=1.0,
+        description=(
+            "Filling below this is treated as wildly unphysical for the "
+            "soft Q demotion. Loose fence (d-shell / impurity fillings "
+            "are typically a few electrons), not a physics bound."
+        ),
+    )
+    occupancy_soft_max: float = Field(
+        default=12.0,
+        description=(
+            "Filling above this is treated as wildly unphysical for the "
+            "soft Q demotion. 12 ≈ a full d + leftover count; loose fence."
+        ),
+    )
+
+    @field_validator(
+        "kelvin_per_unit",
+        "eigenvalue_threshold",
+        "score_ceiling_K",
+        "mass_enhancement_soft_cap",
+        "occupancy_soft_min",
+        "occupancy_soft_max",
+    )
+    @classmethod
+    def _finite_scoring(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("DMFT scoring parameter must be finite")
+        return v
+
+    @model_validator(mode="after")
+    def _occupancy_range(self) -> DMFTScoringConfig:
+        if self.occupancy_soft_min > self.occupancy_soft_max:
+            raise ValueError(
+                "occupancy_soft_min must be <= occupancy_soft_max "
+                f"(got {self.occupancy_soft_min} > {self.occupancy_soft_max})"
+            )
+        return self
+
+
 class DMFTConfig(BaseModel):
     """TRIQS / solid_dmft settings for the unconventional pathway (P3.3).
 
@@ -513,8 +641,12 @@ class DMFTConfig(BaseModel):
     Screening defaults below are **thin workstation knobs**, not production
     CTHYB settings. Retune for nickelate calibration.
 
+    **P3.4:** ``scoring`` maps ``leading_pairing_eigenvalue`` onto the common
+    ``performance_score`` (default on when a usable pairing signal is present;
+    inert for conventional campaigns). Precedence vs EPW is
+    ``ranking.performance_precedence`` (default ``epw_then_dmft``).
+
     Extension points (not implemented here):
-    - **P3.4** pairing eigenvalue → ``performance_score``
     - **P3.5** oxygen-vacancy enumeration
     - **P3.6** mixed conventional/unconventional AL
     """
@@ -621,6 +753,9 @@ class DMFTConfig(BaseModel):
 
     seedname: str = "siscforge"
     """Work-directory seedname for written config / mock artifacts."""
+
+    scoring: DMFTScoringConfig = Field(default_factory=DMFTScoringConfig)
+    """P3.4 pairing → performance_score knobs (inert unless pairing is present)."""
 
     version: str = "0.1"
 

@@ -194,8 +194,8 @@ def test_mock_with_dmft_enabled_populates_success() -> None:
     assert result.dmft.U_eV == 5.0
     assert result.dmft.occupancy_summary
     assert result.dmft.mass_enhancement is not None
-    assert result.dmft.leading_pairing_eigenvalue is None  # P3.4 home
-    assert result.dmft.pairing_symmetry is None
+    assert result.dmft.leading_pairing_eigenvalue is not None  # P3.4 mock fill
+    assert result.dmft.pairing_symmetry == "d_x2-y2"
     assert "illustrative" in (result.dmft.raw.get("physics_label") or "")
     assert "not literature-validated" in (result.dmft.raw.get("physics_label") or "")
     assert "p3_x_real_launch" in (result.dmft.raw.get("extension_hooks") or {})

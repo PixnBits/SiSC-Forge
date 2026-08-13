@@ -582,7 +582,7 @@ class QECalculator(BaseCalculator):
             notes_parts.append(f"dmft={dmft_result.summary_line()}")
         notes_parts.append(f"do_dmft={want_dmft}")
 
-        return CandidateEvaluation(
+        ev = CandidateEvaluation(
             candidate=out_candidate,
             scf=scf,
             phonon=phonon,
@@ -627,6 +627,12 @@ class QECalculator(BaseCalculator):
                 ),
             ),
         )
+        # P3.4: default precedence only (scoring knobs). Campaign
+        # ranking.performance_precedence is re-applied in CLI finalize / rank.
+        from siscforge.scoring.pairing import apply_performance_score
+
+        scoring = getattr(getattr(dft, "dmft", None), "scoring", None)
+        return apply_performance_score(ev, scoring=scoring)
 
 
 class QEEpwCalculator(QECalculator):
