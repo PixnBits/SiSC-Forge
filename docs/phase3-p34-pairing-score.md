@@ -2,7 +2,7 @@
 
 **Status**: in review — deterministic mapping + evaluation wiring  
 **Prerequisite**: P3.3 `DMFTResult` (`docs/phase3-p33-dmft.md`)  
-**Next**: **P3.5** — oxygen-vacancy enumeration (out of scope here)
+**Next**: **P3.6** — mixed AL acquisition (P3.5 oxygen-vacancy enumeration is shipped; see `docs/phase3-p35-oxygen-vacancy.md`)
 
 This package does **not** launch CTHYB, enumerate oxygen vacancies, or
 change ranking / Pareto maths. It fills the common `performance_score`
@@ -197,6 +197,6 @@ after the headline source is set.
   unit test of parse + apply. End-to-end real CTHYB launch remains
   `p3_x_real_launch`.
 - Source-aware / family-normalized AL acquisition (**P3.6**).
-- Oxygen-vacancy structure generation (**P3.5**).
+- Oxygen-vacancy structure generation (**P3.5** — shipped; see `docs/phase3-p35-oxygen-vacancy.md`).
 - Changing Si-feasibility science or the P2.5 process-recommendation schema.
 - Inventing a full pairing / Tc physics model.

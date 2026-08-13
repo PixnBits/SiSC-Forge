@@ -221,6 +221,24 @@ class EnumerationConfig(BaseModel):
     max_candidates: int = Field(default=50, ge=1)
     epitaxy_orientation: Literal["auto", "cube_on_cube", "45deg"] = "auto"
     use_buffers: bool = True
+    # --- P3.5 nickelate / oxygen-vacancy (opt-in via material_families) ---
+    nickelate_rare_earths: list[str] = Field(default_factory=list)
+    """R species for infinite-layer RNiO₂ (Nd / Pr / La). Empty → [Nd] when
+    ``nickelate`` is in ``material_families``. Ignored when the family is off."""
+    nickelate_patterns: list[str] = Field(default_factory=list)
+    """Vacancy / apical-O pattern ids. Empty → default screening set
+    (stoichiometric, inplane_vacancy, apical_o) when the family is enabled.
+    See ``docs/phase3-p35-oxygen-vacancy.md``."""
+    nickelate_max_patterns: int = Field(
+        default=8,
+        ge=1,
+        description=(
+            "Hard cap on distinct vacancy/apical patterns per rare earth "
+            "(not including the strain × substrate grid)."
+        ),
+    )
+    nickelate_supercell: list[int] = Field(default_factory=lambda: [2, 2, 1])
+    """Supercell used for patterns that need one (``inplane_vacancy``)."""
 
 
 class CalculatorConfig(BaseModel):
@@ -647,7 +665,7 @@ class DMFTConfig(BaseModel):
     ``ranking.performance_precedence`` (default ``epw_then_dmft``).
 
     Extension points (not implemented here):
-    - **P3.5** oxygen-vacancy enumeration
+    - **P3.5** oxygen-vacancy enumeration (**shipped** — structure generation)
     - **P3.6** mixed conventional/unconventional AL
     """
 

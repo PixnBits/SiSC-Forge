@@ -13,12 +13,16 @@ from siscforge.models.config import CampaignConfig, EnumerationConfig
 from siscforge.models.provenance import Provenance
 from siscforge.structure.bsi import enumerate_b_doped_si
 from siscforge.structure.mgb2 import build_mgb2, mgb2_metadata
+from siscforge.structure.nickelates import (
+    enumerate_nickelates,
+    structure_from_nickelate_formula,
+)
 from siscforge.structure.nitrides import (
     composition_fractions,
     enumerate_nitrides,
     formula_from_structure,
 )
-from siscforge.structure.strain import apply_epitaxial_strain
+from siscforge.structure.strain import apply_biaxial_strain, apply_epitaxial_strain
 
 
 def structure_to_candidate(
@@ -96,6 +100,41 @@ def _as_tuple3(values: list[int] | tuple[int, int, int]) -> tuple[int, int, int]
     return int(values[0]), int(values[1]), int(values[2])
 
 
+def _apply_campaign_strain(
+    structure: Structure,
+    *,
+    substrate: str,
+    in_plane_strain: float,
+    poisson_ratio: float,
+    family: str,
+) -> tuple[Structure, tuple[float, float, float, float, float, float], float]:
+    """Apply epitaxial strain; nickelates may sit on non-Si labels (e.g. SrTiO3).
+
+    Existing nitride / MgB₂ paths still go through ``apply_epitaxial_strain``
+    (Si-only). For nickelates, an unrecognized substrate falls back to
+    requested biaxial strain so enumeration does not crash.
+    """
+    try:
+        return apply_epitaxial_strain(
+            structure,
+            substrate=substrate,
+            in_plane_strain=float(in_plane_strain),
+            poisson_ratio=poisson_ratio,
+            relax_out_of_plane=True,
+            match_substrate=False,
+        )
+    except ValueError:
+        if family != "nickelate":
+            raise
+        strained, tensor = apply_biaxial_strain(
+            structure,
+            float(in_plane_strain),
+            poisson_ratio=poisson_ratio,
+            relax_out_of_plane=True,
+        )
+        return strained, tensor, float(in_plane_strain)
+
+
 def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
     """Build candidates from exact shortlist ``candidate_specs`` (no grid)."""
     from pymatgen.core import Structure as PMGStructure
@@ -136,6 +175,15 @@ def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
             if family == "mgb2_boride":
                 structure = build_mgb2()
                 meta = {**mgb2_metadata(), **meta, "formula": "MgB2", "kind": "binary"}
+            elif family == "nickelate":
+                structure, nmeta = structure_from_nickelate_formula(
+                    spec.formula,
+                    metadata=spec.metadata,
+                    supercell=_as_tuple3(
+                        getattr(enum, "nickelate_supercell", None) or enum.supercell
+                    ),
+                )
+                meta = {**nmeta, **meta}
             else:
                 structure, nmeta = _structure_from_formula(
                     spec.formula,
@@ -143,17 +191,18 @@ def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
                     seed=enum.seed,
                 )
                 meta = {**nmeta, **meta}
-            strained, tensor, applied_eps = apply_epitaxial_strain(
+            strained, tensor, applied_eps = _apply_campaign_strain(
                 structure,
                 substrate=spec.substrate,
                 in_plane_strain=float(spec.in_plane_strain),
                 poisson_ratio=enum.poisson_ratio,
-                relax_out_of_plane=True,
-                match_substrate=False,
+                family=family,
             )
             tags = [family, meta.get("kind", "bulk"), "shortlist", "epitaxial"]
             if abs(float(spec.in_plane_strain)) < 1e-15:
                 tags.append("bulk_strain_0")
+            if meta.get("vacancy_pattern"):
+                tags.append(str(meta["vacancy_pattern"]))
             cand = structure_to_candidate(
                 strained,
                 material_family=family,
@@ -222,6 +271,28 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
                 structure = build_mgb2()
                 meta = {**mgb2_metadata(), "formula": "MgB2", "kind": "binary"}
                 bulk_items.append((structure, meta, "mgb2_boride"))
+        elif family == "nickelate":
+            # P3.5 — opt-in infinite-layer + curated O-vacancy / apical-O set.
+            # formulas on a nickelate-only campaign are parsed as RNiO₂-family
+            # cells; mixed campaigns should leave formulas for the nitride path.
+            ni_formulas = None
+            if enum.formulas and families == ["nickelate"]:
+                ni_formulas = list(enum.formulas)
+            pairs = enumerate_nickelates(
+                rare_earths=enum.nickelate_rare_earths or None,
+                patterns=enum.nickelate_patterns or None,
+                formulas=ni_formulas,
+                max_patterns=int(enum.nickelate_max_patterns),
+                supercell=_as_tuple3(enum.nickelate_supercell),
+                seed=enum.seed,
+            )
+            if not pairs:
+                raise ValueError(
+                    "nickelate family requested but no infinite-layer / "
+                    "O-vacancy cells were generated; check rare earths / patterns"
+                )
+            for structure, meta in pairs:
+                bulk_items.append((structure, meta, "nickelate"))
         else:
             # Unknown family: skip rather than hard-fail so mixed campaigns work.
             continue
@@ -239,17 +310,18 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
     for structure, meta, family in bulk_items:
         for substrate in substrates:
             for eps in strains:
-                strained, tensor, applied_eps = apply_epitaxial_strain(
+                strained, tensor, applied_eps = _apply_campaign_strain(
                     structure,
                     substrate=substrate,
                     in_plane_strain=float(eps),
                     poisson_ratio=enum.poisson_ratio,
-                    relax_out_of_plane=True,
-                    match_substrate=False,
+                    family=family,
                 )
                 tags = [family, meta.get("kind", "bulk"), "epitaxial"]
                 if abs(float(eps)) < 1e-15:
                     tags.append("bulk_strain_0")
+                if meta.get("vacancy_pattern"):
+                    tags.append(str(meta["vacancy_pattern"]))
                 epi = getattr(enum, "epitaxy_orientation", "auto")
                 use_buf = bool(getattr(enum, "use_buffers", True))
                 if epi == "45deg":

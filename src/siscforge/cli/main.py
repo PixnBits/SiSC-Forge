@@ -131,7 +131,7 @@ def enumerate_cmd(
         help="Apply campaign formation-energy pre-filter when a campaign is set.",
     ),
 ) -> None:
-    """Enumerate structure candidates (nitrides / B:Si + epitaxial strain)."""
+    """Enumerate structure candidates (nitrides / B:Si / MgB₂ / opt-in nickelates)."""
     if campaign is not None:
         config = CampaignConfig.from_yaml(campaign)
     else:
