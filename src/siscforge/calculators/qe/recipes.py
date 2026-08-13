@@ -1523,7 +1523,11 @@ def recipe_info() -> dict[str, Any]:
         ],
         "extension_points": {
             "p3_2": "Wannierization quality metrics after SCF/DFT+U (shipped)",
-            "p3_3": "TRIQS/solid_dmft → DMFTResult (shipped; mock + gated real)",
+            "p3_3": (
+                "TRIQS/solid_dmft → DMFTResult "
+                "(scaffold: model + gate + mock + drop-in parser; "
+                "full automated launch residual)"
+            ),
             "p3_4": "pairing eigenvalue → performance_score",
         },
     }

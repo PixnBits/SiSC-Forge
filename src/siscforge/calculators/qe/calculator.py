@@ -732,9 +732,15 @@ class QEDmftCalculator(QECalculator):
     """QE calculator that forces the DMFT step (P3.3).
 
     Registration name: ``qe-dmft``. Forces ``do_dmft``. Defaults phonon/EPW
-    off unless the campaign re-enables them. Prefer pairing with Wannier
-    (``do_wannier`` remains independent; mock bypass covers dry-run without
-    a ready gate). TRIQS is never required to import this calculator.
+    off unless the campaign re-enables them.
+
+    Does **not** force ``do_wannier`` (independence is intentional).
+    Non-mock solvers still expect a ready :class:`WannierResult`
+    (``ready_for_dmft``) or an explicit bypass
+    (``allow_without_wannier_gate``). Pair with ``do_wannier: true`` /
+    ``qe-wannier`` for a real chain; mock + ``mock_bypass_gate`` covers
+    dry-run without the gate. TRIQS is never required to import this
+    calculator. Real launch of solid_dmft remains residual.
     """
 
     name = "qe-dmft"

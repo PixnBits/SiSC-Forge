@@ -5,11 +5,16 @@
 # Does NOT run real QE, Wannier90, or TRIQS. Exercises
 # DFT+U → Wannier (ready_for_dmft) → DMFTResult → store → export.
 # Pairing → performance_score is out of scope (P3.4).
+#
+# Mock occupancy (~8.65–8.95) and mass enhancement (~2.4–4) are
+# illustrative / deterministic placeholders, NOT literature-validated
+# NdNiO2 numbers. Do not treat them as a calibrated DMFT result.
 
 name: ndnio2_dmft_mock
 description: >
   Phase 3.3 smoke campaign — mock DMFT (occupancy + mass enhancement)
-  for NdNiO2-like nickelate. Conventional nitride campaigns leave
+  for NdNiO2-like nickelate. Mock numbers are illustrative placeholders,
+  not a literature fit. Conventional nitride campaigns leave
   dft.do_dmft false (default). P3.4 pairing mapping is out of scope.
 version: "0.1"
 dry_run: true

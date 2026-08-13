@@ -1,16 +1,19 @@
 # SiSC-Forge setup guide
 
 This document is the **canonical install and run guide** for local workstations.  
-It covers three tiers:
+It covers four tiers:
 
 | Tier | What you get | External binaries |
 |------|----------------|-------------------|
 | **A — Python only** | Full dry-run / mock path, structure gen, Si-score, ranking, tests | None |
 | **B — QE phonon** | Real relax / SCF / phonon (`qe` calculator) | `pw.x`, `ph.x` + UPFs |
 | **C — QE + EPW** | Real electron-phonon + Tc (`qe-epw` calculator) — **Phase 1 scientific gate** | `pw.x`, `ph.x`, `epw.x`, `wannier90.x` + UPFs |
+| **D — optional DMFT** | Parse a drop-in solid_dmft `observables.json` into `DMFTResult` | Optional TRIQS / solid_dmft (never a hard dep) |
 
 On a machine **without** Quantum ESPRESSO (the default for many laptops/CI), stop after **Tier A**.  
-The Phase 1 scientific gate (bulk NbN λ and Tc) requires **Tier C**.
+The Phase 1 scientific gate (bulk NbN λ and Tc) requires **Tier C**.  
+Phase 3 unconventional work is usable at **Tier A** via the mock DMFT path;
+Tier D is only for operators who already run TRIQS / solid_dmft elsewhere.
 
 ---
 
@@ -425,6 +428,72 @@ siscforge run --calculator qe-epw examples/nbn_epw.yaml
 | Real phonon only | `siscforge run --calculator qe examples/nbn_phonon_qe.yaml` |
 | Real EPW + Tc (NbN gate) | `siscforge run --calculator qe-epw examples/nbn_epw.yaml` |
 | List calculators | `python -c "from siscforge.calculators import list_calculators; print(list_calculators())"` |
+| Dry-run nickelate DMFT (P3.3 mock) | `siscforge run --dry-run examples/ndnio2_dmft_mock.yaml` |
+
+---
+
+## Tier D — optional DMFT (TRIQS / solid_dmft)
+
+**TRIQS is never a hard dependency of `siscforge`.** The Python package,
+tests, and conventional campaigns install and run without it. P3.3
+(`dft.do_dmft`, calculator `qe-dmft`) is **off by default**.
+
+What P3.3 actually does on the “real” path:
+
+1. Honours the P3.2 `WannierResult.ready_for_dmft` gate (or an explicit
+   operator bypass).
+2. Writes a small sidecar (`siscforge_dmft_config.json`) under a sibling
+   `dmft/` workdir.
+3. If `observables.json` (or `observables_imp0.json` /
+   `siscforge_dmft_observables.json`) is already in that workdir, parses
+   occupancy / mass enhancement into `DMFTResult`.
+4. If TRIQS / solid_dmft is **not** importable, stores
+   `status=skipped`, `failure_class=solver_missing` and leaves upstream
+   DFT+U / Wannier artifacts untouched.
+
+It does **not** launch solid_dmft or CTHYB. Full automated launch is a
+residual. Operator workflow and residual notes:
+[docs/phase3-p33-dmft.md](phase3-p33-dmft.md).
+
+### When to bother with a real stack
+
+- You already have a TRIQS / solid_dmft environment and want SiSC-Forge
+  to **ingest** its observables into the campaign store / CSV / cards.
+- You are developing the residual launcher.
+
+Otherwise stay on **Tier A** and
+`siscforge run --dry-run examples/ndnio2_dmft_mock.yaml`. Mock occupancy
+and m*/m are **illustrative placeholders**, not literature values.
+
+### Recommended install routes (operator-owned)
+
+SiSC-Forge does not vendor or pin TRIQS. Typical routes (check current
+upstream docs; versions drift):
+
+| Route | Notes |
+|-------|--------|
+| conda-forge `triqs` | Common workstation path. Watch Python ABI (3.11+ here) and MPI. |
+| solid_dmft from source / conda | Needs a matching TRIQS + CTHYB / impurity solver. |
+| Site / HPC module | Prefer the stack your cluster already builds; do not mix MPIs. |
+
+Known limitations of the **thin P3.3 wrapper**:
+
+- Import check only (`import triqs` / `import solid_dmft`). No job
+  submission, no MPI wrapper, no DFT+DMFT self-consistency loop.
+- `n_loops` / `n_cycles` / `n_warmup_cycles` are stored on the sidecar
+  for a future launcher and are **unused** by the parser.
+- Observables parse is best-effort JSON key matching, not a solid_dmft
+  schema guarantee.
+- Real (non-mock) Wannier artifacts still depend on residual **P3.2.1**
+  (automated nscf + `pw2wannier90`).
+- Pairing eigenvalue → `performance_score` is **P3.4**.
+
+Optional real-path pytest (skipped unless the stack is importable):
+
+```bash
+pytest tests/test_dmft_p33.py -q
+# real-stack case is skipped automatically when triqs/solid_dmft is absent
+```
 
 ---
 
@@ -454,4 +523,5 @@ siscforge run --dry-run examples/nbn_epw.yaml
 - [Implementation notes](implementation-notes.md)
 - [NbN phonon (QE)](examples/nbN_phonon_qe.md)
 - [NbN EPW + Tc](examples/nbN_epw.md)
+- [Phase 3.3 DMFT scaffold](phase3-p33-dmft.md)
 - [Roadmap](ROADMAP.md)

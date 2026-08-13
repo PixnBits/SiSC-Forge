@@ -524,8 +524,10 @@ class DMFTConfig(BaseModel):
 
     solver: Literal["mock", "solid_dmft", "cthyb"] = "mock"
     """Backend. ``mock`` is always available (no TRIQS). Real
-    ``solid_dmft`` / ``cthyb`` are optional and skip cleanly when the stack
-    is not installed — TRIQS is never a hard dependency of siscforge.
+    Real ``solid_dmft`` / ``cthyb`` write a sidecar and parse a drop-in
+    ``observables.json``; they do **not** launch CTHYB. TRIQS is never a
+    hard dependency of siscforge. Full automated launch is residual
+    (``p3_x_real_launch``).
     """
 
     U_eV: float = Field(
@@ -581,9 +583,17 @@ class DMFTConfig(BaseModel):
     n_loops: int = Field(
         default=4,
         ge=1,
-        description="Requested DMFT self-consistency loops (screening default).",
+        description=(
+            "Requested DMFT self-consistency loops (screening default). "
+            "Stored on the sidecar for a future launcher; unused by the "
+            "thin P3.3 observables parser."
+        ),
     )
-    """Requested outer DMFT loops (screening default)."""
+    """Requested outer DMFT loops (screening default).
+
+    Unused by the thin real path (sidecar + drop-in parse). Residual
+    launcher hook: ``raw["extension_hooks"]["p3_x_real_launch"]``.
+    """
 
     # Wannier gate
     require_wannier_gate: bool = True

@@ -1,16 +1,18 @@
-"""TRIQS / solid_dmft recipe + mock path — Phase 3.3.
+"""TRIQS / solid_dmft scaffold + mock path — Phase 3.3.
 
 Provides:
 - enablement helper from :class:`~siscforge.models.config.DMFTConfig`
 - Wannier ``ready_for_dmft`` gate (honoured outside explicit mock bypass)
 - mock :class:`~siscforge.models.results.DMFTResult` (success + failure)
-- optional thin solid_dmft / CTHYB wrapper that **skips cleanly** when
-  TRIQS is not installed (never a hard dependency of siscforge)
+- thin optional wrapper: writes a config sidecar and parses a drop-in
+  ``observables.json``. **Does not launch** solid_dmft / CTHYB. Skips
+  cleanly when TRIQS is not installed (never a hard dependency)
 - sequential recipe glue after Wannier (sacred upstream artifacts)
 
 **Out of scope (later packages):** pairing eigenvalue →
 ``performance_score`` (P3.4), oxygen-vacancy enumeration (P3.5), mixed
-AL pools (P3.6), finishing residual nscf+pw2wannier90 (P3.2.1).
+AL pools (P3.6), finishing residual nscf+pw2wannier90 (P3.2.1),
+automated solid_dmft launch (residual ``p3_x_real_launch``).
 
 Conventional nitride / MgB₂ / EPW paths are unchanged when DMFT is off.
 """
@@ -53,11 +55,21 @@ _EXTENSION_HOOKS: dict[str, str] = {
     ),
     "p3_5_ovac": "oxygen-vacancy enumeration (structure generation, not DMFT)",
     "p3_6_al": "mixed conventional/unconventional AL acquisition",
+    "p3_x_real_launch": (
+        "Minimal launcher that shells out or writes a ready-to-run "
+        "solid_dmft config from WannierResult + DMFTConfig remains residual. "
+        "P3.3 only writes a sidecar and parses a drop-in observables.json."
+    ),
     "limits": (
         "screening defaults (U, J, beta, n_cycles) are thin workstation knobs; "
-        "not production CTHYB settings. TRIQS is optional and never a hard dep."
+        "not production CTHYB settings. TRIQS is optional and never a hard dep. "
+        "n_loops/n_cycles/n_warmup_cycles are stored for a future launcher."
     ),
 }
+
+_MOCK_PHYSICS_LABEL = (
+    "illustrative / deterministic placeholder, not literature-validated"
+)
 
 _SACRED_NOTE = (
     "DMFT failure must not delete finished DFT+U or Wannier artifacts "
@@ -110,7 +122,11 @@ def solid_dmft_available() -> bool:
 
 
 def classify_dmft_failure(text: str | None) -> str:
-    """Classify a solver / gate failure into :data:`DMFT_FAILURE_CLASSES`."""
+    """Best-effort classify a solver / gate failure into :data:`DMFT_FAILURE_CLASSES`.
+
+    v0 string heuristics over logs / import errors — not a structured
+    solver API. Labels are diagnostic only.
+    """
     if not text or not str(text).strip():
         return "other"
     blob = text.lower()
@@ -279,6 +295,11 @@ def mock_dmft_result(
 ) -> DMFTResult:
     """Deterministic placeholder DMFTResult for dry-run / mock calculator.
 
+    Occupancy and mass enhancement are **illustrative / deterministic
+    placeholders, not literature-validated** (nickelate-like filling
+    ~8.65–8.95 and m*/m ~2.4–4 are seeded hashes, not a calibrated
+    NdNiO₂ fit). See ``raw["physics_label"]``.
+
     Honours the Wannier gate unless ``solver=mock`` + ``mock_bypass_gate``
     (default) or ``allow_without_wannier_gate``. When ``force_failure``
     (or ``dmft.mock_force_failure``) is True, returns a failed result
@@ -343,6 +364,7 @@ def mock_dmft_result(
                 "pathway": "dmft",
                 "mock_force_failure": True,
                 "used_bypass": used_bypass,
+                "physics_label": _MOCK_PHYSICS_LABEL,
                 "extension_hooks": dict(_EXTENSION_HOOKS),
                 "upstream_sacred": _SACRED_NOTE,
                 "formula": formula,
@@ -352,12 +374,14 @@ def mock_dmft_result(
                 source="mock_calculator",
                 software={"siscforge": __version__},
                 parameters={"U_eV": u, "J_eV": j, "failure_class": fcls},
-                notes="dry-run DMFT failure placeholder (P3.3)",
+                notes="dry-run DMFT failure placeholder (P3.3); "
+                "illustrative only, not literature-validated",
             ),
             **refs,
         )
 
-    # Nickelate-like mock: ~d8–d9 occupancy, modest mass enhancement.
+    # Illustrative nickelate-like mock (NOT a literature-calibrated fit):
+    # filling ≈ 8.65–8.95, m*/m ≈ 2.4–4 — deterministic from seed hash.
     if material_family == "nickelate" or "Ni" in formula:
         filling = round(8.65 + 0.30 * r, 4)
         occ = {"Ni_d": filling}
@@ -397,6 +421,7 @@ def mock_dmft_result(
             "method": "mock_dmft",
             "pathway": "dmft",
             "used_bypass": used_bypass,
+            "physics_label": _MOCK_PHYSICS_LABEL,
             "extension_hooks": dict(_EXTENSION_HOOKS),
             "formula": formula,
             "material_family": material_family,
@@ -411,7 +436,10 @@ def mock_dmft_result(
                 "beta": float(cfg.beta),
                 "n_cycles": int(cfg.n_cycles),
             },
-            notes="dry-run DMFT placeholder (P3.3); pairing reserved for P3.4",
+            notes=(
+                "dry-run DMFT placeholder (P3.3); pairing reserved for P3.4; "
+                f"{_MOCK_PHYSICS_LABEL}"
+            ),
         ),
         **refs,
     )
@@ -550,6 +578,10 @@ def _write_dmft_config_sidecar(
         "n_cycles": cfg.n_cycles,
         "n_warmup_cycles": cfg.n_warmup_cycles,
         "n_loops": cfg.n_loops,
+        "n_loops_note": (
+            "stored for a future solid_dmft launcher; unused by the thin "
+            "P3.3 sidecar + observables parser"
+        ),
         "allow_without_wannier_gate": cfg.allow_without_wannier_gate,
         "mock_bypass_gate": cfg.mock_bypass_gate,
         "wannier_work_dir": wannier.work_dir if wannier is not None else None,
@@ -576,7 +608,15 @@ def run_solid_dmft(
     dftu: DFTUConfig | None = None,
     formula: str = "",
 ) -> DMFTResult:
-    """Thin optional wrapper around solid_dmft / TRIQS.
+    """Thin optional wrapper around solid_dmft / TRIQS (scaffold, not a launcher).
+
+    Writes ``siscforge_dmft_config.json`` and, if present, parses a drop-in
+    ``observables.json``. Does **not** start CTHYB / solid_dmft.
+
+    Operator workflow: produce Wannier artifacts → run solid_dmft
+    externally → drop ``observables.json`` into *work_dir* → re-invoke
+    this function. Residual ``p3_x_real_launch`` would automate the
+    middle step.
 
     Skips cleanly with ``failure_class=solver_missing`` when the stack is
     not importable. Never deletes files outside *work_dir*.
@@ -640,6 +680,9 @@ def run_solid_dmft(
         if not metrics:
             # Import is enough to prove the extra is wired; running a full
             # CTHYB job is operator-driven (workstation time + license).
+            # TODO(p3_x_real_launch): generate a ready-to-run solid_dmft
+            # config from WannierResult + DMFTConfig and optionally shell
+            # out. P3.3 stops at sidecar + drop-in parse.
             try:
                 import solid_dmft  # noqa: F401
             except ImportError:

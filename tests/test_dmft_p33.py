@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -195,6 +196,9 @@ def test_mock_with_dmft_enabled_populates_success() -> None:
     assert result.dmft.mass_enhancement is not None
     assert result.dmft.leading_pairing_eigenvalue is None  # P3.4 home
     assert result.dmft.pairing_symmetry is None
+    assert "illustrative" in (result.dmft.raw.get("physics_label") or "")
+    assert "not literature-validated" in (result.dmft.raw.get("physics_label") or "")
+    assert "p3_x_real_launch" in (result.dmft.raw.get("extension_hooks") or {})
     assert result.wannier is not None
     assert result.wannier.ready_for_dmft is True
     assert result.dmft.wannier_ready_for_dmft is True
@@ -240,6 +244,8 @@ def test_mock_bypass_without_wannier() -> None:
     assert r.status == "mock"
     assert r.converged is True
     assert "bypass" in r.gate_notes
+    assert "illustrative" in (r.raw.get("physics_label") or "")
+    assert "literature-validated" in (r.provenance.notes or "")
 
 
 def test_gate_refusal_non_mock_without_ready_wannier() -> None:
@@ -321,7 +327,12 @@ def test_real_path_skips_without_triqs(tmp_path: Path) -> None:
     )
     assert result.failure_class == "solver_missing"
     assert result.status == "skipped"
-    assert (tmp_path / "dmft" / "siscforge_dmft_config.json").is_file()
+    sidecar = tmp_path / "dmft" / "siscforge_dmft_config.json"
+    assert sidecar.is_file()
+    payload = json.loads(sidecar.read_text())
+    assert payload["n_loops"] == cfg.n_loops
+    assert "future" in payload.get("n_loops_note", "")
+    assert "p3_x_real_launch" in payload.get("extension_hooks", {})
 
 
 def test_run_workflow_real_solver_skips_without_stack(tmp_path: Path) -> None:
@@ -458,7 +469,9 @@ def test_recipe_info_lists_dmft() -> None:
     info = recipe_info()
     assert "DMFTResult" in info["models"]
     assert any("dmft" in s.lower() for s in info["steps"])
-    assert "shipped" in info["extension_points"]["p3_3"]
+    assert "scaffold" in info["extension_points"]["p3_3"]
+    assert "residual" in info["extension_points"]["p3_3"]
+    assert "parser" in info["extension_points"]["p3_3"]
 
 
 def test_ndnio2_dmft_example_yaml_loads() -> None:
@@ -471,6 +484,21 @@ def test_ndnio2_dmft_example_yaml_loads() -> None:
     assert cfg.dft.dmft.solver == "mock"
     assert dmft_is_enabled(cfg.dft) is True
     assert cfg.dft.do_epw is False
+
+
+def test_docs_honest_about_scaffold_and_mock_physics() -> None:
+    """Review #13: language, SETUP Tier D, mock labelling, residual launch."""
+    root = Path(__file__).resolve().parents[1]
+    phase = (root / "docs" / "phase3-p33-dmft.md").read_text()
+    assert "observables.json" in phase
+    assert "residual" in phase.lower()
+    assert "illustrative" in phase.lower()
+    assert "Will this run or refuse" in phase
+    setup = (root / "docs" / "SETUP.md").read_text()
+    assert "Tier D" in setup
+    assert "never a hard dependency" in setup
+    example = (root / "examples" / "ndnio2_dmft_mock.yaml").read_text()
+    assert "illustrative" in example.lower()
 
 
 def test_conventional_campaign_unchanged_when_dmft_off() -> None:

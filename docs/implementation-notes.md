@@ -1,6 +1,28 @@
 # Implementation Notes
 
+## Slice P3.3 review (2026-08-13) — language, SETUP, residuals
+
+Addressed Product Owner + Software Engineer review on #13. No change to
+the mock/gate/export contract; docs and labels made honest about the
+thin real path.
+
+| Issue | Fix |
+|-------|-----|
+| Real path is sidecar + drop-in parser, not a jobflow launcher | Tempered README / ROADMAP / phase docs; operator workflow + residual `p3_x_real_launch` hook |
+| SETUP stopped at Tier C | Added **Tier D — optional DMFT (TRIQS / solid_dmft)** |
+| Optimistic “Done / shipped” while real launch is residual | Status now “scaffold: model + gate + mock + parser” |
+| Three gate knobs easy to misread | Operator mental model + first-match table in `docs/phase3-p33-dmft.md` |
+| Mock filling / m* look calibrated | Labelled “illustrative / not literature-validated” in phase doc, example YAML, `raw["physics_label"]`, provenance |
+| Residual P3.2.1 easy to miss | Explicit chain diagram in the phase doc |
+| Failure classification / unused `n_loops` / `QEDmftCalculator` independence | Documented as best-effort / future / independent of `do_wannier` |
+
+**Still residual (not this slice):** automated solid_dmft launch,
+P3.2.1 nscf+pw2wannier90, P3.4 pairing → `performance_score`.
+
+---
+
 ## Slice P3.3 (2026-08-12) — DMFTResult model and solid_dmft/mock recipe
+
 
 **Scope**: Third vertical slice of the unconventional (nickelate) pathway.
 Adds typed `DMFTResult`, campaign knobs (`dft.do_dmft` / `dft.dmft`, **off
