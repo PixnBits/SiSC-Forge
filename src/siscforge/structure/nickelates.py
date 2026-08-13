@@ -21,6 +21,15 @@ Default screening patterns (intentionally small)
 
 Optional named pattern (off by default): ``apical_half`` (R₂Ni₂O₅ in 1×1×2).
 
+Idealized approximations
+------------------------
+RNiO₃ precursors are typically orthorhombic (Pbnm) with octahedral rotations;
+the P4/mmm cell is a common high-symmetry **screening** approximation.
+The ordered 2×2×1 single in-plane vacancy is the symmetry-unique minimal
+representative — real reduction pathways can be disordered, clustered,
+residual-apical, or larger-period. Do not treat these cells as a defect
+ensemble or a thermodynamics workflow.
+
 Out of scope
 ------------
 Combinatorial vacancy enumerations, bilayer nickelates, cuprates, real
@@ -33,8 +42,14 @@ from typing import Any
 
 from pymatgen.core import Lattice, Structure
 
-# Screening lattice constants (Å). IL values match the NdNiO₂ golden CIF.
-# These are workstation screening prototypes, not refined experimental fits.
+# Screening lattice constants (Å). Workstation prototypes, not refined fits.
+# Primary experimental anchors (IL, tetragonal a / c):
+#   Nd — Hayward et al., J. Am. Chem. Soc. 121, 8843 (1999);
+#        Li et al., Nature 572, 624 (2019) and subsequent film XRD
+#        (a ≈ 3.92 Å, c ≈ 3.28–3.37 Å). Golden CIF uses 3.92 / 3.31.
+#   Pr — film/bulk reports in the same family (a ≈ 3.96 Å, c ≈ 3.31 Å).
+#   La — Hayward, Wilson et al., J. Am. Chem. Soc. 125, 12768 (2003)
+#        (a ≈ 3.96 Å, c ≈ 3.37 Å).
 INFINITE_LAYER_LATTICE: dict[str, tuple[float, float]] = {
     "Nd": (3.92, 3.31),
     "Pr": (3.96, 3.31),
@@ -42,6 +57,8 @@ INFINITE_LAYER_LATTICE: dict[str, tuple[float, float]] = {
 }
 
 # Idealized tetragonal / pseudocubic perovskite (apical-O filled) *a* = *c*.
+# Screening values near the common pseudocubic RNiO3 constants
+# (~3.81–3.84 Å); real precursors are typically Pbnm with rotations.
 PEROVSKITE_LATTICE: dict[str, float] = {
     "Nd": 3.81,
     "Pr": 3.82,
@@ -196,10 +213,6 @@ def build_apical_oxygen(
     )
 
 
-def _oxygen_site_indices(structure: Structure) -> list[int]:
-    return [i for i, site in enumerate(structure) if site.specie.symbol == "O"]
-
-
 def _inplane_oxygen_indices(structure: Structure, *, z_tol: float = 0.15) -> list[int]:
     """Oxygen sites in the NiO₂ plane (fractional *z* near 0 or 1)."""
     out: list[int] = []
@@ -272,6 +285,13 @@ def _il_meta(rare_earth: str, pattern: str, **extra: Any) -> dict[str, Any]:
         PATTERN_APICAL_O: "apical_oxygen",
         PATTERN_APICAL_HALF: "apical_oxygen",
     }.get(pattern, "nickelate")
+    pattern_class = {
+        PATTERN_STOICHIOMETRIC: "stoichiometric",
+        PATTERN_INPLANE_VACANCY: "oxygen_vacancy",
+        PATTERN_APICAL_O: "apical_addition",
+        PATTERN_APICAL_HALF: "apical_addition",
+    }.get(pattern, "other")
+    prototype = "perovskite_like" if pattern == PATTERN_APICAL_O else "infinite_layer"
     notes = {
         PATTERN_STOICHIOMETRIC: (
             "Stoichiometric infinite-layer RNiO2 (P4/mmm). Screening prototype."
@@ -282,17 +302,20 @@ def _il_meta(rare_earth: str, pattern: str, **extra: Any) -> dict[str, Any]:
             "not a defect formation energy."
         ),
         PATTERN_APICAL_O: (
-            "Idealized RNiO3 with apical oxygen filled (perovskite-like parent "
-            "of the IL reduction path). Screening prototype."
+            "Idealized P4/mmm RNiO3 with apical oxygen *added* relative to "
+            "the IL parent (n_oxygen_il_parent=2). Perovskite-like reduction "
+            "parent — not a Pbnm experimental precursor."
         ),
         PATTERN_APICAL_HALF: (
-            "Ordered half-apical occupancy (R2Ni2O5, 1x1x2). Screening only."
+            "Ordered half-apical occupancy (R2Ni2O5, 1x1x2): one apical O "
+            "added to a doubled IL stack. Screening only."
         ),
     }
     meta: dict[str, Any] = {
         "material_family": "nickelate",
-        "prototype": "infinite_layer",
+        "prototype": prototype,
         "kind": kind,
+        "pattern_class": pattern_class,
         "rare_earth": rare_earth,
         "vacancy_pattern": pattern,
         "structure_key": structure_key(rare_earth, pattern, sc_t),
@@ -325,6 +348,7 @@ def build_nickelate_pattern(
             supercell=[1, 1, 1],
             n_oxygen=n_o,
             n_oxygen_parent=n_o,
+            n_oxygen_il_parent=n_o,
             vacancy_fraction=0.0,
         )
         return s, meta
@@ -338,6 +362,7 @@ def build_nickelate_pattern(
             supercell=[1, 1, 1],
             n_oxygen=n_o,
             n_oxygen_parent=2,
+            n_oxygen_il_parent=2,
             vacancy_fraction=0.0,
             apical_added=1,
             conventional_lattice_a=float(PEROVSKITE_LATTICE[r]),
@@ -355,6 +380,7 @@ def build_nickelate_pattern(
             supercell=[1, 1, 2],
             n_oxygen=n_o,
             n_oxygen_parent=4,
+            n_oxygen_il_parent=4,
             vacancy_fraction=0.0,
             apical_added=1,
         )
@@ -372,6 +398,7 @@ def build_nickelate_pattern(
             supercell=list(sc),
             n_oxygen=n_o,
             n_oxygen_parent=n_parent,
+            n_oxygen_il_parent=n_parent,
             vacancy_fraction=float(n_parent - n_o) / float(n_parent),
         )
         return s, meta

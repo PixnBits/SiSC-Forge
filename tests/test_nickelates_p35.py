@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from pymatgen.core import Structure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
@@ -18,9 +19,11 @@ from siscforge.structure import generate_candidates
 from siscforge.structure.nickelates import (
     DEFAULT_PATTERNS,
     INFINITE_LAYER_LATTICE,
+    PATTERN_APICAL_HALF,
     PATTERN_APICAL_O,
     PATTERN_INPLANE_VACANCY,
     PATTERN_STOICHIOMETRIC,
+    build_apical_half,
     build_apical_oxygen,
     build_infinite_layer,
     build_inplane_vacancy,
@@ -316,6 +319,9 @@ def test_pattern_metadata_provenance() -> None:
     assert meta["screening_only"] is True
     assert meta["n_oxygen"] == 7
     assert meta["n_oxygen_parent"] == 8
+    assert meta["n_oxygen_il_parent"] == 8
+    assert meta["pattern_class"] == "oxygen_vacancy"
+    assert meta["prototype"] == "infinite_layer"
     assert meta["vacancy_fraction"] == pytest.approx(0.125)
     dumped = json.dumps(meta)
     assert "inplane_vacancy" in dumped
@@ -330,3 +336,89 @@ def test_docs_exist() -> None:
     assert "defect formation" in doc.lower()
     assert "P3.6" in doc
     assert "material_families" in doc
+    assert "Hayward" in doc
+    assert "pending merge" in doc.lower()
+
+
+def test_nickelate_supercell_validation() -> None:
+    with pytest.raises(ValidationError):
+        EnumerationConfig(nickelate_supercell=[2, 2])
+    with pytest.raises(ValidationError):
+        EnumerationConfig(nickelate_supercell=[2, 2, 0])
+    with pytest.raises(ValidationError):
+        EnumerationConfig(nickelate_supercell=[-1, 2, 1])
+    ok = EnumerationConfig(nickelate_supercell=[2, 2, 1])
+    assert ok.nickelate_supercell == [2, 2, 1]
+
+
+def test_apical_half_optional_pattern() -> None:
+    s = build_apical_half("Nd")
+    assert int(s.composition["O"]) == 5
+    assert int(s.composition["Nd"]) == 2
+    assert int(s.composition["Ni"]) == 2
+    _, meta = build_nickelate_pattern("Nd", PATTERN_APICAL_HALF)
+    assert meta["pattern_class"] == "apical_addition"
+    assert meta["prototype"] == "infinite_layer"
+    assert meta["n_oxygen_il_parent"] == 4
+    assert meta["apical_added"] == 1
+    cands = generate_candidates(
+        EnumerationConfig(
+            material_families=["nickelate"],
+            nickelate_rare_earths=["Nd"],
+            nickelate_patterns=["apical_half"],
+            strain_values=[0.0],
+            max_candidates=2,
+        )
+    )
+    assert len(cands) == 1
+    assert cands[0].metadata["vacancy_pattern"] == PATTERN_APICAL_HALF
+
+
+def test_apical_o_metadata_is_addition_not_vacancy() -> None:
+    _, meta = build_nickelate_pattern("Nd", PATTERN_APICAL_O)
+    assert meta["pattern_class"] == "apical_addition"
+    assert meta["prototype"] == "perovskite_like"
+    assert meta["n_oxygen_il_parent"] == 2
+    assert meta["n_oxygen"] == 3
+    assert meta["vacancy_fraction"] == 0.0
+    assert meta["apical_added"] == 1
+
+
+def test_multi_rare_earth_unique_keys() -> None:
+    pairs = enumerate_nickelates(
+        rare_earths=["Nd", "Pr"],
+        patterns=["stoichiometric", "inplane_vacancy"],
+    )
+    assert len(pairs) == 4
+    keys = [meta["structure_key"] for _, meta in pairs]
+    assert len(keys) == len(set(keys))
+    rares = {meta["rare_earth"] for _, meta in pairs}
+    assert rares == {"Nd", "Pr"}
+
+
+def test_sto_substrate_sets_biaxial_fallback() -> None:
+    cands = generate_candidates(
+        EnumerationConfig(
+            material_families=["nickelate"],
+            nickelate_rare_earths=["Nd"],
+            nickelate_patterns=["stoichiometric"],
+            substrates=["SrTiO3"],
+            strain_values=[0.0],
+            max_candidates=2,
+        )
+    )
+    assert len(cands) == 1
+    assert cands[0].metadata.get("biaxial_fallback") is True
+    assert "biaxial_fallback" in cands[0].tags
+    si = generate_candidates(
+        EnumerationConfig(
+            material_families=["nickelate"],
+            nickelate_rare_earths=["Nd"],
+            nickelate_patterns=["stoichiometric"],
+            substrates=["Si(001)"],
+            strain_values=[0.0],
+            max_candidates=2,
+        )
+    )
+    assert si[0].metadata.get("biaxial_fallback") is None
+

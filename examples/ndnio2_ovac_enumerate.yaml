@@ -22,6 +22,10 @@ enumeration:
   nickelate_max_patterns: 3
   nickelate_supercell: [2, 2, 1]
   substrates: [Si(001)]
+  # Si(001) for Si-feasibility ranking. Physics-oriented IL films are
+  # usually grown on SrTiO3 / NGO; those labels are accepted and fall
+  # back to requested biaxial strain (metadata.biaxial_fallback: true).
+  # substrates: [SrTiO3]
   strain_values: [0.0, -0.01]
   max_candidates: 8
 

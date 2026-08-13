@@ -5,6 +5,7 @@
 **Scope**: First-class, opt-in structure generation for infinite-layer
 RNiO₂ (Nd/Pr/La) plus a **curated** O-vacancy / apical-O set. Ordinary
 `StructureCandidate`s; no ranking / pairing / AL / DMFT-launch changes.
+Status in README/ROADMAP is **this PR / pending merge** until #15 lands.
 
 | Item | Location |
 |------|----------|

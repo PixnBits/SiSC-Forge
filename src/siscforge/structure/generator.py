@@ -100,6 +100,11 @@ def _as_tuple3(values: list[int] | tuple[int, int, int]) -> tuple[int, int, int]
     return int(values[0]), int(values[1]), int(values[2])
 
 
+def _is_unsupported_substrate_error(exc: ValueError) -> bool:
+    msg = str(exc).lower()
+    return "unsupported substrate" in msg or "only si substrates" in msg
+
+
 def _apply_campaign_strain(
     structure: Structure,
     *,
@@ -107,15 +112,19 @@ def _apply_campaign_strain(
     in_plane_strain: float,
     poisson_ratio: float,
     family: str,
-) -> tuple[Structure, tuple[float, float, float, float, float, float], float]:
+) -> tuple[Structure, tuple[float, float, float, float, float, float], float, bool]:
     """Apply epitaxial strain; nickelates may sit on non-Si labels (e.g. SrTiO3).
 
     Existing nitride / MgB₂ paths still go through ``apply_epitaxial_strain``
     (Si-only). For nickelates, an unrecognized substrate falls back to
     requested biaxial strain so enumeration does not crash.
+
+    Returns
+    -------
+    strained, tensor, eps_ip, biaxial_fallback
     """
     try:
-        return apply_epitaxial_strain(
+        strained, tensor, eps = apply_epitaxial_strain(
             structure,
             substrate=substrate,
             in_plane_strain=float(in_plane_strain),
@@ -123,8 +132,9 @@ def _apply_campaign_strain(
             relax_out_of_plane=True,
             match_substrate=False,
         )
-    except ValueError:
-        if family != "nickelate":
+        return strained, tensor, eps, False
+    except ValueError as exc:
+        if family != "nickelate" or not _is_unsupported_substrate_error(exc):
             raise
         strained, tensor = apply_biaxial_strain(
             structure,
@@ -132,7 +142,7 @@ def _apply_campaign_strain(
             poisson_ratio=poisson_ratio,
             relax_out_of_plane=True,
         )
-        return strained, tensor, float(in_plane_strain)
+        return strained, tensor, float(in_plane_strain), True
 
 
 def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
@@ -191,7 +201,7 @@ def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
                     seed=enum.seed,
                 )
                 meta = {**nmeta, **meta}
-            strained, tensor, applied_eps = _apply_campaign_strain(
+            strained, tensor, applied_eps, biaxial_fallback = _apply_campaign_strain(
                 structure,
                 substrate=spec.substrate,
                 in_plane_strain=float(spec.in_plane_strain),
@@ -203,6 +213,9 @@ def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
                 tags.append("bulk_strain_0")
             if meta.get("vacancy_pattern"):
                 tags.append(str(meta["vacancy_pattern"]))
+            if biaxial_fallback:
+                tags.append("biaxial_fallback")
+                meta["biaxial_fallback"] = True
             cand = structure_to_candidate(
                 strained,
                 material_family=family,
@@ -310,7 +323,7 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
     for structure, meta, family in bulk_items:
         for substrate in substrates:
             for eps in strains:
-                strained, tensor, applied_eps = _apply_campaign_strain(
+                strained, tensor, applied_eps, biaxial_fallback = _apply_campaign_strain(
                     structure,
                     substrate=substrate,
                     in_plane_strain=float(eps),
@@ -326,6 +339,8 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
                 use_buf = bool(getattr(enum, "use_buffers", True))
                 if epi == "45deg":
                     tags.append("epitaxy_45deg")
+                if biaxial_fallback:
+                    tags.append("biaxial_fallback")
                 cand = structure_to_candidate(
                     strained,
                     material_family=family,
@@ -339,6 +354,7 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
                         "requested_strain": float(eps),
                         "epitaxy_orientation": epi,
                         "use_buffers": use_buf,
+                        **({"biaxial_fallback": True} if biaxial_fallback else {}),
                     },
                     formula=meta.get("formula"),
                 )

@@ -185,7 +185,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 2. Wannierization pipeline with quality metrics. **(P3.2 — shipped (metrics + mock + gate + prep); residual P3.2.1 nscf+pw2wannier90; see docs/phase3-p32-wannier.md)**
 3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — model + Wannier gate + mock + drop-in parser shipped; full automated solid_dmft launch residual; pairing → performance_score is P3.4; see docs/phase3-p33-dmft.md)**
 4. Pairing-eigenvalue extraction and mapping onto performance_score. **(P3.4 — shipped; see docs/phase3-p34-pairing-score.md)**
-5. Oxygen-vacancy structure generation for nickelates. **(P3.5 — shipped; see docs/phase3-p35-oxygen-vacancy.md)**
+5. Oxygen-vacancy structure generation for nickelates. **(P3.5 — this PR, pending merge; see docs/phase3-p35-oxygen-vacancy.md)**
 6. AL acquisition updates for mixed or separate pools. **(P3.6 — next)**
 7. Golden-system test on bulk NdNiO₂ (occupancy + mass enhancement).
 8. End-to-end strained nickelate campaign on shortlist.

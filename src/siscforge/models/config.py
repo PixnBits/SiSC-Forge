@@ -237,8 +237,21 @@ class EnumerationConfig(BaseModel):
             "(not including the strain × substrate grid)."
         ),
     )
-    nickelate_supercell: list[int] = Field(default_factory=lambda: [2, 2, 1])
+    nickelate_supercell: list[int] = Field(
+        default_factory=lambda: [2, 2, 1],
+        min_length=3,
+        max_length=3,
+        description="Supercell used for patterns that need one (inplane_vacancy).",
+    )
     """Supercell used for patterns that need one (``inplane_vacancy``)."""
+
+    @field_validator("nickelate_supercell")
+    @classmethod
+    def _nickelate_supercell_positive(cls, v: list[int]) -> list[int]:
+        out = [int(n) for n in v]
+        if any(n < 1 for n in out):
+            raise ValueError(f"nickelate_supercell components must be ≥ 1, got {out}")
+        return out
 
 
 class CalculatorConfig(BaseModel):
