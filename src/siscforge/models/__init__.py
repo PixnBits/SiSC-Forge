@@ -27,6 +27,7 @@ from siscforge.models.config import (
     SiFeasibilityWeights,
     SurrogateConfig,
     TcLambdaSurrogateConfig,
+    WannierConfig,
 )
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import (
@@ -36,6 +37,7 @@ from siscforge.models.results import (
     SCFResult,
     SiFeasibilityComponents,
     SiFeasibilityScore,
+    WannierResult,
 )
 
 __all__ = [
@@ -71,4 +73,6 @@ __all__ = [
     "StructureCandidate",
     "SurrogateConfig",
     "TcLambdaSurrogateConfig",
+    "WannierConfig",
+    "WannierResult",
 ]

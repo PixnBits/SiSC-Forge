@@ -246,8 +246,8 @@ class DFTUConfig(BaseModel):
     unchanged until ``enabled`` is set (or ``DFTConfig.do_dftu`` /
     calculator ``qe-dftu``).
 
-    Extension points (not implemented here):
-    - **P3.2** Wannierization after DFT+U (quality metrics)
+    Extension points:
+    - **P3.2** Wannierization after DFT+U (``dft.wannier`` / ``WannierResult``)
     - **P3.3** TRIQS / solid_dmft recipe consuming Wannier + this U/J
     - **P3.4** pairing eigenvalue → ``performance_score``
     """
@@ -360,8 +360,147 @@ class DFTUConfig(BaseModel):
             )
         return out
 
+
+class WannierConfig(BaseModel):
+    """Standalone Wannierization settings for the unconventional pathway (P3.2).
+
+    **Disabled by default** — conventional nitride / MgB₂ / AL examples are
+    unchanged until ``enabled`` is set (or ``DFTConfig.do_wannier`` /
+    calculator ``qe-wannier``).
+
+    Distinct from the EPW-internal Wannier90 step (``proj=random`` inside EPW
+    screening). This config drives a **first-class prep + quality-metrics** step after SCF
+    or DFT+U that produces :class:`~siscforge.models.results.WannierResult`
+    for the P3.3 DMFT gate. Full nscf + pw2wannier90 orchestration is residual
+    (P3.2.1 / under P3.3).
+
+    Lessons reused from EPW screening (coarse-k safety, frozen-window
+    classification) without weakening the conventional EPW remediation path.
+
+    Extension points (not implemented here):
+    - **P3.3** TRIQS / solid_dmft consumes ``WannierResult`` artifacts
+    - **P3.4** pairing eigenvalue → ``performance_score``
+    - Material-specific production projection libraries (later residual)
+    """
+
+    enabled: bool = False
+    """Master switch. Also set via ``dft.do_wannier`` or ``qe-wannier``."""
+
+    projection_mode: Literal["random", "explicit"] = "random"
+    """Screening default is ``random`` (EPW lesson). Use ``explicit`` with
+    ``projections`` for orbital strings when provided."""
+
+    projections: list[str] = Field(default_factory=list)
+    """Explicit Wannier90 projection lines when ``projection_mode=explicit``,
+    e.g. ``[\"Ni:d\", \"O:p\"]``. Empty + explicit mode falls back to random
+    with a warning note (material-specific production libraries are later).
+    """
+
+    num_wann: int | None = Field(default=None, ge=1)
+    """Target number of Wannier functions. None → auto policy when
+    ``auto_num_wann`` is True."""
+
+    auto_num_wann: bool = True
+    """When True and ``num_wann`` is None (or undersized), derive a screening
+    floor from band count / cell size (mirrors EPW ``auto_nbndsub`` spirit)."""
+
+    num_bands: int | None = Field(default=None, ge=1)
+    """Bloch bands for Wannierization. None → use ``DFTConfig.nbnd`` or auto."""
+
+    # Window hints (eV absolute, or relative to Fermi when use_fermi_relative)
+    use_fermi_relative_windows: bool = True
+    """When True and a Fermi energy is known, windows are Ef-relative (EPW
+    lesson: hard-coded absolute windows fail for high-Ef metals)."""
+
+    dis_win_min: float | None = None
+    """Outer disentanglement window min (eV). None → screening default."""
+
+    dis_win_max: float | None = None
+    """Outer disentanglement window max (eV)."""
+
+    dis_froz_min: float | None = None
+    """Frozen window min (eV). Screening defaults use a tight frozen window."""
+
+    dis_froz_max: float | None = None
+    """Frozen window max (eV)."""
+
+    screening_tight_froz: bool = True
+    """Reuse EPW tight frozen-window defaults for screening random projs."""
+
+    # Coarse k safety (shared philosophy with EPW; does not alter EPW configs)
+    kmesh: list[int] = Field(default_factory=lambda: [4, 4, 4])
+    """Coarse electronic k-mesh for the Wannier nscf / .win mp_grid."""
+
+    strict_coarse_k: bool = False
+    """If True, refuse undersized k-meshes instead of auto-raising."""
+
+    auto_raise_coarse_k: bool = True
+    """Raise coarse k to Wannier-safe floors (same policy as EPW)."""
+
+    # Quality / DMFT gate thresholds
+    max_avg_spread_ang2: float = Field(
+        default=12.0,
+        gt=0.0,
+        description=(
+            "DMFT gate: average WF spread (Å²) above this → not ready for DMFT. "
+            "Conservative screening default pending nickelate-specific calibration. "
+            "With proj=random many candidates will gate out — intentional for P3.3 "
+            "safety. Tighten for production / explicit projections; loosen only with "
+            "documented local validation. Not derived from a single literature cutoff."
+        ),
+    )
+    """DMFT gate: average WF spread (Å²) above this → not ready for DMFT.
+
+    Conservative **screening** default pending nickelate-specific calibration.
+    With ``proj=random`` many candidates will gate out — intentional for P3.3
+    safety. Tighten for production / explicit projections; loosen only with
+    documented local validation. Not derived from a single literature cutoff.
+    """
+
+    max_spread_ang2: float = Field(
+        default=25.0,
+        gt=0.0,
+        description=(
+            "DMFT gate: any individual WF spread (Å²) above this → not ready. "
+            "Same rationale as max_avg_spread_ang2: conservative screening floor so "
+            "P3.3 does not consume obviously delocalized / failed MLWFs. Expect to "
+            "retune once material-specific projections and workstation validation data "
+            "exist."
+        ),
+    )
+    """DMFT gate: any individual WF spread (Å²) above this → not ready.
+
+    Same rationale as ``max_avg_spread_ang2``: conservative screening floor so
+    P3.3 does not consume obviously delocalized / failed MLWFs. Expect to
+    retune once material-specific projections and workstation validation data
+    exist.
+    """
+
+    require_chk: bool = True
+    """DMFT gate: require a ``.chk`` (or mock equivalent) artifact handle."""
+
+    # Parallel notes (documented; execution uses DFTConfig.nproc)
+    nproc_note: str = (
+        "Wannier90.x is typically serial or lightly parallel; "
+        "pw.x nscf / pw2wannier90 follow dft.nproc."
+    )
+
+    seedname: str = "siscforge"
+    """Wannier90 seedname (produces seedname.win / .amn / .mmn / .chk / .wout)."""
+
+    # Mock path control (tests / dry-run)
+    mock_force_failure: bool = False
+    """When True under mock calculator, emit a failed WannierResult
+    (for failure-classification tests). Inert on real QE path."""
+
+    mock_failure_class: str = "frozen_window"
+    """Failure class used when ``mock_force_failure`` is True."""
+
+    version: str = "0.1"
+
+
 class DFTConfig(BaseModel):
-    engine: Literal["mock", "qe", "qe-epw", "qe-dftu"] = "mock"
+    engine: Literal["mock", "qe", "qe-epw", "qe-dftu", "qe-wannier"] = "mock"
     ecutwfc: float = 50.0
     ecutrho: float = 400.0
     kpoints: list[int] = Field(default_factory=lambda: [4, 4, 4])
@@ -397,6 +536,14 @@ class DFTConfig(BaseModel):
     Equivalent to ``dftu.enabled: true``. Calculator ``qe-dftu`` forces this on.
     """
     dftu: DFTUConfig = Field(default_factory=DFTUConfig)
+    # --- P3.2 Wannierization (disabled by default; inert for conventional) ---
+    do_wannier: bool = False
+    """Enable first-class Wannierization after SCF / DFT+U (P3.2).
+
+    Equivalent to ``wannier.enabled: true``. Calculator ``qe-wannier`` forces this.
+    Does **not** replace EPW-internal Wannier; conventional EPW path unchanged.
+    """
+    wannier: WannierConfig = Field(default_factory=WannierConfig)
     quality_tag: Literal["screening", "production"] = "screening"
 
 

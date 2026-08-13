@@ -229,6 +229,140 @@ class DFTUResult(BaseModel):
         return "; ".join(bits) if bits else f"status={self.status}"
 
 
+class WannierResult(BaseModel):
+    """Standalone Wannierization quality result — Phase 3.2.
+
+    First-class prep + quality-metrics step after SCF / DFT+U for correlated
+    (nickelate) candidates. Consumed later by TRIQS / solid_dmft (**P3.3**).
+    Full automated nscf + pw2wannier90 orchestration is residual **P3.2.1**.
+
+    Inert for conventional nitride / MgB₂ campaigns: leave
+    ``CandidateEvaluation.wannier`` as ``None`` unless Wannier is enabled
+    (``dft.do_wannier`` / ``dft.wannier.enabled`` / calculator ``qe-wannier``).
+
+    The conventional EPW pathway still runs its own internal Wannier90 step
+    (``proj=random``, coarse grids); that path is unchanged by this model.
+    Standalone ``CandidateEvaluation.wannier`` is independent of
+    ``electron_phonon.wannier_ok``.
+    """
+
+    wannier_ok: bool = False
+    """True when Wannier90 completed with usable quality for downstream use."""
+
+    ready_for_dmft: bool = False
+    """Explicit DMFT gate: manifold usable enough for P3.3 TRIQS/solid_dmft.
+
+    False when quality is poor, spreads diverge, or required artifacts are
+    missing. P3.3 should refuse to launch when this is False.
+    """
+
+    dmft_gate_notes: str = ""
+    """Human reason for the DMFT gate decision (empty when ready)."""
+
+    status: str = "unknown"
+    """Run status: ``ok``, ``failed``, ``mock``, ``skipped``, …"""
+
+    quality_tag: Literal["screening", "production", "mock", "unknown"] = "unknown"
+    """Calculation quality tier (screening random projs vs production)."""
+
+    failure_class: str | None = None
+    """Primary failure class when not ok (step-aware Wannier classes only).
+
+    Known values include: ``frozen_window``, ``kmesh_bvector``,
+    ``disentanglement``, ``spread_divergence``, ``missing_files``,
+    ``binary_missing``, ``projection``, ``nscf_failed``, ``pw2wannier_failed``,
+    ``convergence``, ``other``. Never reuse phonon-only or EPW-only labels.
+
+    ``convergence`` is classified from logs but is **not** a hard-fail
+    fingerprint on its own — a non-zero returncode / incomplete job still
+    marks ``wannier_ok=False``. Hard-fail classes (frozen window, missing
+    files, …) force failure even when partial spread text is present.
+    """
+
+    num_wann: int | None = None
+    """Number of Wannier functions requested / obtained."""
+
+    num_bands: int | None = None
+    """Number of Bloch bands fed into Wannierization."""
+
+    projection_mode: str | None = None
+    """``random`` (screening) or ``explicit`` (orbital strings)."""
+
+    projection_summary: str = ""
+    """Compact projection description (e.g. ``random`` or ``Ni:d;O:p``)."""
+
+    spread_sum_ang2: float | None = None
+    """Sum of Wannier spreads Ω (Å²) when parsed from ``.wout``."""
+
+    avg_spread_ang2: float | None = None
+    """Mean spread per WF (Å²)."""
+
+    max_spread_ang2: float | None = None
+    """Largest individual WF spread (Å²)."""
+
+    spreads_ang2: list[float] = Field(default_factory=list)
+    """Per-WF final spreads (Å²) when available."""
+
+    disentanglement_notes: str = ""
+    """Outer-window / disentanglement summary from logs."""
+
+    frozen_window_notes: str = ""
+    """Frozen-window notes (tight screening windows, overflow, …)."""
+
+    kmesh: list[int] = Field(default_factory=list)
+    """Actual coarse k-mesh written into ``.win`` / used for the run.
+
+    Prefer the post-``resolve_kmesh`` mesh (may be auto-raised above config).
+    """
+
+    # Artifact handles (paths or opaque workdir references)
+    work_dir: str | None = None
+    """Work directory holding Wannier artifacts (opaque handle for P3.3)."""
+
+    win_path: str | None = None
+    """Path to ``.win`` input when present."""
+
+    amn_path: str | None = None
+    """Path to ``.amn`` when present."""
+
+    mmn_path: str | None = None
+    """Path to ``.mmn`` when present."""
+
+    chk_path: str | None = None
+    """Path to ``.chk`` (checkpoint; preferred P3.3 input) when present."""
+
+    wout_path: str | None = None
+    """Path to ``.wout`` log when present."""
+
+    raw: dict[str, Any] = Field(default_factory=dict)
+    """Catch-all: parse notes, return codes, extension hooks for P3.3."""
+
+    provenance: Provenance = Field(default_factory=Provenance)
+
+    def summary_line(self) -> str:
+        """Short human-readable summary for cards / CLI."""
+        bits: list[str] = []
+        bits.append(f"ok={self.wannier_ok}")
+        bits.append(f"dmft_ready={self.ready_for_dmft}")
+        if self.num_wann is not None:
+            bits.append(f"n_wann={self.num_wann}")
+        if self.projection_mode:
+            bits.append(f"proj={self.projection_mode}")
+        if self.spread_sum_ang2 is not None:
+            bits.append(f"Ω_sum={self.spread_sum_ang2:.3f} Å²")
+        if self.avg_spread_ang2 is not None:
+            bits.append(f"Ω_avg={self.avg_spread_ang2:.3f} Å²")
+        if self.failure_class:
+            bits.append(f"fail={self.failure_class}")
+            if self.failure_class == "missing_files":
+                bits.append(
+                    "next=stage nscf+pw2wannier90 (.amn/.mmn) into work_dir, "
+                    "then re-invoke / run_wannier90_on_artifacts"
+                )
+        bits.append(f"status={self.status}")
+        return "; ".join(bits)
+
+
 class SiFeasibilityComponents(BaseModel):
     """Individual terms that feed the composite Silicon Feasibility Score.
 

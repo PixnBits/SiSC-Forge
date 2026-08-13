@@ -150,3 +150,22 @@ def epw_available() -> bool:
 def require_epw() -> QEEnvironment:
     """Require pw.x, ph.x, and epw.x for a full conventional pathway run."""
     return require_qe(need_phonon=True, need_epw=True)
+
+
+def wannier90_available() -> bool:
+    """Return True if ``wannier90.x`` is on PATH / QE_BIN."""
+    return detect_qe_environment().wannier90 is not None
+
+
+def require_wannier90() -> QEEnvironment:
+    """Require ``wannier90.x`` for standalone Wannierization (P3.2)."""
+    env = detect_qe_environment()
+    if not env.wannier90:
+        raise QENotAvailableError(
+            "wannier90.x not found. Standalone Wannierization (P3.2) requires "
+            "Wannier90 on PATH or under QE_BIN.\n"
+            "For dry-run without Wannier90: siscforge run --dry-run <campaign.yaml>\n"
+            "Or disable: dft.do_wannier: false / dft.wannier.enabled: false"
+        )
+    return env
+

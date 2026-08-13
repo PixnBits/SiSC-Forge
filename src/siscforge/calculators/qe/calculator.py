@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,9 @@ from siscforge.models.provenance import Provenance
 from siscforge.models.results import SiFeasibilityScore
 from siscforge.silicon.feasibility import score_si_feasibility
 
-__all__ = ["QECalculator", "QENotAvailableError", "QEEpwCalculator", "QEDftuCalculator"]
+_LOG = logging.getLogger(__name__)
+
+__all__ = ["QECalculator", "QENotAvailableError", "QEEpwCalculator", "QEDftuCalculator", "QEWannierCalculator"]
 
 
 def _merge_dft_config(
@@ -45,11 +48,15 @@ class QECalculator(BaseCalculator):
     :class:`QEEpwCalculator` (``qe-epw``).
     Enable DFT+U with ``dft.do_dftu: true`` / ``dft.dftu.enabled: true``, or
     use :class:`QEDftuCalculator` (``qe-dftu``). DFT+U is inert by default.
+    Enable standalone Wannier (P3.2) with ``dft.do_wannier: true`` /
+    ``dft.wannier.enabled: true``, or :class:`QEWannierCalculator`
+    (``qe-wannier``). Does not alter EPW-internal Wannier.
     """
 
     name = "qe"
     force_epw: bool = False
     force_dftu: bool = False
+    force_wannier: bool = False
 
     def __init__(
         self,
@@ -58,24 +65,35 @@ class QECalculator(BaseCalculator):
         *,
         force_epw: bool = False,
         force_dftu: bool = False,
+        force_wannier: bool = False,
     ) -> None:
         self.dft = dft or DFTConfig(engine="qe")
         self.work_root = Path(work_root) if work_root else Path("qe_work")
         self.force_epw = force_epw
         self.force_dftu = force_dftu
+        self.force_wannier = force_wannier
 
     def run(self, candidate: StructureCandidate, **kwargs: Any) -> CandidateEvaluation:
         """Execute the QE (+ optional EPW / DFT+U) workflow for *candidate*."""
         from siscforge.calculators.qe.dftu import dftu_is_enabled
+        from siscforge.calculators.qe.wannier import wannier_is_enabled
 
         dft = _merge_dft_config(self.dft, kwargs)
         want_epw = self.force_epw or dft.do_epw or dft.epw.enabled
         want_dftu = dftu_is_enabled(dft, force=self.force_dftu)
+        want_wannier = wannier_is_enabled(dft, force=self.force_wannier)
         if want_dftu:
             dft = dft.model_copy(
                 update={
                     "do_dftu": True,
                     "dftu": dft.dftu.model_copy(update={"enabled": True}),
+                }
+            )
+        if want_wannier:
+            dft = dft.model_copy(
+                update={
+                    "do_wannier": True,
+                    "wannier": dft.wannier.model_copy(update={"enabled": True}),
                 }
             )
         if want_epw:
@@ -266,6 +284,68 @@ class QECalculator(BaseCalculator):
                         f"DFT+U failed (conventional path kept): {dftu_base.message}"
                     )
 
+        # P3.2: additive Wannierization after SCF / DFT+U.
+        # Sacred upstream: Wannier failures never delete finished SCF/DFT+U.
+        if want_wannier:
+            from siscforge.calculators.qe.recipes import run_wannier_after_scf
+
+            wannier_dir = cand_dir / "wannier"
+            struct_for_w = wf.relaxed_structure or structure
+            fermi = None
+            if wf.scf is not None:
+                fermi = getattr(wf.scf, "fermi_energy_eV", None) or (
+                    (wf.scf.raw or {}).get("fermi_energy_eV")
+                    if getattr(wf.scf, "raw", None)
+                    else None
+                )
+            if fermi is None and getattr(wf, "dftu", None) is not None:
+                fermi = getattr(wf.dftu, "fermi_energy_eV", None)
+            try:
+                wres = run_wannier_after_scf(
+                    struct_for_w,
+                    dft,
+                    wannier_dir,
+                    prefix=prefix,
+                    fermi_eV=fermi,
+                    qe_env=qe_env,
+                    scf_work_dir=cand_dir,
+                    step_log=step_log,
+                )
+                wf.wannier = wres
+                if not wres.wannier_ok:
+                    step_log.append(
+                        "Wannier failed (upstream SCF/DFT+U kept): "
+                        + wres.summary_line()
+                    )
+            except Exception as exc:  # noqa: BLE001 — never destroy upstream
+                from siscforge.calculators.qe.wannier import (
+                    primary_wannier_failure_reason,
+                )
+                from siscforge.models.results import WannierResult
+                from siscforge.models.provenance import Provenance
+                from siscforge import __version__ as _sf_ver
+
+                _LOG.exception(
+                    "Wannier step failed (upstream preserved) work_dir=%s",
+                    wannier_dir,
+                )
+                step_log.append(f"Wannier exception (upstream kept): {exc}")
+                wf.wannier = WannierResult(
+                    wannier_ok=False,
+                    ready_for_dmft=False,
+                    dmft_gate_notes=f"not ready for DMFT: {exc}",
+                    status="failed",
+                    quality_tag=dft.quality_tag,
+                    failure_class="other",
+                    work_dir=str(wannier_dir),
+                    raw={"error": str(exc), "pathway": "wannier"},
+                    provenance=Provenance(
+                        source="qe_wannier",
+                        software={"siscforge": _sf_ver},
+                        notes=primary_wannier_failure_reason(str(exc)),
+                    ),
+                )
+
         precomputed = kwargs.get("si_feasibility")
         if isinstance(precomputed, SiFeasibilityScore):
             si = precomputed
@@ -423,6 +503,10 @@ class QECalculator(BaseCalculator):
         if dftu_result is not None:
             notes_parts.append(f"dftu={dftu_result.summary_line()}")
         notes_parts.append(f"do_dftu={want_dftu}")
+        wannier_result = getattr(wf, "wannier", None)
+        if wannier_result is not None:
+            notes_parts.append(f"wannier={wannier_result.summary_line()}")
+        notes_parts.append(f"do_wannier={want_wannier}")
 
         return CandidateEvaluation(
             candidate=out_candidate,
@@ -430,6 +514,7 @@ class QECalculator(BaseCalculator):
             phonon=phonon,
             electron_phonon=eph,
             dftu=dftu_result,
+            wannier=wannier_result,
             si_feasibility=si,
             performance_score=performance,
             composite_score=None,
@@ -453,12 +538,14 @@ class QECalculator(BaseCalculator):
                     "relaxed": wf.relaxed_structure is not None,
                     "do_epw": want_epw,
                     "do_dftu": want_dftu,
+                    "do_wannier": want_wannier,
                 },
                 parent_ids=[candidate.candidate_id],
                 notes=(
                     "QE relax/SCF/phonon"
                     + ("/EPW" if want_epw else "")
                     + ("/DFT+U" if want_dftu else "")
+                    + ("/Wannier" if want_wannier else "")
                     + " evaluation"
                 ),
             ),
@@ -524,8 +611,48 @@ class QEDftuCalculator(QECalculator):
         super().__init__(dft=base, work_root=work_root, force_dftu=True)
 
 
+class QEWannierCalculator(QECalculator):
+    """QE calculator that forces standalone Wannier prep + metrics (P3.2).
+
+    Registration name: ``qe-wannier``. Forces ``do_wannier``. Defaults phonon/EPW
+    off unless the campaign re-enables them. Prefer pairing with DFT+U for
+    nickelates (``do_dftu`` remains independent). Prep + gated wannier90.x only;
+    automated nscf/pw2wannier90 is residual P3.2.1. Does not require TRIQS.
+    """
+
+    name = "qe-wannier"
+    force_wannier = True
+
+    def __init__(
+        self,
+        dft: DFTConfig | None = None,
+        work_root: str | Path | None = None,
+    ) -> None:
+        if dft is None:
+            base = DFTConfig(engine="qe-wannier", do_phonon=False, do_epw=False)
+        else:
+            base = dft
+            fields = set(getattr(base, "model_fields_set", set()) or set())
+            updates: dict = {}
+            if "do_phonon" not in fields:
+                updates["do_phonon"] = False
+            if "do_epw" not in fields and "epw" not in fields:
+                updates["do_epw"] = False
+                updates["epw"] = base.epw.model_copy(update={"enabled": False})
+            if updates:
+                base = base.model_copy(update=updates)
+        base = base.model_copy(
+            update={
+                "do_wannier": True,
+                "wannier": base.wannier.model_copy(update={"enabled": True}),
+                "engine": "qe-wannier",
+            }
+        )
+        super().__init__(dft=base, work_root=work_root, force_wannier=True)
+
+
 def register_qe_calculators() -> None:
-    """Register ``qe``, ``quantum-espresso``, ``qe-epw``, and ``qe-dftu`` aliases."""
+    """Register ``qe``, ``qe-epw``, ``qe-dftu``, and ``qe-wannier`` aliases."""
     from siscforge.calculators import registry
 
     calc = QECalculator()
@@ -535,3 +662,5 @@ def register_qe_calculators() -> None:
     registry.register(QEEpwCalculator(), name="epw", overwrite=True)
     registry.register(QEDftuCalculator(), name="qe-dftu", overwrite=True)
     registry.register(QEDftuCalculator(), name="dftu", overwrite=True)
+    registry.register(QEWannierCalculator(), name="qe-wannier", overwrite=True)
+    registry.register(QEWannierCalculator(), name="wannier", overwrite=True)
