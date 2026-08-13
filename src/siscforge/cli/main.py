@@ -246,9 +246,12 @@ def rank_cmd(
 ) -> None:
     """Rank evaluation records from a JSON file or campaign store directory."""
     from siscforge.models.config import RankingConfig
+    from siscforge.scoring.pairing import apply_performance_score
 
+    camp = None
     if config_path is not None:
-        ranking_cfg = CampaignConfig.from_yaml(config_path).ranking
+        camp = CampaignConfig.from_yaml(config_path)
+        ranking_cfg = camp.ranking
     else:
         ranking_cfg = RankingConfig()
     if pareto is not None:
@@ -265,6 +268,13 @@ def rank_cmd(
         if not isinstance(raw, list):
             raise typer.BadParameter("Input JSON must be a list of evaluations")
         evaluations = [CandidateEvaluation.model_validate(item) for item in raw]
+
+    if camp is not None:
+        scoring = getattr(getattr(camp.dft, "dmft", None), "scoring", None)
+        evaluations = [
+            apply_performance_score(ev, scoring=scoring, ranking=ranking_cfg)
+            for ev in evaluations
+        ]
 
     ranked = rank_evaluations(
         evaluations, ranking_cfg, stable_first=stable_first
@@ -1478,16 +1488,33 @@ def run_cmd(
                         if result.electron_phonon.status == "mock"
                         else "epw"
                     )
-            elif tc_cfg.use_for_ranking_when_no_epw and result.performance_score is None:
+        result = result.model_copy(update=updates)
+        # P3.4: trusted EPW > DMFT pairing > existing mock; then surrogate.
+        from siscforge.scoring.pairing import apply_performance_score
+
+        result = apply_performance_score(
+            result,
+            scoring=getattr(getattr(config.dft, "dmft", None), "scoring", None),
+            ranking=config.ranking,
+        )
+        if pred is not None:
+            if (
+                tc_cfg.use_for_ranking_when_no_epw
+                and result.performance_score is None
+            ):
                 notes = (result.notes or "").strip()
                 note_add = (
                     "performance_score from λ/Tc surrogate stub "
                     f"(unc={pred.uncertainty:.2f}; not EPW)"
                 )
-                updates["performance_score"] = pred.score_for_ranking()
-                updates["performance_score_source"] = "surrogate"
-                updates["notes"] = f"{notes}; {note_add}" if notes else note_add
-        return result.model_copy(update=updates)
+                result = result.model_copy(
+                    update={
+                        "performance_score": pred.score_for_ranking(),
+                        "performance_score_source": "surrogate",
+                        "notes": f"{notes}; {note_add}" if notes else note_add,
+                    }
+                )
+        return result
 
     def _progress_label(cand: StructureCandidate) -> str:
         strain = cand.in_plane_strain

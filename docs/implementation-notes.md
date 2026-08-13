@@ -1,5 +1,29 @@
 # Implementation Notes
 
+## Slice P3.4 (2026-08-13) — pairing eigenvalue → performance_score
+
+**Scope**: Map `DMFTResult.leading_pairing_eigenvalue` onto the common
+`performance_score` so ranking / Pareto / export stay family-agnostic.
+Mock eigenvalues are illustrative. Conventional campaigns unchanged.
+
+| Item | Location |
+|------|----------|
+| Pure map | `siscforge.scoring.pairing.performance_score_from_pairing` |
+| Precedence | `resolve_performance_score` / `apply_performance_score` |
+| Config | `dft.dmft.scoring` (`DMFTScoringConfig`); `ranking.performance_precedence` |
+| Mock fill | `mock_dmft_result` now sets illustrative λ / `d_x2-y2` |
+| Wiring | `MockCalculator`, `QECalculator`, CLI `_finalize_eval`, `rank --config` |
+| Trust | `dmft_pairing` / `dmft_pairing_mock` source + quality flags |
+| Docs | `docs/phase3-p34-pairing-score.md` |
+| Tests | `tests/test_pairing_p34.py` |
+
+Default formula: `score_K = clamp(λ × 25, 0, 40)`. Default precedence:
+trusted EPW Tc, else DMFT pairing, else existing mock/surrogate.
+
+**Out of scope**: O-vacancy (P3.5), mixed AL (P3.6), real CTHYB launch.
+
+---
+
 ## Slice P3.3 review (2026-08-13) — language, SETUP, residuals
 
 Addressed Product Owner + Software Engineer review on #13. No change to

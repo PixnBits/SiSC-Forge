@@ -3,6 +3,10 @@
 P2.4 — configurable weights (performance, Si-feasibility, optional certainty),
 Pareto non-dominated set on primary axes, and ranking-weight provenance on
 each ranked row. Trust-layer / stable-first / hull behaviour is unchanged.
+
+P3.4 — ranking stays family-agnostic. Conventional EPW Tc and DMFT pairing
+both land on ``performance_score`` *before* this module runs
+(``siscforge.scoring.pairing``). Do **not** add nickelate/nitride forks here.
 """
 
 from __future__ import annotations

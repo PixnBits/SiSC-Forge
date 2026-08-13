@@ -1,21 +1,22 @@
-# P3.3 dry-run: mock solid_dmft-style DMFT on NdNiO2-like path.
+# P3.3/P3.4 dry-run: mock solid_dmft-style DMFT on NdNiO2-like path.
 # Usage:
 #   siscforge run --dry-run examples/ndnio2_dmft_mock.yaml
 #
 # Does NOT run real QE, Wannier90, or TRIQS. Exercises
-# DFT+U → Wannier (ready_for_dmft) → DMFTResult → store → export.
-# Pairing → performance_score is out of scope (P3.4).
+# DFT+U → Wannier (ready_for_dmft) → DMFTResult → pairing →
+# performance_score → store → export.
 #
-# Mock occupancy (~8.65–8.95) and mass enhancement (~2.4–4) are
-# illustrative / deterministic placeholders, NOT literature-validated
-# NdNiO2 numbers. Do not treat them as a calibrated DMFT result.
+# Mock occupancy (~8.65–8.95), mass enhancement (~2.4–4), and pairing
+# eigenvalue (~0.55–1.25) are illustrative / deterministic placeholders,
+# NOT literature-validated NdNiO2 numbers. Headline performance is tagged
+# dmft_pairing_mock. Do not treat them as a calibrated DMFT result.
 
 name: ndnio2_dmft_mock
 description: >
-  Phase 3.3 smoke campaign — mock DMFT (occupancy + mass enhancement)
-  for NdNiO2-like nickelate. Mock numbers are illustrative placeholders,
-  not a literature fit. Conventional nitride campaigns leave
-  dft.do_dmft false (default). P3.4 pairing mapping is out of scope.
+  Phase 3.4 smoke campaign — mock DMFT pairing mapped onto the common
+  performance_score for NdNiO2-like nickelate. Mock numbers are
+  illustrative placeholders, not a literature fit. Conventional nitride
+  campaigns leave dft.do_dmft false (default).
 version: "0.1"
 dry_run: true
 
@@ -96,6 +97,13 @@ dft:
     # wannier.ready_for_dmft unless allow_without_wannier_gate: true.
     mock_bypass_gate: true
     allow_without_wannier_gate: false
+    # P3.4 pairing → performance_score (defaults; documented in
+    # docs/phase3-p34-pairing-score.md). Mock λ is illustrative.
+    scoring:
+      enabled: true
+      kelvin_per_unit: 25.0
+      score_ceiling_K: 40.0
+      allow_mock: true
 
 formation_filter:
   enabled: false
@@ -103,6 +111,7 @@ formation_filter:
 ranking:
   performance_weight: 0.5
   si_feasibility_weight: 0.5
+  performance_precedence: epw_then_dmft
 
 output_dir: outputs/ndnio2_dmft_mock
 export_formats: [json, csv, markdown]

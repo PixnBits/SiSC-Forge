@@ -121,6 +121,12 @@ def _trust_warning(ev: CandidateEvaluation) -> str | None:
     """
     rq = getattr(ev, "result_quality", None) or "unknown"
     if rq == "production":
+        src = getattr(ev, "performance_score_source", None) or ""
+        if src in {"dmft_pairing", "dmft_pairing_mock"}:
+            return (
+                "result_quality=production but headline performance is a "
+                "DMFT pairing proxy, not Eliashberg/EPW Tc — do not cite as Tc."
+            )
         return None
     if rq in {"screening_suspect", "unreliable"}:
         notes = (getattr(ev, "quality_notes", None) or "").strip()
@@ -768,6 +774,17 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         + (f" / 100 (v{si.version})" if si else ""),
         f"- **result quality**: `{rq}`",
     ]
+    src = getattr(ev, "performance_score_source", None) or ""
+    if src == "dmft_pairing_mock":
+        lines.append(
+            "- **performance origin**: DMFT pairing eigenvalue "
+            "(illustrative mock — **not** Eliashberg/EPW Tc, not quantitative)"
+        )
+    elif src == "dmft_pairing":
+        lines.append(
+            "- **performance origin**: DMFT pairing eigenvalue "
+            "(Tc-like ranking proxy — **not** Eliashberg/EPW Tc)"
+        )
     warning = rec.get("trust_warning")
     if warning:
         lines.append(f"- **trust caveat**: {warning}")
@@ -1098,11 +1115,13 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
             else "—"
         )
         eig = dmft.leading_pairing_eigenvalue
-        eig_s = f"{eig:g}" if eig is not None else "— (P3.4)"
+        eig_s = f"{eig:g}" if eig is not None else "—"
+        src = getattr(ev, "performance_score_source", None) or ""
+        mapped = src in {"dmft_pairing", "dmft_pairing_mock"}
         lines.extend(
             [
                 "",
-                "#### DMFT (TRIQS / solid_dmft, P3.3)",
+                "#### DMFT (TRIQS / solid_dmft, P3.3/P3.4)",
                 f"- solver: {dmft.solver}",
                 f"- converged: {dmft.converged}",
                 f"- U / J (eV): {dmft.U_eV if dmft.U_eV is not None else '—'} / "
@@ -1111,22 +1130,41 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- filling: {fill_s}",
                 f"- mass enhancement m*/m: {mass_s}",
                 f"- leading pairing eigenvalue: {eig_s}",
-                f"- pairing symmetry: {dmft.pairing_symmetry or '— (P3.4)'}",
+                f"- pairing symmetry: {dmft.pairing_symmetry or '—'} "
+                f"(metadata only; does not enter the score)",
                 f"- Wannier input: ready={dmft.wannier_ready_for_dmft} "
                 f"work_dir={dmft.wannier_work_dir or '—'}",
                 f"- status / quality: {dmft.status} / {dmft.quality_tag}",
                 f"- summary: {dmft.summary_line()}",
             ]
         )
+        if mapped:
+            lines.append(
+                f"- pairing → performance (P3.4): {_fmt_num(ev.performance_score)} K "
+                f"proxy (`{src}`)"
+            )
         if dmft.gate_notes:
             lines.append(f"- gate_notes: {dmft.gate_notes}")
         if dmft.failure_class:
             lines.append(f"- failure_class: {dmft.failure_class}")
-        lines.append(
-            "- note: pairing eigenvalue is stored but **not** mapped into "
-            "`performance_score` (that is **P3.4**). Conventional ranking "
-            "is unchanged."
-        )
+        if src == "dmft_pairing_mock":
+            lines.append(
+                "- note: mock pairing eigenvalues are **illustrative**, "
+                "not literature-validated. Headline performance is a ranking "
+                "proxy, not a citable Tc."
+            )
+        elif mapped:
+            lines.append(
+                "- note: headline performance is the P3.4 pairing proxy "
+                "(not Eliashberg/EPW Tc). Ranking/Pareto consume "
+                "`performance_score` only — no family forks."
+            )
+        else:
+            lines.append(
+                "- note: pairing eigenvalue is stored; headline performance "
+                "is **not** from DMFT pairing "
+                f"(source=`{src or '—'}`)."
+            )
 
     if ev.notes:
         lines.extend(["", f"_Notes: {ev.notes}_"])

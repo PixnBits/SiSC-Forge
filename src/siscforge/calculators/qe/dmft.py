@@ -9,8 +9,11 @@ Provides:
   cleanly when TRIQS is not installed (never a hard dependency)
 - sequential recipe glue after Wannier (sacred upstream artifacts)
 
-**Out of scope (later packages):** pairing eigenvalue →
-``performance_score`` (P3.4), oxygen-vacancy enumeration (P3.5), mixed
+**P3.4** maps ``leading_pairing_eigenvalue`` onto the common
+``performance_score`` (see ``siscforge.scoring.pairing``). This module
+still does not launch CTHYB.
+
+**Out of scope (later packages):** oxygen-vacancy enumeration (P3.5), mixed
 AL pools (P3.6), finishing residual nscf+pw2wannier90 (P3.2.1),
 automated solid_dmft launch (residual ``p3_x_real_launch``).
 
@@ -49,9 +52,8 @@ DMFT_FAILURE_CLASSES: frozenset[str] = frozenset(
 
 _EXTENSION_HOOKS: dict[str, str] = {
     "p3_4_pairing": (
-        "Map leading_pairing_eigenvalue (+ pairing_symmetry) onto the common "
-        "performance_score axis. P3.3 only reserves the fields; it does not "
-        "normalize or rank on them."
+        "P3.4 maps leading_pairing_eigenvalue onto performance_score via "
+        "siscforge.scoring.pairing (pairing_symmetry is metadata only)."
     ),
     "p3_5_ovac": "oxygen-vacancy enumeration (structure generation, not DMFT)",
     "p3_6_al": "mixed conventional/unconventional AL acquisition",
@@ -396,6 +398,15 @@ def mock_dmft_result(
         mass = round(1.6 + 0.8 * r, 4)
         mass_orb = {"imp_d": mass}
 
+    # Illustrative pairing (P3.4) — NOT literature-validated.
+    # Nickelate-like: λ ≈ 0.55–1.25, d_x2-y2 label. Other families: weaker.
+    if material_family == "nickelate" or "Ni" in (formula or ""):
+        pair_eig = round(0.55 + 0.70 * r, 4)
+        pair_sym = "d_x2-y2"
+    else:
+        pair_eig = round(0.20 + 0.45 * r, 4)
+        pair_sym = "unknown"
+
     return DMFTResult(
         status="mock",
         quality_tag=qtag,  # type: ignore[arg-type]
@@ -408,8 +419,8 @@ def mock_dmft_result(
         filling=filling,
         mass_enhancement=mass,
         mass_enhancement_by_orbital=mass_orb,
-        leading_pairing_eigenvalue=None,
-        pairing_symmetry=None,
+        leading_pairing_eigenvalue=pair_eig,
+        pairing_symmetry=pair_sym,
         solver="mock",
         beta=float(cfg.beta),
         n_cycles=int(cfg.n_cycles),
@@ -422,6 +433,9 @@ def mock_dmft_result(
             "pathway": "dmft",
             "used_bypass": used_bypass,
             "physics_label": _MOCK_PHYSICS_LABEL,
+            "pairing_label": (
+                "illustrative mock pairing eigenvalue, not literature-validated"
+            ),
             "extension_hooks": dict(_EXTENSION_HOOKS),
             "formula": formula,
             "material_family": material_family,
@@ -437,7 +451,8 @@ def mock_dmft_result(
                 "n_cycles": int(cfg.n_cycles),
             },
             notes=(
-                "dry-run DMFT placeholder (P3.3); pairing reserved for P3.4; "
+                "dry-run DMFT placeholder (P3.3/P3.4); "
+                f"illustrative pairing λ={pair_eig:g} ({pair_sym}); "
                 f"{_MOCK_PHYSICS_LABEL}"
             ),
         ),

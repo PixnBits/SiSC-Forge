@@ -35,6 +35,8 @@ FLAG_QUALITY_TAG_SCREENING = "quality_tag_screening"
 FLAG_QUALITY_TAG_MOCK = "quality_tag_mock"
 FLAG_EPW_FAILED = "epw_failed"
 FLAG_SURROGATE_ONLY = "surrogate_only"
+FLAG_DMFT_PAIRING = "dmft_pairing"
+FLAG_DMFT_PAIRING_MOCK = "dmft_pairing_mock"
 
 # Sort key: higher = more trustworthy (used as secondary sort key)
 _QUALITY_RANK: dict[str, int] = {
@@ -142,6 +144,9 @@ def assess_result_quality(
         qtags.append(phonon.quality_tag or "unknown")
     if evaluation.candidate.quality_tag:
         qtags.append(evaluation.candidate.quality_tag)
+    dmft = getattr(evaluation, "dmft", None)
+    if dmft is not None:
+        qtags.append(dmft.quality_tag or "unknown")
 
     if any(t == "screening" for t in qtags):
         flags.append(FLAG_QUALITY_TAG_SCREENING)
@@ -152,6 +157,19 @@ def assess_result_quality(
     if status == "surrogate_only" or evaluation.performance_score_source == "surrogate":
         flags.append(FLAG_SURROGATE_ONLY)
         notes.append("performance from λ/Tc surrogate stub (not EPW)")
+
+    src = evaluation.performance_score_source or ""
+    if src == "dmft_pairing_mock":
+        flags.append(FLAG_DMFT_PAIRING_MOCK)
+        notes.append(
+            "performance from mock DMFT pairing eigenvalue "
+            "(illustrative, not literature-validated; not Eliashberg Tc)"
+        )
+    elif src == "dmft_pairing":
+        flags.append(FLAG_DMFT_PAIRING)
+        notes.append(
+            "performance from DMFT pairing eigenvalue (Tc-like proxy, not EPW Tc)"
+        )
 
     # Deduplicate flags preserving order
     seen: set[str] = set()
@@ -189,6 +207,11 @@ def assess_result_quality(
             notes.append("screening-quality EPW/phonon; not production citation-grade")
     elif FLAG_SURROGATE_ONLY in uniq_flags:
         tier = "screening_suspect"
+    elif FLAG_DMFT_PAIRING_MOCK in uniq_flags or FLAG_DMFT_PAIRING in uniq_flags:
+        # Pairing proxy is never citation-grade Tc
+        tier = "screening"
+        if FLAG_DMFT_PAIRING_MOCK in uniq_flags and not notes:
+            notes.append("mock DMFT pairing — illustrative, not quantitative")
     else:
         tier = "unknown"
 

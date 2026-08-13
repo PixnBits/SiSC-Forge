@@ -142,8 +142,8 @@ class CandidateEvaluation(BaseModel):
     (``dft.do_dmft`` / ``dft.dmft.enabled`` / calculator ``qe-dmft``).
 
     Pairing fields (``leading_pairing_eigenvalue``, ``pairing_symmetry``)
-    are reserved for **P3.4** and are not mapped into ``performance_score``
-    in this package.
+    are mapped into ``performance_score`` by **P3.4**
+    (``siscforge.scoring.pairing``) when a usable signal is present.
     """
 
     si_feasibility: SiFeasibilityScore | None = None
@@ -160,15 +160,19 @@ class CandidateEvaluation(BaseModel):
     """Placeholder for JosephsonMetrics (Phase 3+); unused in v0.1."""
 
     performance_score: float | None = None
-    """Superconducting performance proxy in kelvin (Tc).
+    """Superconducting performance proxy in kelvin (Tc-like).
 
-    Higher is better. Filled from ``electron_phonon.best_tc_K()`` when EPW
-    succeeds; mock calculator may fill a dummy value. May be filled from the
-    λ/Tc **surrogate stub** only when no e-ph result exists (labeled in notes).
+    Higher is better. Filled from ``electron_phonon.best_tc_K()`` when a
+    trusted EPW result exists; else from the P3.4 DMFT pairing map when a
+    usable ``dmft.leading_pairing_eigenvalue`` is present; mock calculator
+    may fill a dummy conventional value. May be filled from the λ/Tc
+    **surrogate stub** only when no e-ph or pairing score exists (labeled
+    in notes).
     """
 
     performance_score_source: str | None = None
-    """Where ``performance_score`` came from: ``epw``, ``mock``, ``surrogate``, …"""
+    """Where ``performance_score`` came from: ``epw``, ``mock``,
+    ``surrogate``, ``dmft_pairing``, ``dmft_pairing_mock``, …"""
 
     composite_score: float | None = None
     """Multi-objective score combining performance and Si-feasibility."""

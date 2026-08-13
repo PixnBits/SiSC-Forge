@@ -95,7 +95,7 @@ Validation: [docs/validation-phase1.md](docs/validation-phase1.md).
 | P3.1 | DFT+U + `DFTUResult` | **Done** — [phase3-p31-dftu](docs/phase3-p31-dftu.md) |
 | P3.2 | Wannier prep + `ready_for_dmft` | **Done** — [phase3-p32-wannier](docs/phase3-p32-wannier.md) |
 | **P3.3** | TRIQS/solid_dmft + `DMFTResult` | **Scaffold** — model + gate + mock + parser; full launch residual — [phase3-p33-dmft](docs/phase3-p33-dmft.md) |
-| P3.4 | Pairing eigenvalue → `performance_score` | Next |
+| **P3.4** | Pairing eigenvalue → `performance_score` | **Done** — [phase3-p34-pairing-score](docs/phase3-p34-pairing-score.md) |
 | P3.5–P3.6 | O-vacancy enum; mixed AL pools | Later |
 
 ```bash
