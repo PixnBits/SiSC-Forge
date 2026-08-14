@@ -892,13 +892,53 @@ class DFTConfig(BaseModel):
 
 
 class JosephsonConfig(BaseModel):
+    """P4.1 Josephson Tier-1 analytics — **disabled by default**.
+
+    When ``enabled`` is false the module is completely inert: no metrics
+    are attached and existing campaigns are unchanged. When enabled,
+    Ambegaokar–Baratoff / BCS-from-Tc estimates are attached to the
+    top-``shortlist_size`` ranked evaluations (or all rows when
+    ``shortlist_only`` is false / ``shortlist_size`` ≤ 0).
+
+    ``secondary_ranking`` is reserved for a later package and is **not**
+    applied by P4.1 (the ranker has no Josephson fork).
+    """
+
     enabled: bool = False
-    shortlist_size: int = 20
+    shortlist_size: int = Field(default=20, ge=0)
+    """Top-N (by rank) to annotate when ``shortlist_only`` is true. 0 → all."""
+    shortlist_only: bool = True
+    """If true, only attach metrics to rank ≤ ``shortlist_size``."""
     model_tier: str = "analytic_AB"
-    reference_area_um2: float = 1.0
+    reference_area_um2: float = Field(default=1.0, gt=0.0)
+    """Ranking junction area (μm²). Not a fabricated device layout."""
+    rna_ohm_um2: float = Field(default=20.0, gt=0.0)
+    """Assumed SIS-like specific resistance RnA (Ω·μm²) for the Jc proxy."""
     assume_SIS: bool = True
     temperature_K: float | None = None
+    """AB tanh temperature; None → T = 0 ranking limit."""
+    bcs_gap_ratio: float = Field(default=1.764, gt=0.0)
+    """Δ / k_B Tc used when no Eliashberg / explicit gap is present."""
+    family_gap_ratios: dict[str, float] = Field(default_factory=dict)
+    """Optional per-``material_family`` BCS ratio overrides (documented)."""
     secondary_ranking: bool = False
+    """Reserved. P4.1 does not change ranking / Pareto."""
+
+    @field_validator("reference_area_um2", "rna_ohm_um2", "bcs_gap_ratio")
+    @classmethod
+    def _finite_positive_knob(cls, v: float) -> float:
+        if not math.isfinite(v) or v <= 0.0:
+            raise ValueError("josephson numeric knobs must be finite and > 0")
+        return v
+
+    @field_validator("temperature_K")
+    @classmethod
+    def _finite_temp(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
+        if not math.isfinite(v) or v < 0.0:
+            raise ValueError("josephson.temperature_K must be finite and ≥ 0")
+        return v
 
 
 class RunConfig(BaseModel):

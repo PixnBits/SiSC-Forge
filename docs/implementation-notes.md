@@ -1,6 +1,29 @@
 # Implementation Notes
 
+## Slice P4.1 (2026-08-14) — JosephsonMetrics + Tier-1 analytics
+
+**Scope**: Typed `JosephsonMetrics`, Ambegaokar–Baratoff / BCS-from-Tc
+proxies, inert-by-default attachment, caveated CSV + synthesis cards.
+No Usadel, no BdG, no fabrication engine, no ranker fork.
+
+| Item | Location |
+|------|----------|
+| Model | `JosephsonMetrics` (`results.py`); optional `CandidateEvaluation.josephson` |
+| Analytics | `siscforge.josephson.tier1` |
+| Attach | `attach_josephson_metrics` after `rank_evaluations` (`run` / `rank --config`) |
+| Config | `JosephsonConfig.enabled` default **false**; top-N `shortlist_size` |
+| Export | Additive `josephson_*` CSV + card section |
+| Docs | `docs/phase4-p41-josephson-tier1.md` |
+| Tests | `tests/test_josephson_p41.py` |
+| Example | `examples/nbn_mgb2_josephson_tier1.yaml` |
+
+**Out of scope**: Usadel/BdG, fabrication-compatibility engine (P4.2),
+secondary ranking on IcRn/Jc, CTHYB launch, production GNN.
+
+---
+
 ## Slice P3.6 (2026-08-14) — mixed conventional / unconventional AL
+
 
 **Scope**: Acquisition can operate on a joint pool or separate
 conventional / unconventional pools. Default `pool_mode: off` preserves

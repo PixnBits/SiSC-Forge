@@ -1,0 +1,53 @@
+# P4.1 — Josephson Tier-1 analytics on a nitride + MgB2 mock campaign.
+#
+# Dry-run (mock EPW Tc → BCS gap → Ambegaokar–Baratoff proxies):
+#   siscforge run --dry-run examples/nbn_mgb2_josephson_tier1.yaml
+#
+# Metrics are APPROXIMATE / RANKING ONLY. See docs/phase4-p41-josephson-tier1.md.
+
+name: nbn_mgb2_josephson_tier1
+description: >
+  Tiny mock campaign (NbN + MgB2) with josephson.enabled so synthesis
+  cards and CSV show caveated Tier-1 IcRn / Jc / gap fields.
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+    - mgb2_boride
+  metals:
+    - Nb
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 4
+
+calculators:
+  - name: mock
+    parameters:
+      note: dry-run only — Josephson uses mock EPW Tc via BCS fallback
+
+ranking:
+  performance_weight: 0.6
+  si_feasibility_weight: 0.4
+  pareto_enabled: true
+  prefer_dynamically_stable: true
+
+josephson:
+  enabled: true
+  shortlist_only: true
+  shortlist_size: 20
+  model_tier: analytic_AB
+  reference_area_um2: 1.0
+  rna_ohm_um2: 20.0
+  assume_SIS: true
+  temperature_K: null
+  secondary_ranking: false
+
+output_dir: outputs/nbn_mgb2_josephson_tier1
+export_formats:
+  - json
+  - csv
+  - markdown

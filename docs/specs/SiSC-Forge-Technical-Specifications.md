@@ -1,8 +1,17 @@
 # SiSC-Forge
 ## Technical Specifications
 
-**Version 0.5.1 – Phase 2 complete + Phase 3 P3.1–P3.6 contracts**  
-*(Extends v0.5.0 with mixed conventional/unconventional AL acquisition pools. Family-mean AL surrogate ≠ production GNN. Real CTHYB launch remains residual.)*
+**Version 0.5.2 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 P4.1**  
+*(Extends v0.5.1 with Josephson Tier-1 analytic estimates. Module remains inert unless `josephson.enabled`. Usadel/BdG and fabrication heuristics remain later.)*
+
+### Changelog (v0.5.1 → v0.5.2)
+
+| Area | Added / tightened |
+|------|-------------------|
+| §2.8 Josephson | P4.1 Tier-1 Ambegaokar–Baratoff / BCS-from-Tc; units; inert default |
+| §3.5 JosephsonMetrics | Implemented field list (gap meV, IcRn mV, Jc, EJ) |
+| §5.4 Config | `shortlist_only`, `rna_ohm_um2`, `bcs_gap_ratio` |
+| Acceptance | P4.1 shipped; Usadel / fabrication engine remain open |
 
 ### Changelog (v0.5.0 → v0.5.1)
 
@@ -276,9 +285,24 @@ Human overrides (pin candidates, exclude subspaces, roll back model version, exp
 
 ### 2.8 Josephson Junction Device Modeling Module  ← Phase 4
 
-*(Unchanged in intent from v0.3. Disabled by default. Tier-1 analytic estimates on top-N shortlist; Usadel/BdG later. Always labeled approximate / ranking only.)*
+**P4.1 shipped** (Tier-1 analytics). Disabled by default. When
+`josephson.enabled` is true, attach approximate Ambegaokar–Baratoff /
+BCS-from-Tc metrics to the top-N ranked evaluations.
 
-See prior v0.3 detail for inputs, Ambegaokar–Baratoff formulas, fabrication heuristics, and Phase 4 acceptance criteria. Module remains a stub until Phase 4.
+- Gap Δ in **meV**: `ElectronPhononResult.gap_meV` or `alpha2F_summary` /
+  `raw` keys, else Δ = 1.764 k_B Tc from conventional Eliashberg /
+  Allen–Dynes Tc. DMFT `performance_score` is **not** a gap.
+- IcRn in **mV**: `(π/2) Δ tanh(Δ / 2 k_B T)` (T = 0 when
+  `temperature_K` is null).
+- Jc proxy in **A/cm²** under documented `rna_ohm_um2` (default 20 Ω·μm²).
+- EJ-style switching energy at `reference_area_um2` (default 1 μm²).
+- Always labelled **approximate / ranking only**. `approximate: true` is
+  forced.
+- No ranker fork. `secondary_ranking` is reserved.
+- Fabrication-compatibility heuristics, Usadel, and BdG are later.
+
+See `docs/phase4-p41-josephson-tier1.md`.
+
 
 ### 2.9 Docker / distribution
 - Multi-stage image: Ubuntu LTS + QE ≥ 7.2 from source (`pw` `ph` `pp` `epw`) + Wannier90 + SSSP + `pip install -e ".[dev,qe,phonopy]"`.
@@ -362,7 +386,15 @@ Screening results may be present with **quality flags** that ranking must honor.
 NSCF mesh fingerprint sidecar (`siscforge_nscf_kmesh.json`) records requested coarse k for stale-mesh detection.
 
 ### 3.5 JosephsonMetrics
-As in v0.3 (optional nested object; approximate / ranking only).
+
+Optional nested object on `CandidateEvaluation` (default `None`). P4.1
+fields: `approximate` (always true), `status`, `method`, `model_tier`,
+`quality_tag`, `gap_meV`, `gap_source`, `tc_used_K`, `tc_source`,
+`icrn_mV`, `jc_A_per_cm2`, `switching_energy_eV`, `ej_K`, `ic_uA`,
+`reference_area_um2`, `rna_ohm_um2`, `temperature_K`, `formula_tags`,
+`notes`, `assumptions`, `raw`, `provenance`. Ranking-only; never a
+device-design value.
+
 
 ### 3.6 Active-learning objects (notes for implementers)
 - `SurrogatePrediction` — optional block on CandidateEvaluation: λ / ω_log / Tc proxy values, uncertainty, and the model version that produced them.
@@ -441,12 +473,16 @@ dft:
 ```yaml
 josephson:
   enabled: false
+  shortlist_only: true
   shortlist_size: 20
   model_tier: "analytic_AB"
   reference_area_um2: 1.0
+  rna_ohm_um2: 20.0
   assume_SIS: true
   temperature_K: null
-  secondary_ranking: false
+  bcs_gap_ratio: 1.764
+  family_gap_ratios: {}
+  secondary_ranking: false   # reserved; P4.1 does not change ranking
 ```
 
 ---
@@ -518,7 +554,7 @@ josephson:
 ## 10. Explicit Limitations
 
 - Auto-raised nkc and `search_shells` **do not** guarantee physical λ/Tc; screening Wannier remains `proj=random`.
-- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, full real DMFT launch, Josephson: **later**.
+- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, full real DMFT launch, Josephson Usadel/BdG: **later**. Tier-1 Josephson analytics are P4.1 (inert unless enabled).
 - After Phase A+B exhaustion, further EPW success may require human projections or different cells; DFPT remains valuable for stability gating.
 - Screening q=2³ phonon stability can false-positive/false-negative; denser DFPT required before citing dynamical stability.
 - Resume covers common cases; exotic partial files or external manual edits may still need operator intervention (documented in implementation-notes).
@@ -542,8 +578,8 @@ josephson:
 
 **Phase 3** — Unconventional pathway: P3.1–P3.6 software path shipped (DMFT is scaffold); full real solid_dmft + production GNN residual.
 
-**Phase 4** — Josephson Tier-1 analytic estimates on shortlist; later Usadel/BdG.
+**Phase 4** — P4.1 Josephson Tier-1 analytic estimates on shortlist (inert default); later Usadel/BdG and fabrication engine.
 
 ---
 
-*This document (v0.5.1) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson remains fully specified but inert until Phase 4. PRD v0.4.1 is the product authority; this file is the engineering contract.*
+*This document (v0.5.2) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson Tier-1 is inert unless `josephson.enabled`. PRD v0.4.2 is the product authority; this file is the engineering contract.*

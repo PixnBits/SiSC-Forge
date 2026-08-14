@@ -93,6 +93,14 @@ class ElectronPhononResult(BaseModel):
     Tc_eliashberg: float | None = None
     """Isotropic Eliashberg Tc (K) when available; else None."""
 
+    gap_meV: float | None = None
+    """Optional superconducting gap Δ in meV (P4.1).
+
+    Filled when an Eliashberg (or explicit) gap is available. The
+    Josephson Tier-1 helper prefers this over a BCS-from-Tc fallback.
+    Never invent a gap from DMFT ``performance_score``.
+    """
+
     alpha2F_summary: dict[str, Any] = Field(default_factory=dict)
     """Compact a²F metadata (n_bins, peak positions, source file, …)."""
 
@@ -479,6 +487,104 @@ class DMFTResult(BaseModel):
             bits.append(f"sym={self.pairing_symmetry}")
         if self.failure_class:
             bits.append(f"fail={self.failure_class}")
+        bits.append(f"status={self.status}")
+        return "; ".join(bits)
+
+
+class JosephsonMetrics(BaseModel):
+    """Tier-1 analytic Josephson figures of merit (P4.1).
+
+    Optional attachment on :class:`~siscforge.models.candidate.CandidateEvaluation`.
+    Produced only when ``josephson.enabled`` is true. Conventional campaigns
+    leave ``CandidateEvaluation.josephson`` as ``None``.
+
+    **Always approximate / ranking only.** ``approximate`` is forced True
+    for this tier. Units: gap **meV**, IcRn **mV**, Jc **A/cm²**,
+    switching energy **eV**. See ``docs/phase4-p41-josephson-tier1.md``.
+    """
+
+    approximate: bool = True
+    """Always True for Tier-1. Forced on validate so exports cannot drop the caveat."""
+
+    status: str = "unknown"
+    """``ok`` when metrics were computed; ``skipped`` when inputs were missing."""
+
+    method: str = "tier1_analytic_ab"
+    """Formula family tag (Tier-1 Ambegaokar–Baratoff analytics)."""
+
+    model_tier: str = "analytic_AB"
+    """Campaign ``josephson.model_tier`` snapshot (Usadel/BdG are later)."""
+
+    quality_tag: Literal["screening", "production", "mock", "unknown"] = "screening"
+
+    gap_meV: float | None = None
+    """Superconducting gap Δ in millielectronvolts."""
+
+    gap_source: str | None = None
+    """``eliashberg`` | ``explicit`` | ``bcs_from_tc``."""
+
+    tc_used_K: float | None = None
+    """Tc (K) used for BCS fallback or recorded alongside an explicit gap."""
+
+    tc_source: str | None = None
+    """Where ``tc_used_K`` came from (``eliashberg``, ``allen_dynes``, …)."""
+
+    icrn_mV: float | None = None
+    """Ambegaokar–Baratoff IcRn product in millivolts."""
+
+    jc_A_per_cm2: float | None = None
+    """Jc proxy (A/cm²) under documented RnA. Ranking geometry only."""
+
+    switching_energy_eV: float | None = None
+    """EJ = Φ0 Ic / 2π (eV) at ``reference_area_um2``."""
+
+    ej_K: float | None = None
+    """EJ / k_B in kelvin (same proxy as ``switching_energy_eV``)."""
+
+    ic_uA: float | None = None
+    """Ic (μA) at ``reference_area_um2``."""
+
+    reference_area_um2: float | None = None
+    """Ranking junction area (μm²). Not a fabricated layout."""
+
+    rna_ohm_um2: float | None = None
+    """Assumed specific resistance RnA (Ω·μm²) used for Jc."""
+
+    temperature_K: float | None = None
+    """Temperature used in the AB tanh factor; None → T = 0 limit."""
+
+    formula_tags: list[str] = Field(default_factory=list)
+    """Machine-readable formula tags (e.g. ``ambegaokar_baratoff``)."""
+
+    notes: str = ""
+    """Human caveats; always includes the approximate / ranking-only banner."""
+
+    assumptions: dict[str, Any] = Field(default_factory=dict)
+    """Documented geometry / ratio knobs used for this row."""
+
+    raw: dict[str, Any] = Field(default_factory=dict)
+    provenance: Provenance = Field(default_factory=Provenance)
+
+    @field_validator("approximate")
+    @classmethod
+    def _force_approximate(cls, v: bool) -> bool:  # noqa: ARG003
+        return True
+
+    def summary_line(self) -> str:
+        """Short human-readable summary for cards / CLI."""
+        bits: list[str] = ["approximate=true"]
+        if self.gap_meV is not None:
+            src = self.gap_source or "?"
+            bits.append(f"Δ={self.gap_meV:g} meV ({src})")
+        if self.tc_used_K is not None:
+            bits.append(f"Tc={self.tc_used_K:g} K")
+        if self.icrn_mV is not None:
+            bits.append(f"IcRn={self.icrn_mV:g} mV")
+        if self.jc_A_per_cm2 is not None:
+            bits.append(f"Jc={self.jc_A_per_cm2:g} A/cm²")
+        if self.switching_energy_eV is not None:
+            bits.append(f"EJ={self.switching_energy_eV:g} eV")
+        bits.append(f"method={self.method}")
         bits.append(f"status={self.status}")
         return "; ".join(bits)
 

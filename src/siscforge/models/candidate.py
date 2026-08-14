@@ -12,6 +12,7 @@ from siscforge.models.results import (
     DFTUResult,
     DMFTResult,
     ElectronPhononResult,
+    JosephsonMetrics,
     PhononResult,
     SCFResult,
     SiFeasibilityScore,
@@ -155,9 +156,11 @@ class CandidateEvaluation(BaseModel):
     ``performance_score`` when both are present.
     """
 
-    # Optional later-phase attachments (kept for schema stability)
-    josephson: Any | None = None
-    """Placeholder for JosephsonMetrics (Phase 3+); unused in v0.1."""
+    # Optional later-phase attachments
+    josephson: JosephsonMetrics | None = None
+    """Tier-1 analytic Josephson metrics (P4.1). Optional — leave None
+    unless ``josephson.enabled`` is set. Always approximate / ranking only.
+    """
 
     performance_score: float | None = None
     """Superconducting performance proxy in kelvin (Tc-like).
