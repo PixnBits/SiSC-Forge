@@ -1,6 +1,16 @@
 # Implementation Notes
 
+## Housekeeping (2026-08-14) — package 0.4.3 + Tier A CI
+
+Package `__version__` / `pyproject.toml` aligned to **0.4.3** (README status).
+GitHub Actions `.github/workflows/ci.yml` runs Tier A `pytest` + dummy dry-run
+on PR / `main`. Real QE / TRIQS remain local-only.
+
+---
+
 ## Slice P4.2 (2026-08-14) — fabrication-compatibility heuristics
+
+**Tier-1 exit closed 2026-08-14** — see `docs/phase4-exit.md`. Usadel residual.
 
 **Scope**: Rule-based SIS / SNS / ramp-edge labels, BEOL / thermal flags,
 and stack notes on `JosephsonMetrics.fabrication`. Optional presentation

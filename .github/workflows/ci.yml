@@ -1,0 +1,66 @@
+# Minimal CI — Tier A (Python only).
+#
+# Runs on every pull request and on pushes to main so reviewers see check runs.
+# Intentionally does NOT require Quantum ESPRESSO, EPW, Wannier90, TRIQS,
+# solid_dmft, or CTHYB. Tests gated on SISCFORGE_RUN_QE / SISCFORGE_RUN_EPW
+# stay skipped (those remain local-only workstation / HPC gates).
+#
+# Local-only (not in this workflow):
+#   - Real QE phonon / EPW / nscf+pw2wannier90 (Tiers B–C; P3.2.1 residual)
+#   - Real solid_dmft / CTHYB launch (Tier D; P3.3 residual)
+#   - Production ALIGNN/MatGL GNN heads
+#   - GPU QE
+#
+# See docs/SETUP.md § A.4.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and test extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Report package version
+        run: python -c "from siscforge import __version__; print(__version__)"
+
+      # Full unit suite. Real QE/EPW/TRIQS tests skip unless env vars are set.
+      - name: Run tests
+        run: pytest -q --tb=short
+
+      # Mock calculator only — no QE / TRIQS binaries.
+      - name: Dummy campaign dry-run
+        run: siscforge run --dry-run examples/dummy_campaign.yaml

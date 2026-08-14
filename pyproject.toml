@@ -4,7 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "siscforge"
-version = "0.1.0"
+# Authoritative package version. src/siscforge/__init__.py reads this via
+# importlib.metadata (fallback string in __init__.py must stay in lockstep).
+version = "0.4.3"
 description = "High-throughput materials discovery platform for silicon-compatible superconductors"
 readme = "README.md"
 license = "MIT"

@@ -11,6 +11,7 @@ Tier-1 analytic path is complete; Usadel/BdG remain later.)*
 | Theme | What was added / corrected |
 |-------|----------------------------|
 | P4.2 | Fabrication-compatibility hints (SIS / SNS / ramp-edge, BEOL / thermal flags, stack notes) reused from Si-feasibility. Optional presentation-only `secondary_ranking` on IcRn / Jc. No ranker-math change. |
+| Status | §9 note: Phase 2 complete; Phase 3 P3.1–P3.6 software path landed; real CTHYB / production GNN residual |
 
 ### Changelog (v0.4.1 → v0.4.2)
 
@@ -282,6 +283,13 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 - Training-set pollution or untraceable model versions → Explicit promotion gate, immutable training-set snapshots, surrogate provenance on every decision (see design note).
 
 ## 9. Future Roadmap
+
+**Live status (2026-08):** Phase 2 is complete. Phase 3 **P3.1–P3.6 software
+path** is landed (DFT+U → Wannier gate → DMFT scaffold → pairing score →
+O-vacancy enum → mixed AL). Real CTHYB / production GNN λ/Tc heads remain
+residual. Phase 4 **Tier-1** (P4.1–P4.2) is shipped; Usadel/BdG remain later.
+See [`docs/ROADMAP.md`](../ROADMAP.md) for the operational table — this
+section is the original version narrative, not the live status board.
 
 - **v0.1 (Workstation Foundation)** — Structure gen (nitrides + B:Si), formation-energy surrogate, QE phonon, heuristic Si-score, ranking, store, CLI, dry-run. Exit: validated NbN phonon + small nitride campaign on workstation.
 - **v0.1+ / desktop production path (shipped alongside Phase 1)** — EPW + isotropic Tc, trust layer, resume/checkpoint, shortlist/refine, phonon-first + stable_only, EPW coarse-k + Phase B shells, phonon FFT/symmetry retry, Docker QE≥7.2, Si 45°/buffers.

@@ -251,7 +251,7 @@ See [phase4-exit.md](phase4-exit.md),
 - Continuous expansion of the golden-system regression suite.
 - Documentation of every Calculator’s inputs, outputs, and failure modes.
 - Container images (Docker/Apptainer) for QE+EPW and TRIQS.
-- CI that runs unit + fast integration tests on every PR; optional self-hosted runner with QE for scientific regressions.
+- CI that runs unit + fast integration tests on every PR (**shipped**: `.github/workflows/ci.yml`, Tier A only); optional self-hosted runner with QE for scientific regressions remains later.
 - Community contribution guidelines once Phase 1 is solid.
 - Maintenance of the active-learning design note and its acceptance criteria as the flywheel matures.
 

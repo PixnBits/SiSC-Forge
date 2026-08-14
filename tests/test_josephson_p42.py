@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -510,27 +511,42 @@ def test_example_yaml_loads_p42_knobs() -> None:
 
 
 def test_docs_exist() -> None:
-    doc = (ROOT / "docs" / "phase4-p42-fabrication.md").read_text()
+    """Phase-4 status contract: structural checks + two load-bearing phrases.
+
+    Exact-phrase matches are brittle (#29). Prefer file presence, residual
+    headings, and cross-links. The two README phrases below are intentional
+    status contracts — keep them if you reword the status line.
+    """
+    p42 = ROOT / "docs" / "phase4-p42-fabrication.md"
+    assert p42.is_file()
+    doc = p42.read_text()
     assert "SIS" in doc
     assert "SNS" in doc
     assert "ramp_edge" in doc
     assert "heuristic" in doc.lower()
     assert "secondary_ranking" in doc
-    assert "not process qualification" in doc.lower() or "not a foundry" in doc.lower()
     assert "Usadel" in doc
     assert "list index" in doc.lower() or "list-order contract" in doc.lower()
     assert "suggest_junction_class" in doc
     assert "unknown" in doc
+
     roadmap = (ROOT / "docs" / "ROADMAP.md").read_text()
     assert "P4.2" in roadmap
     assert "done" in roadmap.lower()
-    exit_doc = (ROOT / "docs" / "phase4-exit.md").read_text()
-    assert "Tier-1" in exit_doc
-    assert "Usadel" in exit_doc
-    assert "not process qualification" in exit_doc.lower()
+    assert "phase4-exit.md" in roadmap
+
+    exit_path = ROOT / "docs" / "phase4-exit.md"
+    assert exit_path.is_file()
+    exit_doc = exit_path.read_text()
+    assert re.search(r"^## Explicit non-claims", exit_doc, re.M)
+    assert re.search(r"^## Residual", exit_doc, re.M)
     assert "phase4-p41-josephson-tier1" in exit_doc
     assert "phase4-p42-fabrication" in exit_doc
+    assert "Usadel" in exit_doc
+
     readme = (ROOT / "README.md").read_text()
+    assert "phase4-exit" in readme
+    # Status contracts (load-bearing): README Phase-4 row + Usadel not claimed done.
     assert "Tier-1 complete" in readme
     assert "Usadel residual" in readme
 
