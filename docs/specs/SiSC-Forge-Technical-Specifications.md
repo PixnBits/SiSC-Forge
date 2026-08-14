@@ -1,8 +1,19 @@
 # SiSC-Forge
 ## Technical Specifications
 
-**Version 0.4.1 – Active-learning flywheel**  
-*(Extends v0.4 with Surrogate Training & Active Learning Manager contracts, seed/promotion rules, bootstrap observability, and new acceptance criteria. See `docs/design/active-learning-flywheel.md`. Josephson module remains Phase 3+ and inert until enabled.)*
+**Version 0.5.0 – Phase 2 complete + Phase 3 P3.1–P3.5 contracts**  
+*(Extends v0.4.1 with Silicon Integration maturity (P2.1–P2.5) as implemented contracts, process-recommendation schema 1.0, and the unconventional pathway slice: DFTUResult, WannierResult + ready_for_dmft, DMFTResult scaffold, pairing → performance_score. Josephson remains Phase 4 and inert. Family-mean AL surrogate ≠ production GNN.)*
+
+### Changelog (v0.4.1 → v0.5.0)
+
+| Area | Added / tightened |
+|------|-------------------|
+| §2.5 Silicon | SiFeasibility components, weights, multi-layer buffers/stacks, critical thickness, membrane flags — **implemented** |
+| §2.6 Ranking | Multi-objective weights, Pareto, `performance_score_source` / precedence (`epw_then_dmft`) |
+| §2.4 Unconventional | DFT+U, Wannier gate, DMFTResult scaffold limits, pairing map formula reference |
+| §3 Models | DFTUResult, WannierResult, DMFTResult (scaffold), process-recommendation schema 1.0 |
+| Acceptance | Mark which ACs satisfied; real CTHYB launch and mixed AL remain open |
+| Calculator plugins | `qe`, `qe-dftu`, `qe-wannier`, `qe-dmft` / aliases; unconventional steps **default off** |
 
 ### Changelog (v0.4 → v0.4.1)
 
@@ -56,7 +67,7 @@ Silicon Integration & Interface Module
         │
 Candidate Ranking & Reporting (+ result_quality + surrogate provenance)
         │
-Josephson Junction Device Modeling Module  ← §2.8 (Phase 3+)
+Josephson Junction Device Modeling Module  ← §2.8 (Phase 4)
         │
 Provenance Store + Active-Learning Feedback (promotion → training set → retrain)
 ```
@@ -193,13 +204,29 @@ Triggered after **successful DFPT** when EPW fails with remediable classes.
 - Completed phonon with imaginary modes → stability conclusion (`has_imaginary_modes`).
 - `stable_only` shortlist **must ignore** setup-failed and non-ok evaluations.
 
-### 2.4 Unconventional (DFT+U / DMFT) Pathway
-Produces `leading_pairing_eigenvalue` that feeds the common `performance_score`. Phase 2+; not required for workstation conventional path.
+### 2.4 Unconventional (DFT+U / DMFT) Pathway — Phase 3 partial (P3.1–P3.5)
+Produces `leading_pairing_eigenvalue` that feeds the common `performance_score` via documented mapping (see `docs/phase3-p34-pairing-score.md`). **Default off.**
 
-### 2.5 Silicon Integration & Interface Module
-Produces Si-Feasibility Score 0–100 plus process recommendations.  
-**Shipped (v0.2 scorer):** lattice mismatch, cube/45° matching, buffer library hints, thermal/chemical heuristics.  
-**Later:** multi-layer stacks, critical thickness, membrane mechanics, interface slabs.
+**Implemented contracts:**
+- `DFTUResult` + optional DFT+U (`qe-dftu` / `do_dftu`) — P3.1
+- `WannierResult` + quality metrics + `ready_for_dmft` gate (`qe-wannier`) — P3.2 (residual automated nscf+pw2wannier90)
+- `DMFTResult` scaffold (model + gate + mock + optional observables parser; **not** full automated solid_dmft/CTHYB launch) — P3.3
+- Pairing → `performance_score` with `ranking.performance_precedence` (default `epw_then_dmft`) — P3.4
+- Oxygen-vacancy / infinite-layer enumeration (opt-in via `material_families: [nickelate]`) — P3.5
+
+Mock / illustrative DMFT numbers participate in ranking only when enabled and tagged `dmft_pairing_mock`. Real CTHYB launch and mixed AL (P3.6) remain residual.
+
+### 2.5 Silicon Integration & Interface Module — Phase 2 complete
+Produces Si-Feasibility Score 0–100 plus process recommendations.
+
+**Implemented (P2.1–P2.5):**
+- Full component breakdown (`SiFeasibilityComponents`) with YAML weights + export provenance (P2.1)
+- Multi-layer buffer stacks + chemical/thermal window flags (P2.2)
+- Critical thickness (Matthews–Blakeslee / People–Bean) + membrane-transfer heuristics (P2.3)
+- Multi-objective ranking + Pareto + ranking provenance (P2.4; ranking lives in §2.6)
+- Process-recommendation synthesis cards + frozen schema `1.0` (`process_recommendations.json`) (P2.5)
+
+**Deferred:** interface-slab DFT, FEM membrane mechanics, CALPHAD interlayer thermodynamics.
 
 ### 2.6 Candidate Ranking & Reporting
 
@@ -212,7 +239,7 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
   - `rank --stable-first` prefers dynamically stable phonons.
   - Setup failures are not “stable.”
 - Surrogate provenance (model version, training-set size, acquisition weights, bootstrap flag) appears in status and synthesis cards.
-- JosephsonMetrics optional secondary ranking when module enabled (Phase 3+).
+- JosephsonMetrics optional secondary ranking when module enabled (Phase 4).
 
 ### 2.7 Workflow Engine, CLI & Active Learning
 
@@ -237,11 +264,11 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 
 Human overrides (pin candidates, exclude subspaces, roll back model version, export training set) are first-class operations.
 
-### 2.8 Josephson Junction Device Modeling Module  ← Phase 3+
+### 2.8 Josephson Junction Device Modeling Module  ← Phase 4
 
 *(Unchanged in intent from v0.3. Disabled by default. Tier-1 analytic estimates on top-N shortlist; Usadel/BdG later. Always labeled approximate / ranking only.)*
 
-See prior v0.3 detail for inputs, Ambegaokar–Baratoff formulas, fabrication heuristics, and Phase 3 acceptance criteria. Module remains a stub until Phase 3.
+See prior v0.3 detail for inputs, Ambegaokar–Baratoff formulas, fabrication heuristics, and Phase 4 acceptance criteria. Module remains a stub until Phase 4.
 
 ### 2.9 Docker / distribution
 - Multi-stage image: Ubuntu LTS + QE ≥ 7.2 from source (`pw` `ph` `pp` `epw`) + Wannier90 + SSSP + `pip install -e ".[dev,qe,phonopy]"`.
@@ -292,7 +319,7 @@ Screening results may be present with **quality flags** that ranking must honor.
 | `errors`, `notes` | **Primary failure reason first**; workdir; diagnose; retry log |
 | `result_quality` / flags | Trust layer (tier, flags, penalties) when present |
 | `surrogate_prediction` | Optional; λ / ω_log / Tc proxy + uncertainty + model version |
-| `josephson` | Optional; Phase 3+ |
+| `josephson` | Optional; Phase 4 |
 
 ### 3.4 Remediation attempt record (workdir sidecar)
 
@@ -347,7 +374,7 @@ Primary open-source stack:
 - SSSP (or PseudoDojo) UPFs
 - Docker recommended for second-machine parity
 
-TRIQS / solid_dmft: Phase 2+. Usadel/BdG: Phase 3+ behind Calculator protocol.
+TRIQS / solid_dmft: Phase 3 residual. Usadel/BdG: Phase 4 behind Calculator protocol.
 
 ---
 
@@ -399,7 +426,7 @@ dft:
 - `siscforge shortlist --mode stable_only|stable_or_soft|… -n N -o campaign.yaml`
 - `siscforge refine` denser grids / `workstation_dense` tier; **separate `output_dir`** from screening store.
 
-### 5.4 Josephson (Phase 3+; ignored until enabled)
+### 5.4 Josephson (Phase 4; ignored until enabled)
 
 ```yaml
 josephson:
@@ -428,7 +455,7 @@ josephson:
 
 - Phases 0–1: productive on 8–32 cores; multi-day DFPT acceptable for refine shortlists of few candidates.
 - Phonon maps (q=2³): many binary nitrides ~1–3 min/candidate on 16 cores (order-of-magnitude; hardware-dependent).
-- Analytic Josephson Tier-1: ≪ 1 min for 50 candidates (Phase 3).
+- Analytic Josephson Tier-1: ≪ 1 min for 50 candidates (Phase 4).
 - EPW remediation after DFPT: electronic-only (NSCF minutes-scale at 12³; EPW failure can still be seconds on bvector).
 
 ---
@@ -481,7 +508,7 @@ josephson:
 ## 10. Explicit Limitations
 
 - Auto-raised nkc and `search_shells` **do not** guarantee physical λ/Tc; screening Wannier remains `proj=random`.
-- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, DMFT, Josephson: **later**.
+- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, full real DMFT launch, Josephson: **later**.
 - After Phase A+B exhaustion, further EPW success may require human projections or different cells; DFPT remains valuable for stability gating.
 - Screening q=2³ phonon stability can false-positive/false-negative; denser DFPT required before citing dynamical stability.
 - Resume covers common cases; exotic partial files or external manual edits may still need operator intervention (documented in implementation-notes).
@@ -501,10 +528,12 @@ josephson:
 **Phase 1 residual / 1.5 (AL bootstrap)** — Seed-set management, explicit promotion, first trained surrogate, acquisition provenance, bootstrap observability, full mock cycle.  
 **Exit**: AC13–AC18 green; one complete interleaved cycle demonstrated on workstation.
 
-**Phase 2** — DMFT + pairing, advanced Si integration (membranes/interfaces), multi-objective ranking, production Wannier automation.
+**Phase 2** — Silicon Integration maturity + ranking polish (P2.1–P2.5) — **COMPLETE** (see `docs/phase2-exit.md`).
 
-**Phase 3** — Josephson Tier-1 analytic estimates on shortlist; later Usadel/BdG.
+**Phase 3** — Unconventional pathway: P3.1–P3.5 shipped (DMFT is scaffold); P3.6 mixed AL residual; full real solid_dmft residual.
+
+**Phase 4** — Josephson Tier-1 analytic estimates on shortlist; later Usadel/BdG.
 
 ---
 
-*This document (v0.4.1) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28). Active-learning bootstrap contracts are specified here and detailed in `docs/design/active-learning-flywheel.md`. Josephson remains fully specified but inert until Phase 3. PRD v0.3.1 is the product authority; this file is the engineering contract.*
+*This document (v0.5.0) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28). Active-learning bootstrap contracts are specified here and detailed in `docs/design/active-learning-flywheel.md`. Josephson remains fully specified but inert until Phase 4. PRD v0.4.0 is the product authority; this file is the engineering contract.*
