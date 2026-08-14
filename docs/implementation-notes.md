@@ -1,5 +1,28 @@
 # Implementation Notes
 
+## Slice P3.6 (2026-08-14) — mixed conventional / unconventional AL
+
+**Scope**: Acquisition can operate on a joint pool or separate
+conventional / unconventional pools. Default `pool_mode: off` preserves
+pre-P3.6 scores and top-k. No CTHYB launch, no GNN heads.
+
+| Item | Location |
+|------|----------|
+| Pool derivation | `siscforge.active_learning.pools.derive_pool` |
+| Quotas | `select_with_quotas` (`floor(frac × k)` + leftover fill) |
+| Acquisition | `prioritize_candidates` honours `ActiveLearningConfig.pool_mode`; `siscforge run` loads store evaluations so resume/later cycles can use `performance_score` |
+| Config | `pool_mode`, `pool_quotas` (inert default `off`) |
+| Provenance | `AcquisitionRecord` / `PrioritizationRecord` / evaluation fields |
+| Export | CSV + synthesis cards: `acquisition_pool`, `acquisition_mode` |
+| Status | `al-status` per-pool counts when mixed mode has been used |
+| Docs | `docs/phase3-p36-mixed-al.md` |
+| Tests | `tests/test_al_p36_mixed.py` |
+| Example | `examples/mixed_al_pools.yaml` |
+
+**Out of scope**: real CTHYB launch, production GNN, Josephson, pairing/Si maths.
+
+---
+
 ## Slice P3.5 (2026-08-13) — oxygen-vacancy / infinite-layer enumeration
 
 **Scope**: First-class, opt-in structure generation for infinite-layer
@@ -20,7 +43,7 @@ Default patterns: stoichiometric IL, ordered single in-plane vacancy
 (2×2×1, symmetry-unique), apical-O RNiO₃. Screening only — not defect
 thermodynamics.
 
-**Out of scope**: mixed AL (P3.6), bilayer/cuprate, real CTHYB launch.
+**Out of scope**: bilayer/cuprate, real CTHYB launch.
 
 ---
 
@@ -40,7 +63,7 @@ precedence / ranking contracts unchanged.
 | Float `!=` fragile with NaN | `_same_score` treats non-finite as not-equal |
 | Quality timing | Confirmed `rank_evaluations` assesses after headline source; documented |
 
-**Still residual:** real CTHYB launch, P3.6 source-aware AL.
+**Still residual:** real CTHYB launch, production GNN heads.
 
 ---
 

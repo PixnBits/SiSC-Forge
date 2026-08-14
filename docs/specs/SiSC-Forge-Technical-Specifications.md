@@ -1,8 +1,16 @@
 # SiSC-Forge
 ## Technical Specifications
 
-**Version 0.5.0 – Phase 2 complete + Phase 3 P3.1–P3.5 contracts**  
-*(Extends v0.4.1 with Silicon Integration maturity (P2.1–P2.5) as implemented contracts, process-recommendation schema 1.0, and the unconventional pathway slice: DFTUResult, WannierResult + ready_for_dmft, DMFTResult scaffold, pairing → performance_score. Josephson remains Phase 4 and inert. Family-mean AL surrogate ≠ production GNN.)*
+**Version 0.5.1 – Phase 2 complete + Phase 3 P3.1–P3.6 contracts**  
+*(Extends v0.5.0 with mixed conventional/unconventional AL acquisition pools. Family-mean AL surrogate ≠ production GNN. Real CTHYB launch remains residual.)*
+
+### Changelog (v0.5.0 → v0.5.1)
+
+| Area | Added / tightened |
+|------|-------------------|
+| §2.7 Active Learning | `pool_mode` off/joint/separate; pool derivation precedence; per-pool quotas |
+| §3 Models | `PrioritizationRecord.acquisition_mode` / `pool_counts`; evaluation pool fields |
+| Acceptance | P3.6 mixed AL shipped; real CTHYB launch and production GNN remain open |
 
 ### Changelog (v0.4.1 → v0.5.0)
 
@@ -12,7 +20,7 @@
 | §2.6 Ranking | Multi-objective weights, Pareto, `performance_score_source` / precedence (`epw_then_dmft`) |
 | §2.4 Unconventional | DFT+U, Wannier gate, DMFTResult scaffold limits, pairing map formula reference |
 | §3 Models | DFTUResult, WannierResult, DMFTResult (scaffold), process-recommendation schema 1.0 |
-| Acceptance | Mark which ACs satisfied; real CTHYB launch and mixed AL remain open |
+| Acceptance | Mark which ACs satisfied; real CTHYB launch remains open |
 | Calculator plugins | `qe`, `qe-dftu`, `qe-wannier`, `qe-dmft` / aliases; unconventional steps **default off** |
 
 ### Changelog (v0.4 → v0.4.1)
@@ -204,7 +212,7 @@ Triggered after **successful DFPT** when EPW fails with remediable classes.
 - Completed phonon with imaginary modes → stability conclusion (`has_imaginary_modes`).
 - `stable_only` shortlist **must ignore** setup-failed and non-ok evaluations.
 
-### 2.4 Unconventional (DFT+U / DMFT) Pathway — Phase 3 partial (P3.1–P3.5)
+### 2.4 Unconventional (DFT+U / DMFT) Pathway — Phase 3 software path (P3.1–P3.6)
 Produces `leading_pairing_eigenvalue` that feeds the common `performance_score` via documented mapping (see `docs/phase3-p34-pairing-score.md`). **Default off.**
 
 **Implemented contracts:**
@@ -213,8 +221,9 @@ Produces `leading_pairing_eigenvalue` that feeds the common `performance_score` 
 - `DMFTResult` scaffold (model + gate + mock + optional observables parser; **not** full automated solid_dmft/CTHYB launch) — P3.3
 - Pairing → `performance_score` with `ranking.performance_precedence` (default `epw_then_dmft`) — P3.4
 - Oxygen-vacancy / infinite-layer enumeration (opt-in via `material_families: [nickelate]`) — P3.5
+- Mixed conventional/unconventional AL acquisition (`active_learning.pool_mode`: `off` \| `joint` \| `separate`) — P3.6
 
-Mock / illustrative DMFT numbers participate in ranking only when enabled and tagged `dmft_pairing_mock`. Real CTHYB launch and mixed AL (P3.6) remain residual.
+Mock / illustrative DMFT numbers participate in ranking only when enabled and tagged `dmft_pairing_mock`. Real CTHYB launch remains residual.
 
 ### 2.5 Silicon Integration & Interface Module — Phase 2 complete
 Produces Si-Feasibility Score 0–100 plus process recommendations.
@@ -254,13 +263,14 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 | `siscforge refine` | Denser EPW from store winners; separate `output_dir`; `quality_tag` production / workstation_dense grids |
 | `siscforge rank` | Table export; `--stable-first` |
 
-**Active learning (bootstrap contracts)**  
+**Active learning (bootstrap + P3.6 mixed pools)**  
 - Minimal prioritization (top-k expensive path) already shipped.
 - Lightweight retrain / update trigger after shortlist cycles (or explicit CLI).
 - Explicit promotion of clean results into the training set.
 - Training-set audit command.
 - Failure modes (retrain NaNs, over-confidence, empty shortlist, mode collapse, mock-data refusal) must be classified and reported with the same honesty as phonon vs EPW failures.
 - Full prioritize → shortlist → (mock) calculate → promote → retrain cycle must be exercisable in dry-run / mock mode.
+- **P3.6:** `active_learning.pool_mode` (`off` default / `joint` / `separate`) with documented pool derivation and optional per-pool quotas. Conventional campaigns with `off` must not change acquisition scores or order. See `docs/phase3-p36-mixed-al.md`.
 
 Human overrides (pin candidates, exclude subspaces, roll back model version, export training set) are first-class operations.
 
@@ -530,10 +540,10 @@ josephson:
 
 **Phase 2** — Silicon Integration maturity + ranking polish (P2.1–P2.5) — **COMPLETE** (see `docs/phase2-exit.md`).
 
-**Phase 3** — Unconventional pathway: P3.1–P3.5 shipped (DMFT is scaffold); P3.6 mixed AL residual; full real solid_dmft residual.
+**Phase 3** — Unconventional pathway: P3.1–P3.6 software path shipped (DMFT is scaffold); full real solid_dmft + production GNN residual.
 
 **Phase 4** — Josephson Tier-1 analytic estimates on shortlist; later Usadel/BdG.
 
 ---
 
-*This document (v0.5.0) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28). Active-learning bootstrap contracts are specified here and detailed in `docs/design/active-learning-flywheel.md`. Josephson remains fully specified but inert until Phase 4. PRD v0.4.0 is the product authority; this file is the engineering contract.*
+*This document (v0.5.1) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson remains fully specified but inert until Phase 4. PRD v0.4.1 is the product authority; this file is the engineering contract.*

@@ -2,7 +2,7 @@
 
 **Status**: **Done** (shipped on main)  
 **Prerequisite**: P3.1–P3.4 on main  
-**Next**: **P3.6** — mixed conventional / unconventional AL acquisition
+**Next**: Phase 3 residuals — real CTHYB launch, production GNN heads
 
 This package adds a **first-class structure-generation option** for
 infinite-layer RNiO₂-family cells and a **small, documented** set of
@@ -74,7 +74,7 @@ paths still require a parseable Si substrate.
 - Full defect formation-energy / grand-canonical thermodynamics
 - Combinatorial vacancy enumerations (2×2×2 all-O subsets, etc.)
 - Bilayer nickelates and cuprate prototypes
-- Mixed conventional/unconventional AL acquisition (**P3.6**)
+- Mixed conventional/unconventional AL acquisition (**P3.6** — Done; see `docs/phase3-p36-mixed-al.md`)
 - Real solid_dmft / CTHYB launch
 - Changing the pairing formula, ranking maths, or Si-feasibility science
 

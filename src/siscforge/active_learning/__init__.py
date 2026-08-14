@@ -1,8 +1,9 @@
-"""Active-learning prioritization and Phase 1.5 bootstrap flywheel.
+"""Active-learning prioritization and Phase 1.5 / P3.6 flywheel.
 
 Phase 1: queue prioritization for expensive EPW jobs.
 Phase 1.5a: seed set, promotion gate, lightweight retrain, bootstrap status.
 Phase 1.5b: trained predictions affect rankings; run-loop provenance; operator UX.
+P3.6: mixed conventional / unconventional acquisition pools (joint | separate).
 """
 
 from siscforge.active_learning.acquisition import (
@@ -28,6 +29,12 @@ from siscforge.active_learning.paths import (
     resolve_al_root,
     write_al_pointer,
 )
+from siscforge.active_learning.pools import (
+    POOLS,
+    PoolDecision,
+    derive_pool,
+    select_with_quotas,
+)
 from siscforge.active_learning.training_set import (
     DEFAULT_GOLDEN_SEEDS,
     PromotionError,
@@ -47,6 +54,8 @@ __all__ = [
     "DEFAULT_AL_ROOT_NAME",
     "DEFAULT_GOLDEN_SEEDS",
     "ENV_AL_ROOT",
+    "POOLS",
+    "PoolDecision",
     "PromotionError",
     "SurrogateRegistry",
     "TrainingSetStore",
@@ -54,6 +63,7 @@ __all__ = [
     "al_status",
     "al_subroots",
     "build_prioritization_record",
+    "derive_pool",
     "is_bootstrap",
     "literature_example",
     "load_literature_records",
@@ -66,6 +76,6 @@ __all__ = [
     "retrain_from_store",
     "seed_default_goldens",
     "seed_from_literature_file",
+    "select_with_quotas",
     "write_al_pointer",
 ]
-

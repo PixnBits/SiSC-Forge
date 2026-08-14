@@ -10,6 +10,7 @@ from siscforge.models.active_learning import (
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import (
     ActiveLearningConfig,
+    ActiveLearningPoolQuotas,
     ActiveLearningWeights,
     CalculatorConfig,
     CampaignConfig,
@@ -45,6 +46,7 @@ from siscforge.models.results import (
 
 __all__ = [
     "ActiveLearningConfig",
+    "ActiveLearningPoolQuotas",
     "PrioritizationRecord",
     "SurrogateModelMetadata",
     "SurrogatePrediction",

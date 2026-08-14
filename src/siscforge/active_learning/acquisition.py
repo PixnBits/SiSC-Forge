@@ -1,23 +1,35 @@
-"""Acquisition scoring for minimal Phase-1 active-learning prioritization.
+"""Acquisition scoring for Phase-1 / P3.6 active-learning prioritization.
 
 This is a **queue prioritization coordinator**, not a full retrain loop.
-It ranks candidates for expensive EPW (or other calculator) jobs using:
+It ranks candidates for expensive EPW (or DMFT) jobs using:
 
 - surrogate uncertainty (higher → more interesting)
-- predicted Tc (higher → more interesting)
+- predicted Tc **or** a common ``performance_score`` when mixed mode is on
 - Si-feasibility (higher → more interesting)
 - optional E_hull proxy penalty
 
-After real EPW results land, the normal ranking module re-orders by real Tc.
+P3.6 adds conventional / unconventional **pools** and ``joint`` / ``separate``
+acquisition modes. Default ``pool_mode=off`` preserves pre-P3.6 scoring and
+top-k selection. See ``docs/phase3-p36-mixed-al.md``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from siscforge.active_learning.pools import (
+    AcquisitionMode,
+    PoolDecision,
+    count_pools,
+    derive_pool,
+    empty_pool_counts,
+    normalize_pool_mode,
+    select_with_quotas,
+)
 from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import ActiveLearningConfig
 from siscforge.models.results import SiFeasibilityScore
@@ -52,6 +64,12 @@ class AcquisitionRecord(BaseModel):
     training_set_size: int = 0
     bootstrap: bool = True
     notes: str = ""
+    # --- P3.6 pool provenance (additive; defaults keep old records valid) ---
+    pool: str = "unknown"
+    pool_reason: str = ""
+    acquisition_mode: str = "off"
+    score_signal: str = "surrogate_tc"
+    """``surrogate_tc`` or ``performance_score`` — which Tc-like input was used."""
 
 
 @dataclass
@@ -71,6 +89,9 @@ class AcquisitionPlan:
     training_set_size: int = 0
     bootstrap: bool = True
     prioritization_record_id: str | None = None
+    acquisition_mode: str = "off"
+    pool_counts: dict[str, int] = field(default_factory=empty_pool_counts)
+    selected_by_pool: dict[str, int] = field(default_factory=empty_pool_counts)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -80,6 +101,9 @@ class AcquisitionPlan:
             "training_set_size": self.training_set_size,
             "bootstrap": self.bootstrap,
             "prioritization_record_id": self.prioritization_record_id,
+            "acquisition_mode": self.acquisition_mode,
+            "pool_counts": dict(self.pool_counts),
+            "selected_by_pool": dict(self.selected_by_pool),
             "n_selected": len(self.selected),
             "n_deferred": len(self.deferred),
             "ranked": [r.model_dump(mode="json") for r in self.ranked],
@@ -106,6 +130,10 @@ def acquisition_score(
 
     All weights default to equal interest terms; hull weight defaults to 0
     unless provided (optional soft penalty).
+
+    The Tc-like input may be a surrogate Tc **or** a P3.4
+    ``performance_score`` (EPW Tc or DMFT pairing proxy). The formula is
+    unchanged — only the caller chooses the signal.
     """
     w = {
         "uncertainty": 0.4,
@@ -138,12 +166,79 @@ def acquisition_score(
     return round(float(score), 6), components
 
 
+def _quota_map(config: ActiveLearningConfig) -> dict[str, float]:
+    raw = getattr(config, "pool_quotas", None)
+    if raw is None:
+        return {"conventional": 0.5, "unconventional": 0.5, "unknown": 0.0}
+    if hasattr(raw, "model_dump"):
+        return {str(k): float(v) for k, v in raw.model_dump().items()}
+    return {str(k): float(v) for k, v in dict(raw).items()}
+
+
+def _score_one(
+    cand: StructureCandidate,
+    *,
+    pred: TcLambdaPrediction,
+    si_tot: float,
+    cfg: ActiveLearningConfig,
+    model_version: str,
+    training_set_size: int,
+    bootstrap: bool,
+    mode: AcquisitionMode,
+    evaluation: Any | None,
+    use_performance_score: bool,
+    notes: str = "",
+) -> tuple[AcquisitionRecord, PoolDecision]:
+    decision = derive_pool(candidate=cand, evaluation=evaluation)
+    predicted_tc = float(pred.predicted_Tc)
+    score_signal = "surrogate_tc"
+    if use_performance_score and evaluation is not None:
+        perf = getattr(evaluation, "performance_score", None)
+        if perf is not None:
+            try:
+                predicted_tc = float(perf)
+                score_signal = "performance_score"
+            except (TypeError, ValueError):
+                pass
+    score, comps = acquisition_score(
+        uncertainty=pred.uncertainty,
+        predicted_tc=predicted_tc,
+        si_total=si_tot,
+        energy_above_hull=cand.energy_above_hull_proxy,
+        weights=cfg.weights.model_dump(),
+        tc_ceiling_K=cfg.tc_ceiling_K,
+    )
+    rec = AcquisitionRecord(
+        candidate_id=cand.candidate_id,
+        formula=cand.formula,
+        acquisition_score=score,
+        selected_for_expensive=False,
+        components=comps,
+        weights=cfg.weights.model_dump(),
+        predicted_tc=predicted_tc,
+        uncertainty=pred.uncertainty,
+        si_feasibility=si_tot,
+        energy_above_hull_proxy=cand.energy_above_hull_proxy,
+        strategy=cfg.strategy,
+        model_version=model_version,
+        training_set_size=training_set_size,
+        bootstrap=bootstrap,
+        notes=notes,
+        pool=decision.pool,
+        pool_reason=decision.reason,
+        acquisition_mode=mode,
+        score_signal=score_signal,
+    )
+    return rec, decision
+
+
 def prioritize_candidates(
     candidates: list[StructureCandidate],
     *,
     config: ActiveLearningConfig | None = None,
     si_scores: dict[str, SiFeasibilityScore] | None = None,
     predictions: dict[str, TcLambdaPrediction] | None = None,
+    evaluations: Mapping[str, Any] | None = None,
     model_version: str = "heuristic",
     training_set_size: int = 0,
     bootstrap: bool = True,
@@ -156,14 +251,24 @@ def prioritize_candidates(
         candidate_id → SiFeasibilityScore (computed by caller; cheap).
     predictions:
         candidate_id → TcLambdaPrediction (from surrogate; if missing, predict).
+    evaluations:
+        Optional candidate_id → CandidateEvaluation. Used for pool derivation
+        and, when ``pool_mode`` is ``joint`` or ``separate``, as the source of
+        a common ``performance_score`` (P3.4 EPW Tc or DMFT pairing).
+        Ignored for scoring when ``pool_mode`` is ``off`` so conventional
+        campaigns do not drift.
     """
     cfg = config or ActiveLearningConfig()
+    mode = normalize_pool_mode(getattr(cfg, "pool_mode", "off"))
+    use_perf = mode in {"joint", "separate"}
+    evals = dict(evaluations or {})
     plan = AcquisitionPlan(
         strategy=cfg.strategy,
         enabled=cfg.enabled,
         model_version=model_version,
         training_set_size=training_set_size,
         bootstrap=bootstrap,
+        acquisition_mode=mode,
     )
     si_scores = si_scores or {}
     predictions = dict(predictions or {})
@@ -177,34 +282,25 @@ def prioritize_candidates(
             predictions[cand.candidate_id] = pred
             si = si_scores.get(cand.candidate_id)
             si_tot = float(si.total) if si is not None else 50.0
-            score, comps = acquisition_score(
-                uncertainty=pred.uncertainty,
-                predicted_tc=pred.predicted_Tc,
-                si_total=si_tot,
-                energy_above_hull=cand.energy_above_hull_proxy,
-                weights=cfg.weights.model_dump(),
-                tc_ceiling_K=cfg.tc_ceiling_K,
+            rec, _ = _score_one(
+                cand,
+                pred=pred,
+                si_tot=si_tot,
+                cfg=cfg,
+                model_version=model_version,
+                training_set_size=training_set_size,
+                bootstrap=bootstrap,
+                mode=mode,
+                evaluation=evals.get(cand.candidate_id),
+                # Disabled path: never swap in performance_score (pre-P3.6).
+                use_performance_score=False,
+                notes="AL disabled — all candidates selected for calculator",
             )
-            plan.ranked.append(
-                AcquisitionRecord(
-                    candidate_id=cand.candidate_id,
-                    formula=cand.formula,
-                    acquisition_score=score,
-                    selected_for_expensive=True,
-                    components=comps,
-                    weights=cfg.weights.model_dump(),
-                    predicted_tc=pred.predicted_Tc,
-                    uncertainty=pred.uncertainty,
-                    si_feasibility=si_tot,
-                    energy_above_hull_proxy=cand.energy_above_hull_proxy,
-                    strategy=cfg.strategy,
-                    model_version=model_version,
-                    training_set_size=training_set_size,
-                    bootstrap=bootstrap,
-                    notes="AL disabled — all candidates selected for calculator",
-                )
-            )
+            rec.selected_for_expensive = True
+            plan.ranked.append(rec)
         plan.ranked.sort(key=lambda r: r.acquisition_score, reverse=True)
+        plan.pool_counts = count_pools(r.pool for r in plan.ranked)
+        plan.selected_by_pool = count_pools(r.pool for r in plan.ranked)
         return plan
 
     # Score all
@@ -217,32 +313,19 @@ def prioritize_candidates(
         predictions[cand.candidate_id] = pred
         si = si_scores.get(cand.candidate_id)
         si_tot = float(si.total) if si is not None else 50.0
-        score, comps = acquisition_score(
-            uncertainty=pred.uncertainty,
-            predicted_tc=pred.predicted_Tc,
-            si_total=si_tot,
-            energy_above_hull=cand.energy_above_hull_proxy,
-            weights=cfg.weights.model_dump(),
-            tc_ceiling_K=cfg.tc_ceiling_K,
+        rec, _ = _score_one(
+            cand,
+            pred=pred,
+            si_tot=si_tot,
+            cfg=cfg,
+            model_version=model_version,
+            training_set_size=training_set_size,
+            bootstrap=bootstrap,
+            mode=mode,
+            evaluation=evals.get(cand.candidate_id),
+            use_performance_score=use_perf,
         )
-        records.append(
-            AcquisitionRecord(
-                candidate_id=cand.candidate_id,
-                formula=cand.formula,
-                acquisition_score=score,
-                selected_for_expensive=False,
-                components=comps,
-                weights=cfg.weights.model_dump(),
-                predicted_tc=pred.predicted_Tc,
-                uncertainty=pred.uncertainty,
-                si_feasibility=si_tot,
-                energy_above_hull_proxy=cand.energy_above_hull_proxy,
-                strategy=cfg.strategy,
-                model_version=model_version,
-                training_set_size=training_set_size,
-                bootstrap=bootstrap,
-            )
-        )
+        records.append(rec)
 
     records.sort(
         key=lambda r: (
@@ -253,19 +336,35 @@ def prioritize_candidates(
     )
 
     k = max(1, int(cfg.max_epw_jobs))
-    selected_ids: set[str] = set()
+    if mode == "separate":
+        selected_ids = set(
+            select_with_quotas(records, k=k, quotas=_quota_map(cfg))
+        )
+    else:
+        # off and joint: single global top-k (joint only changes provenance
+        # and the optional performance_score signal).
+        selected_ids = {r.candidate_id for r in records[:k]}
+
     for i, rec in enumerate(records):
-        if i < k:
+        if rec.candidate_id in selected_ids:
             rec.selected_for_expensive = True
-            selected_ids.add(rec.candidate_id)
-            rec.notes = f"selected for expensive path (rank {i + 1}/{len(records)})"
+            rec.notes = (
+                f"selected for expensive path (rank {i + 1}/{len(records)}"
+                f", pool={rec.pool}, mode={mode})"
+            )
         else:
             rec.selected_for_expensive = False
-            rec.notes = "deferred — surrogate-only evaluation"
+            rec.notes = (
+                f"deferred — surrogate-only evaluation (pool={rec.pool}, mode={mode})"
+            )
 
     plan.ranked = records
     plan.selected = [by_id[r.candidate_id] for r in records if r.selected_for_expensive]
     plan.deferred = [
         by_id[r.candidate_id] for r in records if not r.selected_for_expensive
     ]
+    plan.pool_counts = count_pools(r.pool for r in records)
+    plan.selected_by_pool = count_pools(
+        r.pool for r in records if r.selected_for_expensive
+    )
     return plan

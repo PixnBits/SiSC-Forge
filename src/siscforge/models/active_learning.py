@@ -167,6 +167,11 @@ class PrioritizationRecord(BaseModel):
     """Compact list of {candidate_id, score, selected} for audit."""
 
     notes: str = ""
+    # --- P3.6 mixed-pool provenance (additive) ---
+    acquisition_mode: str = "off"
+    """``off`` | ``joint`` | ``separate``."""
+    pool_counts: dict[str, int] = Field(default_factory=dict)
+    selected_by_pool: dict[str, int] = Field(default_factory=dict)
 
 
 class TrainingSetSnapshot(BaseModel):

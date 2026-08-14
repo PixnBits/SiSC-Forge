@@ -2,7 +2,7 @@
 
 **Status**: **Done** — deterministic mapping + evaluation wiring  
 **Prerequisite**: P3.3 `DMFTResult` (`docs/phase3-p33-dmft.md`)  
-**Next**: **P3.6** — mixed conventional/unconventional AL acquisition
+**Next**: Phase 3 residuals — real CTHYB launch, production GNN heads
 
 This package does **not** launch CTHYB, enumerate oxygen vacancies, or
 change ranking / Pareto maths. It fills the common `performance_score`
@@ -63,7 +63,7 @@ map from pairing eigenvalue to Tc:
 Mixed-family lists (a nitride with real EPW Tc next to a nickelate with
 a pairing proxy) are for **prioritization only**. Absolute comparability
 of the two origins is not claimed. Source-aware or family-normalized
-acquisition / axes are residual **P3.6**.
+acquisition / axes are **P3.6** (`docs/phase3-p36-mixed-al.md`).
 
 ### `pairing_symmetry`
 
@@ -196,7 +196,7 @@ after the headline source is set.
 - Non-mock `observables.json` → tagged `dmft_pairing` is exercised by a
   unit test of parse + apply. End-to-end real CTHYB launch remains
   `p3_x_real_launch`.
-- Source-aware / family-normalized AL acquisition (**P3.6**).
+- Source-aware / family-normalized AL acquisition (**P3.6** — Done; see `docs/phase3-p36-mixed-al.md`).
 - Oxygen-vacancy structure generation (**P3.5** — Done; see `docs/phase3-p35-oxygen-vacancy.md`).
 - Changing Si-feasibility science or the P2.5 process-recommendation schema.
 - Inventing a full pairing / Tc physics model.

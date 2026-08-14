@@ -1,7 +1,7 @@
 # SiSC-Forge Development Roadmap
 
-**Version 0.4.0 – Phase 2 complete + Phase 3 P3.1–P3.5**  
-Aligned with [PRD v0.4.0](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.5.0](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
+**Version 0.4.1 – Phase 2 complete + Phase 3 P3.1–P3.6 (software path)**  
+Aligned with [PRD v0.4.1](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.5.1](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
 
 Workstation production-path features (resume, trust layer, EPW coarse-k + Phase B,
 phonon-first stable_only, phonon FFT/symmetry retry, Docker QE≥7.2) are **required
@@ -173,7 +173,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 - **P3.3 Scaffold:** `DMFTResult` model + Wannier gate + mock path + optional drop-in `observables.json` parser; **full automated solid_dmft / CTHYB launch is residual** (see [phase3-p33-dmft.md](phase3-p33-dmft.md)).
 - **P3.4 Done:** Pairing eigenvalue → common `performance_score` with documented `epw_then_dmft` precedence (see [phase3-p34-pairing-score.md](phase3-p34-pairing-score.md)).
 - **P3.5 Done:** Oxygen-vacancy / infinite-layer enumeration for nickelates (see [phase3-p35-oxygen-vacancy.md](phase3-p35-oxygen-vacancy.md)).
-- **P3.6 Residual:** Mature active-learning acquisition that can handle separate or joint conventional/unconventional pools.
+- **P3.6 Done:** Mixed conventional/unconventional AL acquisition (`off` / `joint` / `separate` pools; see [phase3-p36-mixed-al.md](phase3-p36-mixed-al.md)).
 - Basic bilayer nickelate and early cuprate prototypes (optional / later).
 
 ### Dependencies
@@ -186,8 +186,8 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — Scaffold: model + Wannier gate + mock + drop-in parser; full automated solid_dmft launch residual; see docs/phase3-p33-dmft.md)**
 4. Pairing-eigenvalue extraction and mapping onto performance_score. **(P3.4 — Done; see docs/phase3-p34-pairing-score.md)**
 5. Oxygen-vacancy structure generation for nickelates. **(P3.5 — Done; see docs/phase3-p35-oxygen-vacancy.md)**
-6. AL acquisition updates for mixed or separate pools. **(P3.6 — next / residual)**
-7. Golden-system test on bulk NdNiO₂ (occupancy + mass enhancement) — residual.
+6. AL acquisition updates for mixed or separate pools. **(P3.6 — Done; see docs/phase3-p36-mixed-al.md)**
+7. Golden-system test on bulk NdNiO₂ (occupancy + mass enhancement) — residual (science + real DMFT).
 8. End-to-end strained nickelate campaign on shortlist — residual until real DMFT launch.
 
 ### What Can Be Validated Without Large-Scale Compute
@@ -195,9 +195,11 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 - A small set of strained infinite-layer candidates produces complete DMFTResult objects and is correctly ranked against nitride references.
 - AL loop can be demonstrated with synthetic or small real data mixes of conventional and unconventional results.
 
-**Exit criteria (partial)**: Nickelate candidates appear in ranked lists with both a pairing-based performance score (from mock or drop-in) and a realistic Si-feasibility score; the same ranking code handles both families without forks. Full automated solid_dmft/CTHYB and mixed AL remain open.
+**Exit criteria (partial)**: Nickelate candidates appear in ranked lists with both a pairing-based performance score (from mock or drop-in) and a realistic Si-feasibility score; the same ranking code handles both families without forks. Mixed AL acquisition (`joint` / `separate`) is shipped. Full automated solid_dmft/CTHYB and production GNN heads remain open.
 
-Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization only**. Absolute comparability of the two origins is not claimed. Source-aware / family-normalized acquisition is residual **P3.6**.
+Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization only**. Absolute comparability of the two origins is not claimed. Source-aware / family-normalized acquisition is **P3.6** (`docs/phase3-p36-mixed-al.md`).
+
+**Phase 3 software path** is complete aside from residuals: real CTHYB launch, production ALIGNN/MatGL λ/Tc GNN heads, and the golden NdNiO₂ science campaign.
 
 ---
 

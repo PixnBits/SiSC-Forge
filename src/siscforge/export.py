@@ -335,6 +335,8 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         ),
         "acquisition_score": getattr(ev, "acquisition_score", None),
         "al_selected_for_expensive": getattr(ev, "al_selected_for_expensive", None),
+        "acquisition_pool": getattr(ev, "acquisition_pool", None),
+        "acquisition_mode": getattr(ev, "acquisition_mode", None),
         "si_feasibility_total": si.total if si else None,
         "si_scorer_version": si.version if si else None,
         "si_lattice_mismatch": comps.lattice_mismatch if comps else None,
@@ -519,6 +521,8 @@ CSV_FIELDNAMES = [
     "surrogate_model_version",
     "acquisition_score",
     "al_selected_for_expensive",
+    "acquisition_pool",
+    "acquisition_mode",
     "si_feasibility_total",
     "si_scorer_version",
     "si_lattice_mismatch",
@@ -944,6 +948,9 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
 
     acq = getattr(ev, "acquisition_score", None)
     if acq is not None:
+        pool = getattr(ev, "acquisition_pool", None)
+        mode = getattr(ev, "acquisition_mode", None)
+        pool_reason = getattr(ev, "acquisition_pool_reason", None)
         lines.extend(
             [
                 "",
@@ -951,8 +958,12 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- acquisition score: {acq}",
                 f"- selected for expensive path: "
                 f"{getattr(ev, 'al_selected_for_expensive', None)}",
+                f"- pool: {pool or '—'}"
+                + (f" ({pool_reason})" if pool_reason else ""),
+                f"- acquisition mode: {mode or '—'}",
                 "- note: prioritization aid — not a measured Tc; real EPW overrides "
-                "when present",
+                "when present. Mixed conventional/unconventional lists are for "
+                "prioritization only (P3.6).",
             ]
         )
 

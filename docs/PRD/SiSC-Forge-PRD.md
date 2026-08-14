@@ -1,15 +1,21 @@
 # SiSC-Forge
 ## Product Requirements Document
 
-**Version 0.4.0 – Phase 2 complete + Phase 3 vertical slice (DFT+U → Wannier gate → DMFT scaffold → pairing score)**  
+**Version 0.4.1 – Phase 2 complete + Phase 3 software path (P3.1–P3.6)**  
 *(Extends v0.3.1 with Silicon Integration maturity (P2.1–P2.5), process-recommendation cards, and the first unconventional pathway slice. Family-mean AL surrogate remains the production prioritization model; full ALIGNN/MatGL GNN heads and real solid_dmft/CTHYB launch remain residual.)*
+
+### Changelog (v0.4.0 → v0.4.1)
+
+| Theme | What was added / corrected |
+|-------|----------------------------|
+| P3.6 | Mixed conventional/unconventional AL acquisition (`off` / `joint` / `separate` pools, quotas, provenance). Default `off` preserves pre-P3.6 rankings. |
 
 ### Changelog (v0.3.1 → v0.4.0)
 
 | Theme | What was added / corrected |
 |-------|----------------------------|
 | Phase 2 | Si component weights + YAML override + export (P2.1); multi-layer buffer stacks + chemical/thermal windows (P2.2); critical thickness (Matthews–Blakeslee / People–Bean) + membrane heuristics (P2.3); multi-objective ranking + Pareto + provenance (P2.4); process-recommendation synthesis cards + schema 1.0 freeze (P2.5) — **complete** |
-| Phase 3 partial | DFT+U + `DFTUResult` (P3.1); Wannier prep + quality metrics + `ready_for_dmft` (P3.2, residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + optional observables parser — **not** full automated solid_dmft/CTHYB) (P3.3); pairing eigenvalue → common `performance_score` with `epw_then_dmft` precedence (P3.4); oxygen-vacancy / infinite-layer enumeration (P3.5) |
+| Phase 3 partial | DFT+U + `DFTUResult` (P3.1); Wannier prep + quality metrics + `ready_for_dmft` (P3.2, residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + optional observables parser — **not** full automated solid_dmft/CTHYB) (P3.3); pairing eigenvalue → common `performance_score` with `epw_then_dmft` precedence (P3.4); oxygen-vacancy / infinite-layer enumeration (P3.5); mixed AL pools (P3.6) |
 | Status honesty | Mock DMFT numbers are illustrative; no guaranteed room-temp SC; production GNN λ/Tc heads and full real DMFT launch remain later |
 | Ranking | Ranking already consumes DMFT pairing-derived `performance_score`; process-recommendation cards exist |
 

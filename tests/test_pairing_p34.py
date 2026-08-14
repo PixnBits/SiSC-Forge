@@ -427,7 +427,8 @@ def test_docs_exist() -> None:
     assert "prioritization only" in doc
     assert "double-apply" in doc
     assert "allow_mock" in doc
-    assert "in review" in doc.lower()
+    assert "done" in doc.lower()
+    assert "P3.6" in doc
 
 
 def test_occupancy_range_validator() -> None:

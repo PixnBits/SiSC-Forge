@@ -997,11 +997,25 @@ def run_cmd(
     predictions = dict(tc_fres.predictions)
     if al_ctx.has_trained_payload:
         predictions = al_ctx.predict_many(candidates, mu_star=tc_cfg.mu_star)
+    # Resume / later cycles: on-disk EPW/DMFT scores feed pool derivation
+    # and (in joint/separate) the common performance_score axis.
+    prior_evaluations = _prior_evaluations_for_al(store, config)
+    if prior_evaluations and al_cfg.pool_mode in {"joint", "separate"}:
+        n_scored = sum(
+            1
+            for ev in prior_evaluations.values()
+            if ev.performance_score is not None
+        )
+        console.print(
+            f"[dim]AL prior evaluations:[/dim] {len(prior_evaluations)} in store "
+            f"({n_scored} with performance_score) — used for pool + mixed scoring"
+        )
     al_plan = prioritize_candidates(
         candidates,
         config=al_cfg,
         si_scores=si_by_id,
         predictions=predictions,
+        evaluations=prior_evaluations,
         model_version=al_ctx.model_version,
         training_set_size=al_ctx.training_set_size,
         bootstrap=al_ctx.bootstrap,
@@ -1016,6 +1030,9 @@ def run_cmd(
         deferred_ids=[c.candidate_id for c in al_plan.deferred],
         notes=f"campaign={config.name}",
         context=al_ctx,
+        acquisition_mode=al_plan.acquisition_mode,
+        pool_counts=al_plan.pool_counts,
+        selected_by_pool=al_plan.selected_by_pool,
     )
     registry.record_prioritization(pri_rec)
     al_plan.prioritization_record_id = pri_rec.record_id
@@ -1034,11 +1051,21 @@ def run_cmd(
     )
     acq_by_id = {r.candidate_id: r for r in al_plan.ranked}
     if al_cfg.enabled:
+        pool_bits = ""
+        if al_plan.acquisition_mode != "off":
+            sel = al_plan.selected_by_pool
+            pool_bits = (
+                f" mode={al_plan.acquisition_mode}"
+                f" pools=conv:{sel.get('conventional', 0)}"
+                f"/unconv:{sel.get('unconventional', 0)}"
+                f"/unk:{sel.get('unknown', 0)}"
+            )
         console.print(
             f"[bold]Active learning[/bold] strategy={al_cfg.strategy} "
             f"selected {len(al_plan.selected)}/{len(candidates)} for expensive path "
             f"(max_epw_jobs={al_cfg.max_epw_jobs}) "
             f"model={al_ctx.model_version} labels={al_ctx.training_set_size}"
+            f"{pool_bits}"
         )
         _print_acquisition_table(al_plan.ranked, max_rows=15)
         expensive_candidates = list(al_plan.selected)
@@ -1465,6 +1492,15 @@ def run_cmd(
                 if (al_cfg.enabled and acq is not None)
                 else None
             ),
+            "acquisition_pool": (
+                acq.pool if (al_cfg.enabled and acq is not None) else None
+            ),
+            "acquisition_mode": (
+                acq.acquisition_mode if (al_cfg.enabled and acq is not None) else None
+            ),
+            "acquisition_pool_reason": (
+                acq.pool_reason if (al_cfg.enabled and acq is not None) else None
+            ),
         }
         if pred is not None:
             updates["tc_lambda_surrogate"] = pred.model_dump(mode="json")
@@ -1804,6 +1840,7 @@ def _print_acquisition_table(
     table.add_column("Unc", justify="right")
     table.add_column("Si", justify="right")
     table.add_column("Hull*", justify="right")
+    table.add_column("Pool")
     table.add_column("EPW?")
     for i, rec in enumerate(records[:max_rows], start=1):
         table.add_row(
@@ -1818,6 +1855,7 @@ def _print_acquisition_table(
                 if rec.energy_above_hull_proxy is not None
                 else "—"
             ),
+            getattr(rec, "pool", None) or "—",
             "yes" if rec.selected_for_expensive else "defer",
         )
     if len(records) > max_rows:
@@ -1967,6 +2005,33 @@ def _resolve_run_al_root(
     return None
 
 
+def _prior_evaluations_for_al(
+    store: EvaluationStore,
+    config: CampaignConfig,
+) -> dict[str, CandidateEvaluation]:
+    """Map candidate_id → prior store evaluation for mixed-mode acquisition.
+
+    Resume / later cycles can then use ``performance_score`` (EPW Tc or
+    DMFT pairing) instead of the family-mean surrogate. Empty when the
+    store has no evaluations yet (first pass).
+    """
+    from siscforge.scoring.pairing import apply_performance_score
+
+    scoring = getattr(getattr(config.dft, "dmft", None), "scoring", None)
+    by_id: dict[str, CandidateEvaluation] = {}
+    for ev in store.load_evaluations(ranked=False):
+        # Fill a missing headline score (older stores) but never overwrite
+        # an already-stamped EPW / pairing value.
+        if ev.performance_score is None:
+            ev = apply_performance_score(
+                ev, scoring=scoring, ranking=config.ranking
+            )
+        cid = ev.candidate.candidate_id
+        if cid:
+            by_id[cid] = ev
+    return by_id
+
+
 
 @app.command("al-status")
 def al_status_cmd(
@@ -2003,6 +2068,25 @@ def al_status_cmd(
     if status.get("families_covered"):
         console.print(
             f"families={status['n_families']}: {', '.join(status['families_covered'])}"
+        )
+    pools = status.get("pools") or {}
+    if status.get("mixed_pools_used") or status.get("acquisition_mode_last") in {
+        "joint",
+        "separate",
+    }:
+        console.print(
+            f"pools=conventional:{pools.get('conventional', 0)} "
+            f"unconventional:{pools.get('unconventional', 0)} "
+            f"unknown:{pools.get('unknown', 0)}  "
+            f"last_mode={status.get('acquisition_mode_last') or '—'}"
+        )
+    elif any(int(v or 0) > 0 for v in pools.values()):
+        # Always show a one-liner when labels exist so operators can see
+        # the derived buckets even before mixed mode is turned on.
+        console.print(
+            f"[dim]pools=conventional:{pools.get('conventional', 0)} "
+            f"unconventional:{pools.get('unconventional', 0)} "
+            f"unknown:{pools.get('unknown', 0)}[/dim]"
         )
     if status.get("training_set", {}).get("by_source"):
         console.print(f"by_source={status['training_set']['by_source']}")
