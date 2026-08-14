@@ -17,6 +17,7 @@ from siscforge.active_learning import (
     prioritize_candidates,
     promote_evaluation,
     promotion_eligibility,
+    select_with_quotas,
 )
 from siscforge.export import CSV_FIELDNAMES, write_evaluations_csv, write_synthesis_cards
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
@@ -345,6 +346,40 @@ def test_separate_empty_pool_does_not_starve_present_pool() -> None:
     assert plan.selected_by_pool["unconventional"] == 0
 
 
+def test_separate_oversubscribed_quotas_truncate_to_k() -> None:
+    """Fractions summing to > 1 over-reserve then truncate by global score."""
+    nitrides = [_nitride("NbN", s) for s in (0.0, 0.01, 0.02, 0.03)]
+    nickels = [_nickelate(f"NdNiO2-{i}", cid=f"ni-over-{i}") for i in range(4)]
+    cands = nitrides + nickels
+    si = {c.candidate_id: _si(50.0) for c in cands}
+    preds = {c.candidate_id: predict_tc_lambda(c) for c in cands}
+    evals = {c.candidate_id: _epw_eval(c, tc=35.0) for c in nitrides}
+    evals.update({c.candidate_id: _pairing_eval(c, score=8.0) for c in nickels})
+    cfg = ActiveLearningConfig(
+        enabled=True,
+        max_epw_jobs=4,
+        pool_mode="separate",
+        pool_quotas=ActiveLearningPoolQuotas(
+            conventional=1.0, unconventional=1.0, unknown=0.0
+        ),
+    )
+    plan = prioritize_candidates(
+        cands, config=cfg, si_scores=si, predictions=preds, evaluations=evals
+    )
+    assert len(plan.selected) == 4
+    # Over-reservation + global-score truncate: high-scoring nitrides take all k.
+    assert plan.selected_by_pool["conventional"] == 4
+    assert plan.selected_by_pool["unconventional"] == 0
+    # Direct contract on the selector (same records, same quotas).
+    ids = select_with_quotas(
+        plan.ranked,
+        k=4,
+        quotas={"conventional": 1.0, "unconventional": 1.0, "unknown": 0.0},
+    )
+    assert len(ids) == 4
+    assert set(ids) == {c.candidate_id for c in plan.selected}
+
+
 # ---------------------------------------------------------------------------
 # Provenance + promotion hygiene
 # ---------------------------------------------------------------------------
@@ -460,3 +495,98 @@ def test_campaign_yaml_pool_mode_round_trip() -> None:
 def test_default_example_yaml_stays_off() -> None:
     cfg = CampaignConfig.from_yaml(Path("examples/nbti_n_al.yaml"))
     assert cfg.active_learning.pool_mode == "off"
+
+
+def test_mixed_example_yaml_is_separate() -> None:
+    cfg = CampaignConfig.from_yaml(Path("examples/mixed_al_pools.yaml"))
+    assert cfg.active_learning.pool_mode == "separate"
+    assert cfg.active_learning.pool_quotas.conventional == pytest.approx(0.5)
+    assert cfg.active_learning.pool_quotas.unconventional == pytest.approx(0.5)
+
+
+def test_al_status_skips_corrupt_prioritization_record(tmp_path: Path) -> None:
+    tstore = TrainingSetStore(tmp_path / "train")
+    registry = SurrogateRegistry(tmp_path / "models")
+    pri_dir = tmp_path / "models" / "prioritization"
+    pri_dir.mkdir(parents=True, exist_ok=True)
+    (pri_dir / "broken.json").write_text("{not-json", encoding="utf-8")
+    rec = build_prioritization_record(
+        model=None,
+        strategy="uncertainty_si_tc",
+        weights={},
+        ranked=[],
+        selected_ids=[],
+        deferred_ids=[],
+        acquisition_mode="joint",
+        pool_counts={"conventional": 1, "unconventional": 0, "unknown": 0},
+        selected_by_pool={"conventional": 1, "unconventional": 0, "unknown": 0},
+    )
+    registry.record_prioritization(rec)
+    status = al_status(tstore, registry)
+    assert status["acquisition_mode_last"] == "joint"
+
+
+def test_run_loop_uses_store_evaluations_for_joint_scores(tmp_path: Path) -> None:
+    """Resume path: prior EPW/DMFT scores must reach prioritize_candidates."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from siscforge.cli.main import app
+    from siscforge.store import EvaluationStore
+
+    nb = _nitride("NbN")
+    nd = _nickelate("NdNiO2", cid="ni-nd-resume")
+    out = tmp_path / "out"
+    cfg = CampaignConfig(
+        name="p36_resume",
+        dry_run=True,
+        enumeration={
+            "candidate_specs": [
+                {
+                    "formula": nb.formula,
+                    "material_family": "tm_nitride",
+                    "candidate_id": nb.candidate_id,
+                    "structure_cif": nb.structure_cif,
+                    "in_plane_strain": 0.0,
+                },
+                {
+                    "formula": nd.formula,
+                    "material_family": "nickelate",
+                    "candidate_id": nd.candidate_id,
+                    "in_plane_strain": 0.0,
+                },
+            ],
+            "max_candidates": 2,
+        },
+        active_learning={
+            "enabled": True,
+            "max_epw_jobs": 2,
+            "pool_mode": "joint",
+        },
+        formation_filter={"enabled": False},
+        output_dir=str(out),
+        export_formats=["json"],
+    )
+    yaml_path = tmp_path / "camp.yaml"
+    cfg.to_yaml(yaml_path)
+
+    store = EvaluationStore(out)
+    store.save_evaluations(
+        [_epw_eval(nb, tc=16.0), _pairing_eval(nd, score=30.0)]
+    )
+
+    result = CliRunner().invoke(
+        app, ["run", "--dry-run", str(yaml_path), "-o", str(out)]
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert "AL prior evaluations:" in result.stdout
+
+    al = json.loads((out / "active_learning.json").read_text())
+    by_id = {r["candidate_id"]: r for r in al["ranked"]}
+    assert by_id[nb.candidate_id]["score_signal"] == "performance_score"
+    assert by_id[nd.candidate_id]["score_signal"] == "performance_score"
+    assert by_id[nd.candidate_id]["predicted_tc"] == pytest.approx(30.0)
+    assert by_id[nb.candidate_id]["predicted_tc"] == pytest.approx(16.0)
+    assert by_id[nd.candidate_id]["pool"] == "unconventional"
+    assert by_id[nb.candidate_id]["pool"] == "conventional"

@@ -189,6 +189,11 @@ class ActiveLearningPoolQuotas(BaseModel):
     Slots are ``floor(fraction × k)``. Leftover batch slots fill by global
     acquisition score so an empty pool cannot starve a present one.
     Unused when ``pool_mode`` is ``off`` or ``joint``.
+
+    Fractions may sum to more than 1. Reservation then over-subscribes the
+    batch and ``select_with_quotas`` truncates the selected set to *k* by
+    global score — a high-scoring pool can still take every slot. Prefer
+    fractions that sum to ≤ 1 when you want reserved representation.
     """
 
     conventional: float = Field(default=0.5, ge=0.0, le=1.0)

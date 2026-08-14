@@ -265,6 +265,11 @@ def select_with_quotas(
 
     *quotas* maps pool name → max fraction of the batch. Missing pools
     default to 0 reserved slots (leftover-only).
+
+    If quota fractions sum to more than 1, reservation over-subscribes
+    the batch; the selected set is then truncated to *k* by global score,
+    so a high-scoring pool can still take every slot. Prefer fractions
+    that sum to ≤ 1 when you want reserved representation.
     """
     if k <= 0 or not records:
         return []

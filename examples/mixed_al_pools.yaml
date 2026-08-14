@@ -3,8 +3,11 @@
 #   siscforge run --dry-run examples/mixed_al_pools.yaml
 #
 # Demonstrates pool_mode: separate so nitrides (EPW / surrogate) and
-# nickelates (DMFT pairing) cannot starve each other. Switch to `joint`
-# for a single ranked list on the common performance_score axis.
+# nickelates (DMFT pairing) cannot starve each other. First pass ranks
+# by family + surrogate; re-running the same output_dir feeds stored
+# mock performance_scores into acquisition. Switch to `joint` for a
+# single ranked list on the common performance_score axis once those
+# bands look commensurate (see docs/phase3-p36-mixed-al.md).
 # Default campaigns omit pool_mode (off) and keep pre-P3.6 behaviour.
 #
 # See docs/phase3-p36-mixed-al.md.

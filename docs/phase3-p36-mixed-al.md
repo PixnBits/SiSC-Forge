@@ -70,14 +70,52 @@ candidates. Leftover slots fill by global acquisition score so an **empty**
 pool cannot starve a present one (a nitride-only campaign with
 `pool_mode: separate` still fills the batch from conventional).
 
+Quota fractions are each clamped to `[0, 1]` independently. They **may
+sum to more than 1**. In that case reservation over-subscribes the batch
+and the selected set is truncated to `k` by global score — a high-scoring
+pool can still take every slot. Prefer fractions that sum to ≤ 1 when you
+want reserved representation.
+
 ## Wiring
 
 - `siscforge run --al-root` reads `active_learning.pool_mode` and writes
   pool + mode onto `AcquisitionRecord`, `PrioritizationRecord`, and
   `CandidateEvaluation` (`acquisition_pool`, `acquisition_mode`,
   `acquisition_pool_reason`).
+- When the campaign store already contains evaluations (resume, a previous
+  cycle in the same `output_dir`, or seeded results), `run` loads them and
+  passes them to `prioritize_candidates`. In `joint` / `separate` those
+  `performance_score`s become the Tc-like input, and pool derivation can
+  use source / pathway signals instead of family alone.
+- First-pass (empty store) still buckets by family and scores with the
+  surrogate. The common `performance_score` axis is therefore an
+  **operator workflow** once some EPW/DMFT results exist — not only a
+  public-API / unit-test path.
 - Promotion gate and mock-refusal hygiene from Phase 1.5 are **unchanged**.
 - Ranker / Pareto still see only `performance_score` (P3.4) — no family forks.
+
+## Scale / bias (P3.4 proxy)
+
+P3.4 maps a pairing eigenvalue λ = 1 → **25 K** (ceiling **40 K**) so a
+“just-unstable” signal sits in the middle of the conventional screening
+band. See `docs/phase3-p34-pairing-score.md` (“Why 25 / 40”). Mixed lists
+remain **prioritization only** — absolute comparability of EPW Tc and a
+pairing proxy is not claimed.
+
+**Recommendation:** start mixed campaigns in `separate` mode until the
+relative scales of real EPW Tcs vs pairing proxies have been observed in
+*this* campaign. Switch to `joint` only after those bands look
+commensurate enough for a single ranked list.
+
+## Uncertainty
+
+Even when `performance_score` is substituted as the Tc-like term,
+**uncertainty still comes from the conventional `TcLambdaPrediction`**
+(family-mean heuristic or trained nitride-style model). For
+unconventional candidates that value is poorly calibrated relative to
+DMFT epistemic uncertainty and should not be read as a pairing-error
+bar. Pathway-aware uncertainty is a later residual once real DMFT labels
+exist.
 
 ## Export / observability
 
@@ -94,13 +132,18 @@ pools have labels) it also prints `last_mode`.
 
 - Mixed lists are for **prioritization only**. Absolute comparability of
   EPW Tc and a DMFT pairing proxy is not claimed (same caveat as P3.4).
-- First-pass acquisition without prior evaluations buckets by family.
+- First-pass acquisition without prior evaluations buckets by family and
+  uses the surrogate Tc. Resume / later cycles in the same store pick up
+  EPW/DMFT `performance_score`s automatically.
+- Uncertainty is always the conventional surrogate’s (see above).
 - `unknown` has no reserved quota by default (leftover-only).
+- Quota fractions summing to > 1 over-reserve then truncate (see Quotas).
 - No TRIQS hard dependency. No production ALIGNN/MatGL heads. No Josephson.
 
 ## Residual (not this package)
 
 - Automated solid_dmft / CTHYB launch (`p3_x_real_launch`)
 - Production GNN λ/Tc heads
+- Pathway-aware (DMFT) uncertainty
 - Full NdNiO₂ literature-golden recovery campaign (science + compute)
 - Josephson (Phase 4)

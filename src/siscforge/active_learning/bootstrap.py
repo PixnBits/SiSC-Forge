@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
+from pydantic import ValidationError
+
+from siscforge.active_learning.training_set import TrainingSetStore, hash_examples
 from siscforge.models.active_learning import (
     PrioritizationRecord,
     SurrogateModelMetadata,
@@ -23,7 +27,6 @@ from siscforge.models.active_learning import (
     TrainingSetSnapshot,
 )
 from siscforge.models.candidate import StructureCandidate
-from siscforge.active_learning.training_set import TrainingSetStore, hash_examples
 from siscforge.surrogates.tc_lambda import TcLambdaPrediction, predict_tc_lambda
 
 # Bootstrap thresholds (design note §6 / Specs §2.2.4)
@@ -183,15 +186,24 @@ class SurrogateRegistry:
         return meta
 
     def list_prioritization_records(self, *, limit: int = 20) -> list[PrioritizationRecord]:
-        """Newest-first audit log (mtime). Empty if none written yet."""
+        """Newest-first audit log (mtime). Empty if none written yet.
+
+        Unreadable or invalid JSON files are skipped so one corrupt
+        record cannot break ``al-status``.
+        """
         root = self.root / "prioritization"
         if not root.is_dir():
             return []
         paths = sorted(root.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         out: list[PrioritizationRecord] = []
-        for path in paths[: max(0, int(limit))]:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            out.append(PrioritizationRecord.model_validate(raw))
+        for path in paths:
+            if len(out) >= max(0, int(limit)):
+                break
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                out.append(PrioritizationRecord.model_validate(raw))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError):
+                continue
         return out
 
     def record_prioritization(self, record: PrioritizationRecord) -> Path:
@@ -428,7 +440,7 @@ def al_status(
     try:
         recs = registry.list_prioritization_records(limit=1)
         latest_pri = recs[0] if recs else None
-    except Exception:
+    except OSError:
         latest_pri = None
     last_mode = getattr(latest_pri, "acquisition_mode", None) if latest_pri else None
     last_selected_by_pool = (

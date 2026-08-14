@@ -10,7 +10,7 @@ pre-P3.6 scores and top-k. No CTHYB launch, no GNN heads.
 |------|----------|
 | Pool derivation | `siscforge.active_learning.pools.derive_pool` |
 | Quotas | `select_with_quotas` (`floor(frac × k)` + leftover fill) |
-| Acquisition | `prioritize_candidates` honours `ActiveLearningConfig.pool_mode` |
+| Acquisition | `prioritize_candidates` honours `ActiveLearningConfig.pool_mode`; `siscforge run` loads store evaluations so resume/later cycles can use `performance_score` |
 | Config | `pool_mode`, `pool_quotas` (inert default `off`) |
 | Provenance | `AcquisitionRecord` / `PrioritizationRecord` / evaluation fields |
 | Export | CSV + synthesis cards: `acquisition_pool`, `acquisition_mode` |

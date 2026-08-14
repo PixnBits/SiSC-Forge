@@ -997,11 +997,25 @@ def run_cmd(
     predictions = dict(tc_fres.predictions)
     if al_ctx.has_trained_payload:
         predictions = al_ctx.predict_many(candidates, mu_star=tc_cfg.mu_star)
+    # Resume / later cycles: on-disk EPW/DMFT scores feed pool derivation
+    # and (in joint/separate) the common performance_score axis.
+    prior_evaluations = _prior_evaluations_for_al(store, config)
+    if prior_evaluations and al_cfg.pool_mode in {"joint", "separate"}:
+        n_scored = sum(
+            1
+            for ev in prior_evaluations.values()
+            if ev.performance_score is not None
+        )
+        console.print(
+            f"[dim]AL prior evaluations:[/dim] {len(prior_evaluations)} in store "
+            f"({n_scored} with performance_score) — used for pool + mixed scoring"
+        )
     al_plan = prioritize_candidates(
         candidates,
         config=al_cfg,
         si_scores=si_by_id,
         predictions=predictions,
+        evaluations=prior_evaluations,
         model_version=al_ctx.model_version,
         training_set_size=al_ctx.training_set_size,
         bootstrap=al_ctx.bootstrap,
@@ -1989,6 +2003,33 @@ def _resolve_run_al_root(
     if config_al_root:
         return Path(config_al_root)
     return None
+
+
+def _prior_evaluations_for_al(
+    store: EvaluationStore,
+    config: CampaignConfig,
+) -> dict[str, CandidateEvaluation]:
+    """Map candidate_id → prior store evaluation for mixed-mode acquisition.
+
+    Resume / later cycles can then use ``performance_score`` (EPW Tc or
+    DMFT pairing) instead of the family-mean surrogate. Empty when the
+    store has no evaluations yet (first pass).
+    """
+    from siscforge.scoring.pairing import apply_performance_score
+
+    scoring = getattr(getattr(config.dft, "dmft", None), "scoring", None)
+    by_id: dict[str, CandidateEvaluation] = {}
+    for ev in store.load_evaluations(ranked=False):
+        # Fill a missing headline score (older stores) but never overwrite
+        # an already-stamped EPW / pairing value.
+        if ev.performance_score is None:
+            ev = apply_performance_score(
+                ev, scoring=scoring, ranking=config.ranking
+            )
+        cid = ev.candidate.candidate_id
+        if cid:
+            by_id[cid] = ev
+    return by_id
 
 
 
