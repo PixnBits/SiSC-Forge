@@ -1,8 +1,18 @@
 # SiSC-Forge
 ## Technical Specifications
 
-**Version 0.5.2 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 P4.1**  
-*(Extends v0.5.1 with Josephson Tier-1 analytic estimates. Module remains inert unless `josephson.enabled`. Usadel/BdG and fabrication heuristics remain later.)*
+**Version 0.5.3 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 Tier-1 (P4.1–P4.2)**  
+*(Extends v0.5.2 with P4.2 fabrication-compatibility heuristics and the
+Tier-1 exit checklist. Module remains inert unless `josephson.enabled`.
+Usadel/BdG remain later.)*
+
+### Changelog (v0.5.2 → v0.5.3)
+
+| Area | Added / tightened |
+|------|-------------------|
+| §2.8 / §3.5 / §11 | P4.2 fabrication hints + presentation-only secondary sort recorded as shipped |
+| Acceptance | Phase 4 **Tier-1 exit met**; Usadel/BdG residual (not fabrication) |
+| Docs | `docs/phase4-exit.md` |
 
 ### Changelog (v0.5.1 → v0.5.2)
 
@@ -11,7 +21,7 @@
 | §2.8 Josephson | P4.1 Tier-1 Ambegaokar–Baratoff / BCS-from-Tc; units; inert default |
 | §3.5 JosephsonMetrics | Implemented field list (gap meV, IcRn mV, Jc, EJ) |
 | §5.4 Config | `shortlist_only`, `rna_ohm_um2`, `bcs_gap_ratio` |
-| Acceptance | P4.1 shipped; Usadel / fabrication engine remain open |
+| Acceptance | P4.1 shipped; Usadel remains open (fabrication engine is P4.2) |
 
 ### Changelog (v0.5.0 → v0.5.1)
 
@@ -305,8 +315,8 @@ BCS-from-Tc metrics to the top-N ranked evaluations.
   ramp-edge labels and BEOL / thermal flags by reusing Si-feasibility
   signals. Usadel and BdG remain later.
 
-See `docs/phase4-p41-josephson-tier1.md` and
-`docs/phase4-p42-fabrication.md`.
+See `docs/phase4-p41-josephson-tier1.md`,
+`docs/phase4-p42-fabrication.md`, and `docs/phase4-exit.md`.
 
 
 ### 2.9 Docker / distribution
@@ -397,8 +407,11 @@ fields: `approximate` (always true), `status`, `method`, `model_tier`,
 `quality_tag`, `gap_meV`, `gap_source`, `tc_used_K`, `tc_source`,
 `icrn_mV`, `jc_A_per_cm2`, `switching_energy_eV`, `ej_K`, `ic_uA`,
 `reference_area_um2`, `rna_ohm_um2`, `temperature_K`, `formula_tags`,
-`notes`, `assumptions`, `raw`, `provenance`. Ranking-only; never a
-device-design value.
+`notes`, `assumptions`, `raw`, `provenance`. P4.2 adds nested
+`fabrication` (`JosephsonFabricationHints`) plus optional
+`secondary_order` / `secondary_ranking` when the presentation sort
+runs. Ranking-only; never a device-design value. Not process
+qualification.
 
 
 ### 3.6 Active-learning objects (notes for implementers)
@@ -561,7 +574,7 @@ josephson:
 ## 10. Explicit Limitations
 
 - Auto-raised nkc and `search_shells` **do not** guarantee physical λ/Tc; screening Wannier remains `proj=random`.
-- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, full real DMFT launch, Josephson Usadel/BdG: **later**. Tier-1 Josephson analytics are P4.1 (inert unless enabled).
+- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, full real DMFT launch, Josephson Usadel/BdG: **later**. Tier-1 Josephson analytics (P4.1) and fabrication heuristics (P4.2) are shipped (inert unless enabled). See `docs/phase4-exit.md`.
 - After Phase A+B exhaustion, further EPW success may require human projections or different cells; DFPT remains valuable for stability gating.
 - Screening q=2³ phonon stability can false-positive/false-negative; denser DFPT required before citing dynamical stability.
 - Resume covers common cases; exotic partial files or external manual edits may still need operator intervention (documented in implementation-notes).
@@ -585,8 +598,8 @@ josephson:
 
 **Phase 3** — Unconventional pathway: P3.1–P3.6 software path shipped (DMFT is scaffold); full real solid_dmft + production GNN residual.
 
-**Phase 4** — P4.1 Josephson Tier-1 analytic estimates on shortlist (inert default); later Usadel/BdG and fabrication engine.
+**Phase 4** — **Tier-1 complete** (P4.1–P4.2): analytic Josephson estimates + fabrication heuristics on shortlist (inert default). Later Usadel/BdG. See `docs/phase4-exit.md`.
 
 ---
 
-*This document (v0.5.2) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1–P4.2). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson is inert unless `josephson.enabled`. PRD v0.4.3 is the product authority; this file is the engineering contract.*
+*This document (v0.5.3) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1–P4.2). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson is inert unless `josephson.enabled`. PRD v0.4.3 is the product authority; this file is the engineering contract.*

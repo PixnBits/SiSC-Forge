@@ -5,7 +5,8 @@ analytics, inert-by-default attachment, caveated export
 **Prerequisite**: Phase 1 conventional Tc (`ElectronPhononResult`) and
 Phase 2 ranking / export  
 **Next**: P4.2 fabrication-compatibility heuristics (**done** —
-`docs/phase4-p42-fabrication.md`); later Tier-2 Usadel / Tier-3 BdG
+`docs/phase4-p42-fabrication.md`); later Tier-2 Usadel / Tier-3 BdG.
+Tier-1 exit: `docs/phase4-exit.md`.
 
 This package does **not** implement Usadel, BdG, a fabrication rule
 engine, or any ranker fork. DMFT `performance_score` is **not** a gap.
