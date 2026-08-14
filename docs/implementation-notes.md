@@ -5,7 +5,7 @@
 **Scope**: First-class, opt-in structure generation for infinite-layer
 RNiO₂ (Nd/Pr/La) plus a **curated** O-vacancy / apical-O set. Ordinary
 `StructureCandidate`s; no ranking / pairing / AL / DMFT-launch changes.
-Status in README/ROADMAP is **this PR / pending merge** until #15 lands.
+Status: **shipped on main** (P3.5 complete).
 
 | Item | Location |
 |------|----------|
@@ -289,7 +289,7 @@ No material-specific projections, DMFT, or Josephson.
 | Shell ladder | `next_search_shells_after_bvector_failure` (36, 48) |
 | Planner | `plan_kmesh_remediation` → Phase A `nkc` then Phase B `search_shells` |
 | Loop / resume | `_retry_epw_with_denser_k`, prior-`epw.out` path in `run_relax_scf_phonon_epw` |
-| Sidecar phases | `siscforge_epw_remediation.json` field `phase`: `nkc` \| `search_shells` |
+| Sidecar phases | `siscforge_epw_remediation.json` field `phase`: `nkc` | `search_shells` |
 | Config | `auto_retry_search_shells`, `max_search_shells_retries` (default 2) |
 | Tests | `tests/test_epw_coarse_k.py` (Phase B plan, anti-loop, EPW-only) |
 

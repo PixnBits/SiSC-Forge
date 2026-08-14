@@ -1,7 +1,7 @@
 # P3.5 — Oxygen-vacancy enumeration for infinite-layer nickelates
 
-**Status**: this PR (pending merge)  
-**Prerequisite**: P3.1–P3.4 on main (this package does **not** change them)  
+**Status**: **Done** (shipped on main)  
+**Prerequisite**: P3.1–P3.4 on main  
 **Next**: **P3.6** — mixed conventional / unconventional AL acquisition
 
 This package adds a **first-class structure-generation option** for
@@ -139,7 +139,7 @@ consistent with nitride enumeration.
 ## Downstream
 
 Ranking continues to use generic `performance_score` + Si total.
-DFT+U / Wannier / DMFT remain optional later-path consumers; this PR
+DFT+U / Wannier / DMFT remain optional later-path consumers; this package
 only needs candidates that *can* enter those paths.
 
 ## Acceptance checks
