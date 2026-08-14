@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,8 @@ def test_rank_help() -> None:
 def test_run_help() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--dry-run" in result.stdout
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
+    assert "--dry-run" in plain
 
 
 def test_enumerate_writes_json(tmp_path: Path) -> None:
