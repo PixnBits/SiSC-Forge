@@ -1,7 +1,7 @@
 # SiSC-Forge Development Roadmap
 
-**Version 0.4.2 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 P4.1**  
-Aligned with [PRD v0.4.1](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.5.1](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
+**Version 0.4.3 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 Tier-1 (P4.1–P4.2)**  
+Aligned with [PRD v0.4.3](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.5.3](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
 
 Workstation production-path features (resume, trust layer, EPW coarse-k + Phase B,
 phonon-first stable_only, phonon FFT/symmetry retry, Docker QE≥7.2) are **required
@@ -203,8 +203,10 @@ Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization on
 
 ---
 
-## Phase 4 — Device-Level (Josephson) Modeling
+## Phase 4 — Device-Level (Josephson) Modeling — **TIER-1 COMPLETE**
 **Goal**: Add practical JJ figures of merit so that the highest-ranked, most Si-compatible candidates can also be filtered by approximate device performance.
+
+**Status**: **Tier-1 shipped** (P4.1–P4.2). Exit checklist: [phase4-exit.md](phase4-exit.md). Usadel / BdG remain later.
 
 ### Key Deliverables
 - Josephson Junction Device Modeling module (§2.8 of Technical Specifications). **(P4.1 + P4.2)**
@@ -230,7 +232,8 @@ Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization on
 7. Unit + regression tests on Nb, NbN, MgB₂ (order-of-magnitude recovery). **(P4.1 — done)**
 8. (Later) Usadel solver wrapper and geometry parameters.
 
-See [phase4-p41-josephson-tier1.md](phase4-p41-josephson-tier1.md) and
+See [phase4-exit.md](phase4-exit.md),
+[phase4-p41-josephson-tier1.md](phase4-p41-josephson-tier1.md) and
 [phase4-p42-fabrication.md](phase4-p42-fabrication.md).
 
 ### What Can Be Validated Without Large-Scale Compute
@@ -239,7 +242,7 @@ See [phase4-p41-josephson-tier1.md](phase4-p41-josephson-tier1.md) and
 - Synthesis cards and JSON exports correctly surface the metrics with “approximate” labeling.
 - Changing the shortlist size or enabling/disabling the module via YAML behaves as specified.
 
-**Exit criteria (partial)**: Top-ranked Si-compatible candidates can carry useful, clearly caveated JJ metrics **and** fabrication-class / thermal hints when `josephson.enabled` is set; the module remains completely inert when disabled. Usadel/BdG remain later.
+**Exit criteria (partial / Tier-1 met)**: Top-ranked Si-compatible candidates can carry useful, clearly caveated JJ metrics **and** fabrication-class / thermal hints when `josephson.enabled` is set; the module remains completely inert when disabled. Usadel/BdG remain later. **Met for the analytic path** — see [phase4-exit.md](phase4-exit.md).
 
 ---
 
@@ -263,7 +266,7 @@ See [phase4-p41-josephson-tier1.md](phase4-p41-josephson-tier1.md) and
 | 1.5   | AL bootstrap (seed, first surrogate, interleaved cycles) | ongoing / parallel | Workstation |
 | 2     | Silicon Integration + ranking      | 3–6 weeks (**complete**) | Workstation |
 | 3     | Unconventional (DMFT) + AL maturity| 3–4 months       | Small → medium HPC    |
-| 4     | Josephson device metrics           | 2–4 months       | Mostly shortlist / analytic |
+| 4     | Josephson device metrics (Tier-1 complete; Usadel later) | 2–4 months       | Mostly shortlist / analytic |
 
 Phases 0–2 can (and should) be completed and scientifically validated before any large allocation is required. Phase 3 and 4 benefit from HPC but are designed so that the critical path and acceptance tests remain accessible on modest resources.
 

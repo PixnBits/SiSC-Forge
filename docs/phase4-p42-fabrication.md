@@ -5,6 +5,7 @@ thermal flags, stack notes, optional soft shortlist sort
 **Prerequisite**: P4.1 (`docs/phase4-p41-josephson-tier1.md`) and Phase 2
 Si-feasibility (process-temp ceiling, chemical flags, stacks, membrane)  
 **Next**: Tier-2 Usadel / Tier-3 BdG (later Phase 4). No foundry PDK.
+Tier-1 exit: `docs/phase4-exit.md`.
 
 This package does **not** implement Usadel, BdG, a process PDK, or any
 change to Ambegaokar–Baratoff / BCS / Si-score / `composite_score`

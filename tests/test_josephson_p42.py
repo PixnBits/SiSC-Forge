@@ -524,6 +524,15 @@ def test_docs_exist() -> None:
     roadmap = (ROOT / "docs" / "ROADMAP.md").read_text()
     assert "P4.2" in roadmap
     assert "done" in roadmap.lower()
+    exit_doc = (ROOT / "docs" / "phase4-exit.md").read_text()
+    assert "Tier-1" in exit_doc
+    assert "Usadel" in exit_doc
+    assert "not process qualification" in exit_doc.lower()
+    assert "phase4-p41-josephson-tier1" in exit_doc
+    assert "phase4-p42-fabrication" in exit_doc
+    readme = (ROOT / "README.md").read_text()
+    assert "Tier-1 complete" in readme
+    assert "Usadel residual" in readme
 
 
 def test_hints_round_trip() -> None:

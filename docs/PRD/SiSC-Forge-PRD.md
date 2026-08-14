@@ -1,10 +1,10 @@
 # SiSC-Forge
 ## Product Requirements Document
 
-**Version 0.4.3 – Phase 2 complete + Phase 3 software path (P3.1–P3.6) + P4.1 + P4.2**  
+**Version 0.4.3 – Phase 2 complete + Phase 3 software path (P3.1–P3.6) + Phase 4 Tier-1 (P4.1 + P4.2)**  
 *(Extends v0.4.2 with fabrication-compatibility heuristics and an optional
 Josephson shortlist presentation sort. Module remains inert unless enabled.
-Usadel/BdG remain later.)*
+Tier-1 analytic path is complete; Usadel/BdG remain later.)*
 
 ### Changelog (v0.4.2 → v0.4.3)
 
@@ -58,7 +58,7 @@ Usadel/BdG remain later.)*
 ## 1. Vision & Problem Statement
 
 **Vision**  
-SiSC-Forge is a modular, open-source, high-throughput computational discovery platform that systematically identifies, evaluates, and ranks silicon-compatible materials with potential for elevated-temperature (ideally ambient) superconductivity suitable for Josephson-junction-based logic. By tightly coupling structure enumeration, graph-neural-network surrogates, first-principles electron-phonon (EPW) and dynamical-mean-field (DMFT) calculations, silicon-process-aware feasibility scoring, and (in later phases) simple device-level Josephson metrics, the platform converts available compute into experimentally actionable candidate lists optimized for CMOS-compatible processes.
+SiSC-Forge is a modular, open-source, high-throughput computational discovery platform that systematically identifies, evaluates, and ranks silicon-compatible materials with potential for elevated-temperature (ideally ambient) superconductivity suitable for Josephson-junction-based logic. By tightly coupling structure enumeration, graph-neural-network surrogates, first-principles electron-phonon (EPW) and dynamical-mean-field (DMFT) calculations, silicon-process-aware feasibility scoring, and optional Tier-1 analytic Josephson metrics (Usadel/BdG later), the platform converts available compute into experimentally actionable candidate lists optimized for CMOS-compatible processes.
 
 The software is designed to be fully productive on a single high-end workstation for method development and small campaigns, and ready to scale the moment large-scale compute becomes available.
 
@@ -76,7 +76,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Support continuous active-learning loops that improve graph-neural-network surrogates from new high-fidelity data, **starting from a small, diverse seed set** (literature + goldens + early project EPW results).
 - Interleaved cycle: prioritize → calculate (screening or production quality) → promote clean labels → retrain/update surrogate → re-prioritize. Full batch collection of hundreds of labels is **not** a prerequisite for useful prioritization.
 - Export synthesis-relevant metadata (thermodynamic stability, thermal budgets, preferred buffer stacks, oxygen/nitrogen windows, lattice-mismatch data).
-- Provide a clear, extensible path to simple Josephson-junction device metrics (critical current, Ic Rn, gap, switching energy) in later versions.
+- Provide optional Tier-1 analytic Josephson-junction device metrics (critical current, IcRn, gap, switching energy) — **shipped**; Usadel/BdG remain later.
 - Run productively on a single high-end workstation for development and validation; scale transparently to institutional clusters and cloud HPC with the same codebase and campaign YAML.
 - Maintain a fully functional open-source primary path (Quantum ESPRESSO + EPW + TRIQS + pymatgen + jobflow + ALIGNN/MatGL-style models). VASP is optional and feature-flagged.
 - **Workstation production path (must):** support multi-day DFPT and multi-candidate maps with resume, mid-step checkpoints, honest failure classification, EPW-only remediation after finished DFPT, phonon-first stability gating, and result-quality trust so pathological screening numbers do not dominate ranking.
@@ -110,7 +110,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Produce ranked candidate lists for nitride alloy + strain campaigns in which known experimentally successful films appear in the top 15 % by composite score.
 - Demonstrate that the Silicon Feasibility Score correlates qualitatively with published growth success rates.
 - Pathological screening EPW results (inflated λ/Tc with imaginary modes or bad Wannier) **must not dominate ranking** without quality flags / penalties (“do not cite” semantics).
-- (Later) Simple Josephson metrics for top candidates are consistent with order-of-magnitude experimental values where available.
+- Tier-1 Josephson metrics for top candidates are consistent with order-of-magnitude experimental values where available (factor ~2–3). Usadel/BdG remain later.
 
 **Active-learning / Surrogate**
 - A first usable λ/Tc (or performance) prioritization surrogate exists after ≤150 high-quality project + literature labels and demonstrably improves shortlist quality over pure heuristics.
@@ -173,11 +173,13 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Process-recommendation synthesis cards + frozen schema `1.0` (`process_recommendations.json`) (P2.5).
 - (Deferred from P2) interface-slab DFT, FEM membrane mechanics, CALPHAD — later.
 
-**P3 – Unconventional Pathway (in progress) + Device-Aware Ranking (later)**
-- **Shipped (P3.1–P3.5):** DFT+U + `DFTUResult`; Wannier prep + `ready_for_dmft` gate (residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + drop-in parser — **not** full automated solid_dmft/CTHYB launch); pairing eigenvalue → common `performance_score` with documented precedence; oxygen-vacancy / infinite-layer enumeration for nickelates.
-- **Residual / next:** P3.6 mixed conventional/unconventional AL acquisition; full real solid_dmft / CTHYB launch (`p3_x_real_launch`); production GNN λ/Tc heads (ALIGNN/MatGL); material-specific production Wannier libraries.
-- **P4.1 (shipped):** Simple Josephson-junction Tier-1 analytics (IcRn, Jc proxy, gap, switching energy) — approximate / ranking only; inert unless enabled.
-- **Later (Phase 4+):** Fabrication heuristics, Usadel/BdG; anisotropic Eliashberg / SCDFT; proximity refinements; generative models, web dashboard.
+**P3 – Unconventional Pathway — software path shipped (P3.1–P3.6)**
+- **Shipped (P3.1–P3.6):** DFT+U + `DFTUResult`; Wannier prep + `ready_for_dmft` gate (residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + drop-in parser — **not** full automated solid_dmft/CTHYB launch); pairing eigenvalue → common `performance_score` with documented precedence; oxygen-vacancy / infinite-layer enumeration for nickelates; mixed conventional/unconventional AL acquisition (`off` / `joint` / `separate`).
+- **Residual:** full real solid_dmft / CTHYB launch (`p3_x_real_launch`); production GNN λ/Tc heads (ALIGNN/MatGL); material-specific production Wannier libraries; NdNiO₂ science golden.
+
+**P4 – Device-Aware Ranking — Tier-1 complete (P4.1–P4.2)**
+- **Shipped:** `JosephsonMetrics` + Ambegaokar–Baratoff / BCS-from-Tc analytics; fabrication-compatibility heuristics (SIS / SNS / ramp-edge, BEOL / thermal); optional presentation-only secondary sort. Approximate / ranking only; inert unless enabled. Not process qualification.
+- **Later (Phase 4 residual):** Tier-2 Usadel, Tier-3 BdG; full PDK rule decks; anisotropic Eliashberg / SCDFT; proximity refinements; generative models, web dashboard.
 
 ## 6. User Stories / Key Workflows
 
@@ -285,7 +287,7 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 - **v0.1+ / desktop production path (shipped alongside Phase 1)** — EPW + isotropic Tc, trust layer, resume/checkpoint, shortlist/refine, phonon-first + stable_only, EPW coarse-k + Phase B shells, phonon FFT/symmetry retry, Docker QE≥7.2, Si 45°/buffers.
 - **v0.5 (Conventional Production polish + AL bootstrap)** — Seed-set management, first trained λ/Tc surrogates, interleaved retrain cycles, bootstrap observability, hand-tuned Wannier for production shortlists, denser automated grid policies with stronger validation.
 - **v1.0 (Dual Pathway + Advanced Si)** — DMFT + pairing for nickelates, full interface/membrane modeling, multi-objective ranking, synthesis cards.
-- **v1.x+** — Simple Josephson device metrics, anisotropic/SCDFT, proximity refinements, generative models, web UI, community contributions.
+- **v1.x+** — Usadel/BdG Josephson backends, anisotropic/SCDFT, proximity refinements, generative models, web UI, community contributions.
 
 ### Explicit later (not blocking workstation production path)
 
@@ -299,4 +301,4 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 
 ---
 
-*This PRD (v0.4.0) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document, the companion Technical Specifications, and the design note `docs/design/active-learning-flywheel.md`. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28); this PRD states the requirements those slices satisfy.*
+*This PRD (v0.4.3) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document, the companion Technical Specifications, and the design note `docs/design/active-learning-flywheel.md`. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1–P4.2); this PRD states the requirements those slices satisfy. Phase 4 Tier-1 exit: `docs/phase4-exit.md`.*
