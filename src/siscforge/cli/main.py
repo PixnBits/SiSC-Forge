@@ -43,6 +43,7 @@ from siscforge.export import (
     write_evaluations_json,
     write_synthesis_cards,
 )
+from siscforge.josephson import attach_josephson_metrics
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import CampaignConfig, RunConfig
 from siscforge.models.provenance import Provenance
@@ -279,6 +280,8 @@ def rank_cmd(
     ranked = rank_evaluations(
         evaluations, ranking_cfg, stable_first=stable_first
     )
+    if camp is not None:
+        ranked = attach_josephson_metrics(ranked, camp.josephson)
     _print_rank_table(ranked, title="Ranked candidates", ranking_config=ranking_cfg)
 
     if output is not None:
@@ -1768,6 +1771,7 @@ def run_cmd(
     ranked = rank_evaluations(
         evaluations, config.ranking, stable_first=phonon_only
     )
+    ranked = attach_josephson_metrics(ranked, config.josephson)
     store.save_evaluations(ranked, ranked=True)
     store.save_evaluations(ranked, ranked=False)  # canonical evaluations.json
     store.save_campaign(config)

@@ -490,6 +490,47 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
             if getattr(ev, "dmft", None) is not None
             else ""
         ),
+        # P4.1 Josephson Tier-1 (empty when disabled / absent)
+        "josephson_approximate": (
+            True
+            if getattr(ev, "josephson", None) is not None
+            else None
+        ),
+        "josephson_status": (
+            ev.josephson.status if getattr(ev, "josephson", None) is not None else ""
+        ),
+        "josephson_gap_meV": (
+            ev.josephson.gap_meV if getattr(ev, "josephson", None) is not None else None
+        ),
+        "josephson_gap_source": (
+            (ev.josephson.gap_source or "")
+            if getattr(ev, "josephson", None) is not None
+            else ""
+        ),
+        "josephson_tc_used_K": (
+            ev.josephson.tc_used_K
+            if getattr(ev, "josephson", None) is not None
+            else None
+        ),
+        "josephson_icrn_mV": (
+            ev.josephson.icrn_mV if getattr(ev, "josephson", None) is not None else None
+        ),
+        "josephson_jc_A_per_cm2": (
+            ev.josephson.jc_A_per_cm2
+            if getattr(ev, "josephson", None) is not None
+            else None
+        ),
+        "josephson_switching_energy_eV": (
+            ev.josephson.switching_energy_eV
+            if getattr(ev, "josephson", None) is not None
+            else None
+        ),
+        "josephson_method": (
+            ev.josephson.method if getattr(ev, "josephson", None) is not None else ""
+        ),
+        "josephson_notes": (
+            ev.josephson.notes if getattr(ev, "josephson", None) is not None else ""
+        ),
     }
 
 
@@ -591,6 +632,16 @@ CSV_FIELDNAMES = [
     "dmft_leading_pairing_eigenvalue",
     "dmft_pairing_symmetry",
     "dmft_summary",
+    "josephson_approximate",
+    "josephson_status",
+    "josephson_gap_meV",
+    "josephson_gap_source",
+    "josephson_tc_used_K",
+    "josephson_icrn_mV",
+    "josephson_jc_A_per_cm2",
+    "josephson_switching_energy_eV",
+    "josephson_method",
+    "josephson_notes",
 ]
 
 
@@ -1176,6 +1227,37 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 "is **not** from DMFT pairing "
                 f"(source=`{src or '—'}`)."
             )
+
+    jj = getattr(ev, "josephson", None)
+    if jj is not None:
+        lines.extend(
+            [
+                "",
+                "#### Josephson metrics (P4.1) — **approximate / ranking only**",
+                "- **caveat**: Tier-1 analytic estimates "
+                "(Ambegaokar–Baratoff + documented geometry). "
+                "**Not** a device-design value. Do not cite as measured Ic / Jc.",
+                f"- approximate: **{bool(getattr(jj, 'approximate', True))}**",
+                f"- gap Δ (meV): {_fmt_num(getattr(jj, 'gap_meV', None))} "
+                f"({getattr(jj, 'gap_source', None) or '—'})",
+                f"- Tc used (K): {_fmt_num(getattr(jj, 'tc_used_K', None))} "
+                f"({getattr(jj, 'tc_source', None) or '—'})",
+                f"- IcRn (mV): {_fmt_num(getattr(jj, 'icrn_mV', None))} "
+                f"[Ambegaokar–Baratoff]",
+                f"- Jc proxy (A/cm²): {_fmt_num(getattr(jj, 'jc_A_per_cm2', None))} "
+                f"(RnA={_fmt_num(getattr(jj, 'rna_ohm_um2', None))} Ω·μm²)",
+                f"- switching / EJ (eV): {_fmt_num(getattr(jj, 'switching_energy_eV', None))} "
+                f"(EJ/kB={_fmt_num(getattr(jj, 'ej_K', None))} K; "
+                f"A={_fmt_num(getattr(jj, 'reference_area_um2', None))} μm²)",
+                f"- method / tier: {getattr(jj, 'method', '—')} / "
+                f"{getattr(jj, 'model_tier', '—')}",
+                f"- status / quality: {getattr(jj, 'status', '—')} / "
+                f"{getattr(jj, 'quality_tag', '—')}",
+                f"- summary: {jj.summary_line() if hasattr(jj, 'summary_line') else '—'}",
+            ]
+        )
+        if getattr(jj, "notes", None):
+            lines.append(f"- notes: {jj.notes}")
 
     if ev.notes:
         lines.extend(["", f"_Notes: {ev.notes}_"])

@@ -1,8 +1,14 @@
 # SiSC-Forge
 ## Product Requirements Document
 
-**Version 0.4.1 – Phase 2 complete + Phase 3 software path (P3.1–P3.6)**  
-*(Extends v0.3.1 with Silicon Integration maturity (P2.1–P2.5), process-recommendation cards, and the first unconventional pathway slice. Family-mean AL surrogate remains the production prioritization model; full ALIGNN/MatGL GNN heads and real solid_dmft/CTHYB launch remain residual.)*
+**Version 0.4.2 – Phase 2 complete + Phase 3 software path (P3.1–P3.6) + P4.1**  
+*(Extends v0.4.1 with Josephson Tier-1 analytic estimates. Module remains inert unless enabled. Usadel/BdG and fabrication heuristics remain later.)*
+
+### Changelog (v0.4.1 → v0.4.2)
+
+| Theme | What was added / corrected |
+|-------|----------------------------|
+| P4.1 | `JosephsonMetrics` + Ambegaokar–Baratoff / BCS-from-Tc proxies; optional attachment; caveated export. No ranker fork. |
 
 ### Changelog (v0.4.0 → v0.4.1)
 
@@ -162,7 +168,8 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 **P3 – Unconventional Pathway (in progress) + Device-Aware Ranking (later)**
 - **Shipped (P3.1–P3.5):** DFT+U + `DFTUResult`; Wannier prep + `ready_for_dmft` gate (residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + drop-in parser — **not** full automated solid_dmft/CTHYB launch); pairing eigenvalue → common `performance_score` with documented precedence; oxygen-vacancy / infinite-layer enumeration for nickelates.
 - **Residual / next:** P3.6 mixed conventional/unconventional AL acquisition; full real solid_dmft / CTHYB launch (`p3_x_real_launch`); production GNN λ/Tc heads (ALIGNN/MatGL); material-specific production Wannier libraries.
-- **Later (Phase 4+):** Simple Josephson-junction device modeling (Ic, Ic Rn, gap, switching energy); anisotropic Eliashberg / SCDFT; proximity refinements; generative models, web dashboard.
+- **P4.1 (shipped):** Simple Josephson-junction Tier-1 analytics (IcRn, Jc proxy, gap, switching energy) — approximate / ranking only; inert unless enabled.
+- **Later (Phase 4+):** Fabrication heuristics, Usadel/BdG; anisotropic Eliashberg / SCDFT; proximity refinements; generative models, web dashboard.
 
 ## 6. User Stories / Key Workflows
 
@@ -279,7 +286,7 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 | Material-specific Wannier projections | Still required for reliable production λ/Tc |
 | Guaranteed EPW success on all strained cells | Terminal phonon-complete / EPW-blocked is valid |
 | Full mature AL retrain on large EPW corpora | Prioritization + lightweight retrain first; mature loops later |
-| Full real DMFT launch / Josephson | Phase 3 residual / Phase 4 |
+| Full real DMFT launch / Josephson Usadel | Phase 3 residual / Phase 4 later |
 | Room-temperature SC discovery | Non-goal |
 
 ---
