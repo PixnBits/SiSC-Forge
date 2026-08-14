@@ -194,8 +194,9 @@ after the headline source is set.
 ## Residual (not this package)
 
 - Non-mock `observables.json` → tagged `dmft_pairing` is exercised by a
-  unit test of parse + apply. End-to-end real CTHYB launch remains
-  `p3_x_real_launch`.
+  unit test of parse + apply. Controlled solid_dmft launch is
+  `p3_x_real_launch` (toml/run package + optional invoke); production
+  U/J/β calibration remains residual.
 - Source-aware / family-normalized AL acquisition (**P3.6** — Done; see `docs/phase3-p36-mixed-al.md`).
 - Oxygen-vacancy structure generation (**P3.5** — Done; see `docs/phase3-p35-oxygen-vacancy.md`).
 - Changing Si-feasibility science or the P2.5 process-recommendation schema.

@@ -2,7 +2,7 @@
 
 **Status**: **Done**  
 **Prerequisite**: P3.4 common `performance_score` (`docs/phase3-p34-pairing-score.md`)  
-**Next residuals**: real solid_dmft/CTHYB launch, production GNN heads, golden NdNiO₂ science campaign (not this package)
+**Next residuals**: production CTHYB calibration, production GNN heads, golden NdNiO₂ science campaign (not this package)
 
 This package makes prioritization work when a campaign mixes **conventional**
 (nitride / MgB₂ / EPW) and **unconventional** (nickelate / DMFT-pairing)
@@ -142,7 +142,7 @@ pools have labels) it also prints `last_mode`.
 
 ## Residual (not this package)
 
-- Automated solid_dmft / CTHYB launch (`p3_x_real_launch`)
+- Production CTHYB calibration / solid_dmft version matrix (`p3_x_real_launch` launcher is shipped)
 - Production GNN λ/Tc heads
 - Pathway-aware (DMFT) uncertainty
 - Full NdNiO₂ literature-golden recovery campaign (science + compute)

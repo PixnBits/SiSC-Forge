@@ -331,8 +331,12 @@ def test_real_path_skips_without_triqs(tmp_path: Path) -> None:
     assert sidecar.is_file()
     payload = json.loads(sidecar.read_text())
     assert payload["n_loops"] == cfg.n_loops
-    assert "future" in payload.get("n_loops_note", "")
+    assert "n_iter_dmft" in payload.get("n_loops_note", "")
+    assert payload.get("auto_launch") is True
     assert "p3_x_real_launch" in payload.get("extension_hooks", {})
+    assert (tmp_path / "dmft" / "dmft_config.toml").is_file()
+    assert (tmp_path / "dmft" / "run_solid_dmft.sh").is_file()
+    assert (tmp_path / "dmft" / "LAUNCH.md").is_file()
 
 
 def test_run_workflow_real_solver_skips_without_stack(tmp_path: Path) -> None:
@@ -375,9 +379,7 @@ def test_real_triqs_observables_drop_in(tmp_path: Path) -> None:
 
 
 def test_parse_dmft_observables_json() -> None:
-    metrics = parse_dmft_observables(
-        {"occupancy": {"Ni_d": 8.9}, "Z": 0.5, "converged": True}
-    )
+    metrics = parse_dmft_observables({"occupancy": {"Ni_d": 8.9}, "Z": 0.5, "converged": True})
     assert metrics["filling"] == pytest.approx(8.9)
     assert metrics["mass_enhancement"] == pytest.approx(2.0)
     assert metrics["converged"] is True
@@ -399,9 +401,7 @@ def test_parse_dmft_observables_pairing_home() -> None:
 
 
 def test_classify_dmft_failure() -> None:
-    assert classify_dmft_failure("not ready for DMFT: ready_for_dmft=False") == (
-        "wannier_gate"
-    )
+    assert classify_dmft_failure("not ready for DMFT: ready_for_dmft=False") == ("wannier_gate")
     assert classify_dmft_failure("No module named 'triqs'") == "import_error"
     assert classify_dmft_failure("did not converge after 10 loops") == "not_converged"
     assert "wannier_gate" in DMFT_FAILURE_CLASSES
@@ -487,13 +487,15 @@ def test_ndnio2_dmft_example_yaml_loads() -> None:
 
 
 def test_docs_honest_about_scaffold_and_mock_physics() -> None:
-    """Review #13: language, SETUP Tier D, mock labelling, residual launch."""
+    """Language, SETUP Tier D, mock labelling, controlled launcher."""
     root = Path(__file__).resolve().parents[1]
     phase = (root / "docs" / "phase3-p33-dmft.md").read_text()
     assert "observables.json" in phase
     assert "residual" in phase.lower()
     assert "illustrative" in phase.lower()
     assert "Will this run or refuse" in phase
+    assert "auto_launch" in phase
+    assert "dmft_config.toml" in phase
     setup = (root / "docs" / "SETUP.md").read_text()
     assert "Tier D" in setup
     assert "never a hard dependency" in setup

@@ -1,6 +1,29 @@
 # Implementation Notes
 
+## Slice P3.x real launch (2026-08-14) — controlled solid_dmft launcher
+
+Closes the P3.3 residual `p3_x_real_launch` (issue #18). Thin,
+testable launcher — not a production CTHYB driver.
+
+| Item | Location |
+|------|----------|
+| Package writer + invoke | `calculators/qe/dmft_launch.py` |
+| Workflow | `run_solid_dmft` in `calculators/qe/dmft.py` |
+| Knobs | `DMFTConfig.auto_launch` (default true), `launch_timeout_s` |
+| Tests | `tests/test_dmft_real_launch.py` (fakes; no TRIQS required) |
+| Docs | `docs/phase3-p33-dmft.md`, SETUP Tier D |
+
+**Automated:** toml/run script/LAUNCH.md; optional invoke; drop-in parse
+without TRIQS; copy existing `{seed}.h5`; best-effort DFTTools convert.
+
+**Still residual:** production U/J/β, version matrix, h5 convert without
+DFTTools, NdNiO₂ science golden. Mock / conventional / pairing maths
+unchanged.
+
+---
+
 ## Housekeeping (2026-08-14) — package 0.4.3 + Tier A CI
+
 
 Package `__version__` / `pyproject.toml` aligned to **0.4.3** (README status).
 GitHub Actions `.github/workflows/ci.yml` runs Tier A `pytest` + dummy dry-run

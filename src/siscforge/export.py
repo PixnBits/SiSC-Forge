@@ -1276,6 +1276,29 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
             lines.append(f"- gate_notes: {dmft.gate_notes}")
         if dmft.failure_class:
             lines.append(f"- failure_class: {dmft.failure_class}")
+        launch = (dmft.raw or {}).get("launch") if isinstance(dmft.raw, dict) else None
+        if isinstance(launch, dict) and launch.get("status"):
+            lines.append(f"- launch: {launch.get('status')}")
+            nxt = launch.get("operator_next")
+            if nxt:
+                lines.append(f"- operator next step: {nxt}")
+            elif launch.get("status") == "invoked":
+                lines.append("- launch: solid_dmft invoke completed (p3_x_real_launch)")
+            elif launch.get("status") == "drop_in":
+                lines.append(
+                    "- launch: parsed drop-in observables.json "
+                    "(no TRIQS required to ingest)"
+                )
+            elif launch.get("status") == "skipped_solver_missing":
+                lines.append(
+                    "- launch: TRIQS/solid_dmft missing — run package written; "
+                    "drop observables.json or install the stack"
+                )
+            elif launch.get("status") == "deferred":
+                lines.append(
+                    "- launch: auto_launch=false — run package written "
+                    "(see dmft/LAUNCH.md)"
+                )
         if src == "dmft_pairing_mock":
             lines.append(
                 "- note: mock pairing eigenvalues are **illustrative**, "

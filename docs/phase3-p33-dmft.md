@@ -1,15 +1,17 @@
-# P3.3 — DMFTResult model + gate + mock + parser scaffold
+# P3.3 — DMFTResult model + gate + mock + controlled launcher
 
-**Status**: scaffold shipped — typed model, Wannier gate, mock path, and a
-thin optional drop-in parser. **Full automated solid_dmft / CTHYB launch
-is residual** (operator-driven or a later follow-up).  
+**Status**: scaffold + **controlled launcher shipped** (`p3_x_real_launch`,
+issue #18) — typed model, Wannier gate, mock path, drop-in parser, and a
+workstation-first solid_dmft run package that invokes when the stack is
+present.  
 **Prerequisite**: P3.2 Wannier prep + `ready_for_dmft` (`docs/phase3-p32-wannier.md`)  
-**Next**: **P3.4** — pairing eigenvalue → common `performance_score`
-(**shipped** — `docs/phase3-p34-pairing-score.md`)
+**Next residuals**: production U/J/β calibration, solid_dmft version
+matrix, NdNiO₂ literature golden (not this package). P3.4 pairing map is
+**shipped** (`docs/phase3-p34-pairing-score.md`).
 
-This package is **not** a turnkey TRIQS/solid_dmft jobflow. It ships the
-consumption contract P3.4 needs (typed `DMFTResult`, gate, mock, parser)
-and leaves a documented hook for a real launcher.
+This package is **not** a turnkey production CTHYB jobflow. It ships the
+consumption contract P3.4 needs plus a thin, testable launcher. Screening
+defaults stay screening defaults.
 
 Automated nscf + `pw2wannier90` is **P3.2.1 shipped**. Real
 (non-mock) Wannier → DMFT still needs a usable `WannierResult`
@@ -35,16 +37,16 @@ Provide a **first-class, optional DMFT step** that:
 | `DMFTResult` model | `siscforge.models.results.DMFTResult` | shipped |
 | Optional on evaluation | `CandidateEvaluation.dmft` (default `None`) | shipped |
 | YAML knobs | `dft.do_dmft`, `dft.dmft.*` (`DMFTConfig`, **disabled by default**) | shipped |
-| Helpers | `siscforge.calculators.qe.dmft` | shipped |
+| Helpers | `siscforge.calculators.qe.dmft` + `dmft_launch` | shipped |
 | Sequential recipe | `run_dmft_after_wannier` in `qe/recipes.py` | sequential glue, not jobflow |
 | Calculator | `qe-dmft` / `dmft` alias; additive when `do_dmft` on `qe` | shipped |
 | Mock path | `MockCalculator` fills success/failure `DMFTResult` | shipped |
-| Real path | Sidecar writer + drop-in `observables.json` parser; **skips** if TRIQS missing | **thin scaffold** — does **not** launch CTHYB |
-| Export | CSV columns `dmft_*` + synthesis-card section | shipped |
+| Real path | Run package + optional invoke + drop-in `observables.json` parser; **skips** if TRIQS missing | **controlled launcher** — not production QMC |
+| Export | CSV columns `dmft_*` + synthesis-card launch notes | shipped |
 | Dry-run example | `examples/ndnio2_dmft_mock.yaml` | shipped |
-| Tests | `tests/test_dmft_p33.py` | shipped |
-| Automated solid_dmft launch | — | **residual** |
-| Pairing → `performance_score` | reserved fields only | **P3.4** |
+| Tests | `tests/test_dmft_p33.py`, `tests/test_dmft_real_launch.py` | shipped |
+| Pairing → `performance_score` | `siscforge.scoring.pairing` | **P3.4 shipped** |
+| Production U/J/β / version matrix | — | **residual** |
 
 ## Enablement (inert by default)
 
@@ -59,7 +61,9 @@ dft:
     beta: 40.0                   # 1/eV; screening ~290 K
     n_cycles: 10000              # thin QMC knob, not production CTHYB
     n_warmup_cycles: 2000
-    n_loops: 4                   # stored for a future launcher; unused by the thin parser
+    n_loops: 4                   # written to dmft_config.toml as n_iter_dmft
+    auto_launch: true            # invoke when stack present; mock unaffected
+    # launch_timeout_s: 3600     # optional wall-clock cap; default none
     # Gate — see “Will this run or refuse?” below
     allow_without_wannier_gate: false
     mock_bypass_gate: true       # documented dry-run bypass (solver=mock)
@@ -115,47 +119,60 @@ Defaults are conservative for real solvers and convenient for dry-run.
   ≈ 8.65–8.95 and m*/m ≈ 2.4–4 are seeded hashes, not a calibrated NdNiO₂
   fit). Pairing fields stay `None`. The label is also stored on
   `DMFTResult.raw["physics_label"]` and in provenance notes.
-- **Real (optional, thin):** if `triqs` / `solid_dmft` is importable, the
-  wrapper writes a config sidecar (`siscforge_dmft_config.json`) and
-  **parses** a drop-in `observables.json` if present. It does **not**
-  launch solid_dmft or CTHYB. If the stack is missing, the result is
-  `status=skipped`, `failure_class=solver_missing`. **TRIQS is never a
-  hard install dependency of `siscforge`.** See [SETUP.md](SETUP.md)
-  Tier D.
+- **Real (optional, controlled launcher):** writes a sibling `dmft/` run
+  package, optionally invokes solid_dmft, and parses observables. If the
+  stack is missing, the result is `status=skipped`,
+  `failure_class=solver_missing`. **TRIQS is never a hard install
+  dependency of `siscforge`.** See [SETUP.md](SETUP.md) Tier D.
 
-### Real-path operator workflow (drop-in, not auto-launch)
+### What the launcher automates vs operator-owned
 
-1. Produce Wannier artifacts and a `WannierResult` with
-   `ready_for_dmft=True` (P3.2 + P3.2.1 automated nscf + `pw2wannier90`
-   + gated `wannier90.x`, or staged `.amn`/`.mmn`).
-2. Run solid_dmft / CTHYB **externally** (your TRIQS environment, your
-   wall-time, your interaction / β / loop settings).
-3. Drop `observables.json` (or `observables_imp0.json` /
-   `siscforge_dmft_observables.json`) into the candidate's sibling
-   `dmft/` workdir. The parser is best-effort on common keys
-   (`occupancy` / `n_imp`, `filling`, `Z` / `mass_enhancement`,
-   `converged`).
-4. Re-invoke `siscforge` (or `run_dmft_workflow` / `run_solid_dmft`) so
-   the parser populates `DMFTResult`. Pairing keys, if present, land in
-   the reserved P3.4 fields and are **not** ranked.
+**Automated**
 
-Sidecar knobs `n_loops`, `n_cycles`, `n_warmup_cycles` are stored for a
-future launcher. The thin parser does not consume them.
+1. Honour the P3.2 `ready_for_dmft` gate (or an explicit bypass).
+2. Write / refresh `siscforge_dmft_config.json` plus a native
+   `dmft_config.toml` (U/J, β, `n_iter_dmft` ← `n_loops`, CTHYB
+   `n_cycles` / warmup) and `run_solid_dmft.sh` + `LAUNCH.md`.
+3. If `observables.json` (or `observables_imp0.json` /
+   `siscforge_dmft_observables.json`) is already in `dmft/`, parse it
+   **without requiring TRIQS** (resume / operator drop-in).
+4. If `auto_launch: true` (default) and the stack is importable — or
+   `SISCFORGE_SOLID_DMFT` points at a wrapper — invoke, capture
+   `solid_dmft.log` + exit code, then parse observables into
+   `DMFTResult`. Pairing keys, if present, land in the reserved P3.4
+   fields and flow through the existing map.
+5. Copy (never move / delete) an existing `{seed}.h5` into `dmft/` when
+   found; best-effort DFTTools Wannier90 convert when that extra is
+   importable.
 
-**Residual launcher hook:** a minimal helper that shells out or writes a
-ready-to-run solid_dmft config from `WannierResult` + `DMFTConfig` is
-intentionally not in this package. See
-`DMFTResult.raw["extension_hooks"]["p3_x_real_launch"]`.
+**Still operator-owned / residual**
+
+- Wannier90 → `{seed}.h5` when DFTTools is missing or the convert fails.
+- MPI ranks and multi-day CTHYB wall-time.
+- Production U/J/β/`n_cycles` calibration (screening defaults stay
+  screening).
+- solid_dmft / TRIQS version matrix.
+- Literature-validated NdNiO₂ recovery (science golden).
+
+Set `auto_launch: false` to write the package only and invoke yourself:
+
+```bash
+# in the candidate's sibling dmft/ directory
+sh run_solid_dmft.sh
+# then re-invoke siscforge, or drop observables.json and re-invoke
+```
+
+`n_loops`, `n_cycles`, and `n_warmup_cycles` are consumed by the toml
+writer. They remain thin workstation knobs.
 
 ## Residual P3.2.1 (orchestration shipped)
 
 Automated nscf + `pw2wannier90` is **P3.2.1 shipped** (soft-skip without
-binaries / charge density). The remaining unconventional chain is:
+binaries / charge density). The unconventional chain is:
 
 ```
 SCF / DFT+U  →  nscf + pw2wannier90 (P3.2.1)  →  wannier90.x
-             →  ready_for_dmft  →  [P3.3 mock | drop-in parse]
-             →  [residual: auto solid_dmft launch]
+             →  ready_for_dmft  →  [P3.3 mock | drop-in parse | auto-launch]
              →  [P3.4: pairing → performance_score]
 ```
 
@@ -168,7 +185,8 @@ refuses when Wannier did not produce a usable manifold. Mock +
 DMFT failure must not delete finished DFT+U or Wannier artifacts. Same
 philosophy as Wannier-after-SCF and EPW-after-DFPT. The broad
 `except Exception` around the DMFT step in `QECalculator.run` is
-intentional and logged.
+intentional and logged. The launcher only writes under the sibling
+`dmft/` workdir.
 
 ## Failure classification (best-effort)
 
@@ -197,15 +215,18 @@ Mock eigenvalues are illustrative.
 - Pairing eigenvalue normalization into `performance_score` (**P3.4**)
 - Oxygen-vacancy structure generation (**P3.5**)
 - Mixed conventional/unconventional AL (**P3.6**)
-- Automated solid_dmft / CTHYB launch (residual; see operator workflow)
+- Production U/J/β calibration / solid_dmft version matrix (residual)
 - Making TRIQS a required dependency
 - Josephson, GNN heads, GPU QE
 
 ## Acceptance checks
 
-- `pytest` green (existing + `test_dmft_p33`)
+- `pytest` green (existing + `test_dmft_p33` + `test_dmft_real_launch`)
 - Conventional campaigns unchanged with DMFT off
 - Mock path: run → store → CSV/cards with `DMFTResult` fields
 - Wannier `ready_for_dmft` gate enforced outside explicit mock bypass
 - Real TRIQS tests skipped without the stack
-- Language in this doc / README / ROADMAP matches the thin real path
+- Fake/stub launcher writes the run package, classifies failures, keeps
+  upstream sacred
+- Language in this doc / README / ROADMAP matches the controlled launcher
+  (no longer “P3.3 only writes a sidecar and never launches”)

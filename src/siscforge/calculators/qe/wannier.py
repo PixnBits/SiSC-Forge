@@ -15,7 +15,7 @@ When ``.amn``/``.mmn`` are already staged, the nscf / pw2wannier90 steps
 are skipped. Missing binaries or charge density classify as
 ``missing_files`` / ``binary_missing`` and never crash dry-run or ``pytest``.
 
-**Out of scope (later packages):** TRIQS/solid_dmft launch (``p3_x_real_launch``),
+**Out of scope (later packages):** production CTHYB calibration,
 material-specific production projection libraries, spinor / collinear-spin
 Wannier manifolds. Real-QE golden nscf+pw2wannier90 is optional / local.
 

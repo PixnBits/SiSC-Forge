@@ -94,7 +94,7 @@ Validation: [docs/validation-phase1.md](docs/validation-phase1.md).
 |----|-------|--------|
 | P3.1 | DFT+U + `DFTUResult` | **Done** — [phase3-p31-dftu](docs/phase3-p31-dftu.md) |
 | P3.2 | Wannier prep + `ready_for_dmft` + nscf/pw2wannier90 | **Done** (P3.2.1 orchestration shipped) — [phase3-p32-wannier](docs/phase3-p32-wannier.md) |
-| **P3.3** | TRIQS/solid_dmft + `DMFTResult` | **Scaffold** — model + gate + mock + parser; full launch residual — [phase3-p33-dmft](docs/phase3-p33-dmft.md) |
+| **P3.3** | TRIQS/solid_dmft + `DMFTResult` | **Scaffold + controlled launcher** — model + gate + mock + parser + toml/run package + optional invoke; production U/J/β residual — [phase3-p33-dmft](docs/phase3-p33-dmft.md) |
 | **P3.4** | Pairing eigenvalue → `performance_score` | **Done** — [phase3-p34-pairing-score](docs/phase3-p34-pairing-score.md) |
 | **P3.5** | O-vacancy / infinite-layer enum | **Done** — [phase3-p35-oxygen-vacancy](docs/phase3-p35-oxygen-vacancy.md) |
 | **P3.6** | Mixed conventional/unconventional AL | **Done** — [phase3-p36-mixed-al](docs/phase3-p36-mixed-al.md) |
@@ -108,7 +108,7 @@ siscforge run --dry-run examples/mixed_al_pools.yaml
 
 Nickelate enumeration and DMFT are **off by default**. Conventional nitride / MgB₂ / EPW campaigns are unchanged (`active_learning.pool_mode` defaults to `off`). Mixed campaigns set `pool_mode: joint` or `separate` — see [phase3-p36-mixed-al](docs/phase3-p36-mixed-al.md).
 
-**Still residual:** real solid_dmft/CTHYB launch, production ALIGNN/MatGL λ/Tc heads, golden NdNiO₂ science campaign.
+**Still residual:** production CTHYB calibration (U/J/β) and solid_dmft version matrix, production ALIGNN/MatGL λ/Tc heads, golden NdNiO₂ science campaign.
 
 ### Phase 4 Josephson metrics — Tier-1 complete (P4.1 + P4.2)
 

@@ -746,7 +746,9 @@ class QEDmftCalculator(QECalculator):
     (``allow_without_wannier_gate``). Pair with ``do_wannier: true`` /
     ``qe-wannier`` for a real chain; mock + ``mock_bypass_gate`` covers
     dry-run without the gate. TRIQS is never required to import this
-    calculator. Real launch of solid_dmft remains residual.
+    calculator. Real launch writes a run package and invokes when the
+    stack is present (``p3_x_real_launch``); production U/J/β remains
+    residual.
     """
 
     name = "qe-dmft"

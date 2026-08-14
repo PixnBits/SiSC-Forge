@@ -238,7 +238,7 @@ Produces `leading_pairing_eigenvalue` that feeds the common `performance_score` 
 **Implemented contracts:**
 - `DFTUResult` + optional DFT+U (`qe-dftu` / `do_dftu`) — P3.1
 - `WannierResult` + quality metrics + `ready_for_dmft` gate (`qe-wannier`) — P3.2 + P3.2.1 automated nscf+pw2wannier90
-- `DMFTResult` scaffold (model + gate + mock + optional observables parser; **not** full automated solid_dmft/CTHYB launch) — P3.3
+- `DMFTResult` scaffold + controlled launcher (model + gate + mock + drop-in parser + toml/run package + optional invoke; production U/J/β residual) — P3.3
 - Pairing → `performance_score` with `ranking.performance_precedence` (default `epw_then_dmft`) — P3.4
 - Oxygen-vacancy / infinite-layer enumeration (opt-in via `material_families: [nickelate]`) — P3.5
 - Mixed conventional/unconventional AL acquisition (`active_learning.pool_mode`: `off` \| `joint` \| `separate`) — P3.6
@@ -435,7 +435,7 @@ Primary open-source stack:
 - SSSP (or PseudoDojo) UPFs
 - Docker recommended for second-machine parity
 
-TRIQS / solid_dmft: Phase 3 residual. Usadel/BdG: Phase 4 behind Calculator protocol.
+TRIQS / solid_dmft: Phase 3 controlled launcher shipped (production U/J/β residual). Usadel/BdG: Phase 4 behind Calculator protocol.
 
 ---
 
@@ -579,19 +579,19 @@ These sit beside AC1–AC18 rather than rewriting them. Verify against
 |----|------|----------|
 | P3.1 | DFT+U path produces typed `DFTUResult`; conventional campaigns unchanged when `do_dftu` is off | — |
 | P3.2 | Wannier prep + quality metrics + `ready_for_dmft` + P3.2.1 nscf/`pw2wannier90` | Spinor manifolds; production projection libraries; real-QE golden optional |
-| P3.3 | `DMFTResult` scaffold (model + gate + mock + optional observables parser); unconventional steps default off | Full automated solid_dmft / CTHYB launch |
+| P3.3 | `DMFTResult` scaffold + controlled launcher (model + gate + mock + drop-in parser + toml/run package + optional invoke); unconventional steps default off | Production U/J/β calibration; solid_dmft version matrix |
 | P3.4 | Pairing eigenvalue → `performance_score` with documented `epw_then_dmft` precedence; mock scores tagged | — |
 | P3.5 | Opt-in nickelate O-vacancy / infinite-layer enum; nitride path inert when family off | — |
 | P3.6 | Mixed conventional/unconventional AL pools (`off` / `joint` / `separate`); default `off` | — |
 
-**Not claimed:** full automated solid_dmft/CTHYB, production ALIGNN/MatGL λ/Tc heads.
+**Not claimed:** production CTHYB calibration / NdNiO₂ golden, production ALIGNN/MatGL λ/Tc heads.
 
 ---
 
 ## 10. Explicit Limitations
 
 - Auto-raised nkc and `search_shells` **do not** guarantee physical λ/Tc; screening Wannier remains `proj=random`.
-- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, full real DMFT launch, Josephson Usadel/BdG: **later**. Tier-1 Josephson analytics (P4.1) and fabrication heuristics (P4.2) are shipped (inert unless enabled). See `docs/phase4-exit.md`.
+- Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, production CTHYB calibration, Josephson Usadel/BdG: **later**. Tier-1 Josephson analytics (P4.1) and fabrication heuristics (P4.2) are shipped (inert unless enabled). See `docs/phase4-exit.md`.
 - After Phase A+B exhaustion, further EPW success may require human projections or different cells; DFPT remains valuable for stability gating.
 - Screening q=2³ phonon stability can false-positive/false-negative; denser DFPT required before citing dynamical stability.
 - Resume covers common cases; exotic partial files or external manual edits may still need operator intervention (documented in implementation-notes).
@@ -613,7 +613,7 @@ These sit beside AC1–AC18 rather than rewriting them. Verify against
 
 **Phase 2** — Silicon Integration maturity + ranking polish (P2.1–P2.5) — **COMPLETE** (see `docs/phase2-exit.md`).
 
-**Phase 3** — Unconventional pathway: P3.1–P3.6 software path shipped (DMFT is scaffold); full real solid_dmft + production GNN residual.
+**Phase 3** — Unconventional pathway: P3.1–P3.6 software path shipped (DMFT scaffold + controlled launcher); production CTHYB calibration + production GNN residual.
 
 **Phase 4** — **Tier-1 complete** (P4.1–P4.2): analytic Josephson estimates + fabrication heuristics on shortlist (inert default). Later Usadel/BdG. See `docs/phase4-exit.md`.
 

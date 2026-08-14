@@ -730,11 +730,13 @@ class DMFTConfig(BaseModel):
     """Master switch. Also set via ``dft.do_dmft`` or ``qe-dmft``."""
 
     solver: Literal["mock", "solid_dmft", "cthyb"] = "mock"
-    """Backend. ``mock`` is always available (no TRIQS). Real
-    Real ``solid_dmft`` / ``cthyb`` write a sidecar and parse a drop-in
-    ``observables.json``; they do **not** launch CTHYB. TRIQS is never a
-    hard dependency of siscforge. Full automated launch is residual
-    (``p3_x_real_launch``).
+    """Backend. ``mock`` is always available (no TRIQS).
+
+    Real ``solid_dmft`` / ``cthyb`` write a run package
+    (``dmft_config.toml`` + invoke script) and, when ``auto_launch`` is
+    True and the stack is present, invoke it. Drop-in ``observables.json``
+    is still parsed (does not require TRIQS). TRIQS is never a hard
+    dependency of siscforge.
     """
 
     U_eV: float = Field(
@@ -792,15 +794,31 @@ class DMFTConfig(BaseModel):
         ge=1,
         description=(
             "Requested DMFT self-consistency loops (screening default). "
-            "Stored on the sidecar for a future launcher; unused by the "
-            "thin P3.3 observables parser."
+            "Written to dmft_config.toml as n_iter_dmft by the "
+            "p3_x_real_launch package writer."
         ),
     )
     """Requested outer DMFT loops (screening default).
 
-    Unused by the thin real path (sidecar + drop-in parse). Residual
-    launcher hook: ``raw["extension_hooks"]["p3_x_real_launch"]``.
+    Consumed by the real-launch toml writer as ``n_iter_dmft``.
     """
+
+    auto_launch: bool = True
+    """When True (default), non-mock solvers invoke solid_dmft if the
+    stack is importable or ``SISCFORGE_SOLID_DMFT`` is set. Mock / dry-run
+    is unaffected. Set False to write the run package only.
+    """
+
+    launch_timeout_s: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Optional wall-clock timeout (seconds) for the solid_dmft "
+            "subprocess. None (default) means no timeout — real CTHYB "
+            "can run for hours. Tests may set a short value."
+        ),
+    )
+    """Optional invoke timeout in seconds. ``None`` = no timeout."""
 
     # Wannier gate
     require_wannier_gate: bool = True

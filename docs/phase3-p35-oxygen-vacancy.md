@@ -75,7 +75,7 @@ paths still require a parseable Si substrate.
 - Combinatorial vacancy enumerations (2×2×2 all-O subsets, etc.)
 - Bilayer nickelates and cuprate prototypes
 - Mixed conventional/unconventional AL acquisition (**P3.6** — Done; see `docs/phase3-p36-mixed-al.md`)
-- Real solid_dmft / CTHYB launch
+- Production CTHYB calibration / solid_dmft version matrix
 - Changing the pairing formula, ranking maths, or Si-feasibility science
 
 Si-feasibility for nickelates is the existing **heuristic** family table
