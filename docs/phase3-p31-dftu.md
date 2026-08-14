@@ -53,7 +53,7 @@ Conventional examples omit these knobs → behaviour unchanged.
 
 | Package | Work | Hook |
 |---------|------|------|
-| **P3.2** | Wannier prep + quality metrics | **Shipped (metrics+mock+gate+prep)** — residual P3.2.1 nscf+pw2wannier90; `docs/phase3-p32-wannier.md` |
+| **P3.2** | Wannier prep + quality metrics + P3.2.1 nscf/pw2wannier90 | **Shipped** — `docs/phase3-p32-wannier.md` |
 | **P3.3** | TRIQS / solid_dmft → `DMFTResult` | **Scaffold** — model + gate + mock + parser; full launch residual — `docs/phase3-p33-dmft.md` |
 | **P3.4** | Pairing eigenvalue → `performance_score` | Map leading eigenvalue into common ranking axis |
 | **P3.5** | Oxygen-vacancy enumeration | Structure generation (not calculator) |

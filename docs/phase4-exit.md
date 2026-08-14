@@ -86,7 +86,7 @@ object, no secondary sort, no CSV / card content.
 | Tier-2 Usadel | SNS / proximity / high-transparency transport |
 | Tier-3 BdG | Geometry-aware microscopic backend |
 | Full PDK / foundry rule decks | Heuristic class + thermal flags only |
-| Real CTHYB launch, production GNN, P3.2.1, NdNiO₂ science golden | Phase 3 residuals — unchanged |
+| Real CTHYB launch, production GNN, NdNiO₂ science golden | Phase 3 residuals — unchanged |
 | GPU QE | Not claimed |
 
 ## Smoke commands

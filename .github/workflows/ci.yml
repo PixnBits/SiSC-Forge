@@ -6,7 +6,8 @@
 # stay skipped (those remain local-only workstation / HPC gates).
 #
 # Local-only (not in this workflow):
-#   - Real QE phonon / EPW / nscf+pw2wannier90 (Tiers B–C; P3.2.1 residual)
+#   - Real QE phonon / EPW / nscf+pw2wannier90 golden (Tiers B–C; P3.2.1
+#     orchestration is unit-tested with fake binaries; real-QE optional)
 #   - Real solid_dmft / CTHYB launch (Tier D; P3.3 residual)
 #   - Production ALIGNN/MatGL GNN heads
 #   - GPU QE

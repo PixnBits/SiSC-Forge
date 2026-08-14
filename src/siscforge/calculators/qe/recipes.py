@@ -1522,7 +1522,9 @@ def recipe_info() -> dict[str, Any]:
             "DMFTResult",
         ],
         "extension_points": {
-            "p3_2": "Wannierization quality metrics after SCF/DFT+U (shipped)",
+            "p3_2": (
+                "Wannierization after SCF/DFT+U (P3.2 + P3.2.1 nscf/pw2wannier90)"
+            ),
             "p3_3": (
                 "TRIQS/solid_dmft → DMFTResult "
                 "(scaffold: model + gate + mock + drop-in parser; "

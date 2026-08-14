@@ -453,8 +453,8 @@ class WannierConfig(BaseModel):
     Distinct from the EPW-internal Wannier90 step (``proj=random`` inside EPW
     screening). This config drives a **first-class prep + quality-metrics** step after SCF
     or DFT+U that produces :class:`~siscforge.models.results.WannierResult`
-    for the P3.3 DMFT gate. Full nscf + pw2wannier90 orchestration is residual
-    (P3.2.1 / under P3.3).
+    for the P3.3 DMFT gate. When binaries and upstream charge density are
+    present, **P3.2.1** runs nscf + ``pw2wannier90`` automatically.
 
     Lessons reused from EPW screening (coarse-k safety, frozen-window
     classification) without weakening the conventional EPW remediation path.
@@ -511,6 +511,16 @@ class WannierConfig(BaseModel):
     # Coarse k safety (shared philosophy with EPW; does not alter EPW configs)
     kmesh: list[int] = Field(default_factory=lambda: [4, 4, 4])
     """Coarse electronic k-mesh for the Wannier nscf / .win mp_grid."""
+
+    auto_nscf_pw2wannier: bool = True
+    """When True (default) and ``.amn``/``.mmn`` are missing, run nscf +
+    ``pw2wannier90`` if ``pw.x``, ``pw2wannier90.x``, and an upstream
+    ``{prefix}.save`` charge density are available (P3.2.1).
+
+    Soft dependency: missing binaries or charge density classify cleanly
+    (``missing_files`` / ``binary_missing``) and never crash dry-run or
+    ``pytest``. Set False to keep the P3.2 manual-stage path.
+    """
 
     strict_coarse_k: bool = False
     """If True, refuse undersized k-meshes instead of auto-raising."""

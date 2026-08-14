@@ -30,7 +30,7 @@ Tier-1 analytic path is complete; Usadel/BdG remain later.)*
 | Theme | What was added / corrected |
 |-------|----------------------------|
 | Phase 2 | Si component weights + YAML override + export (P2.1); multi-layer buffer stacks + chemical/thermal windows (P2.2); critical thickness (Matthews–Blakeslee / People–Bean) + membrane heuristics (P2.3); multi-objective ranking + Pareto + provenance (P2.4); process-recommendation synthesis cards + schema 1.0 freeze (P2.5) — **complete** |
-| Phase 3 partial | DFT+U + `DFTUResult` (P3.1); Wannier prep + quality metrics + `ready_for_dmft` (P3.2, residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + optional observables parser — **not** full automated solid_dmft/CTHYB) (P3.3); pairing eigenvalue → common `performance_score` with `epw_then_dmft` precedence (P3.4); oxygen-vacancy / infinite-layer enumeration (P3.5); mixed AL pools (P3.6) |
+| Phase 3 partial | DFT+U + `DFTUResult` (P3.1); Wannier prep + quality metrics + `ready_for_dmft` + automated nscf/pw2wannier90 (P3.2 / P3.2.1); `DMFTResult` scaffold (model + gate + mock + optional observables parser — **not** full automated solid_dmft/CTHYB) (P3.3); pairing eigenvalue → common `performance_score` with `epw_then_dmft` precedence (P3.4); oxygen-vacancy / infinite-layer enumeration (P3.5); mixed AL pools (P3.6) |
 | Status honesty | Mock DMFT numbers are illustrative; no guaranteed room-temp SC; production GNN λ/Tc heads and full real DMFT launch remain later |
 | Ranking | Ranking already consumes DMFT pairing-derived `performance_score`; process-recommendation cards exist |
 
@@ -175,7 +175,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - (Deferred from P2) interface-slab DFT, FEM membrane mechanics, CALPHAD — later.
 
 **P3 – Unconventional Pathway — software path shipped (P3.1–P3.6)**
-- **Shipped (P3.1–P3.6):** DFT+U + `DFTUResult`; Wannier prep + `ready_for_dmft` gate (residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + drop-in parser — **not** full automated solid_dmft/CTHYB launch); pairing eigenvalue → common `performance_score` with documented precedence; oxygen-vacancy / infinite-layer enumeration for nickelates; mixed conventional/unconventional AL acquisition (`off` / `joint` / `separate`).
+- **Shipped (P3.1–P3.6):** DFT+U + `DFTUResult`; Wannier prep + `ready_for_dmft` gate + P3.2.1 automated nscf/pw2wannier90; `DMFTResult` scaffold (model + gate + mock + drop-in parser — **not** full automated solid_dmft/CTHYB launch); pairing eigenvalue → common `performance_score` with documented precedence; oxygen-vacancy / infinite-layer enumeration for nickelates; mixed conventional/unconventional AL acquisition (`off` / `joint` / `separate`).
 - **Residual:** full real solid_dmft / CTHYB launch (`p3_x_real_launch`); production GNN λ/Tc heads (ALIGNN/MatGL); material-specific production Wannier libraries; NdNiO₂ science golden.
 
 **P4 – Device-Aware Ranking — Tier-1 complete (P4.1–P4.2)**

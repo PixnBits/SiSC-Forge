@@ -55,7 +55,7 @@ class QECalculator(BaseCalculator):
     :class:`QEEpwCalculator` (``qe-epw``).
     Enable DFT+U with ``dft.do_dftu: true`` / ``dft.dftu.enabled: true``, or
     use :class:`QEDftuCalculator` (``qe-dftu``). DFT+U is inert by default.
-    Enable standalone Wannier (P3.2) with ``dft.do_wannier: true`` /
+    Enable standalone Wannier (P3.2 / P3.2.1) with ``dft.do_wannier: true`` /
     ``dft.wannier.enabled: true``, or :class:`QEWannierCalculator`
     (``qe-wannier``). Does not alter EPW-internal Wannier.
     Enable DMFT (P3.3) with ``dft.do_dmft: true`` / ``dft.dmft.enabled: true``,
@@ -699,8 +699,8 @@ class QEWannierCalculator(QECalculator):
 
     Registration name: ``qe-wannier``. Forces ``do_wannier``. Defaults phonon/EPW
     off unless the campaign re-enables them. Prefer pairing with DFT+U for
-    nickelates (``do_dftu`` remains independent). Prep + gated wannier90.x only;
-    automated nscf/pw2wannier90 is residual P3.2.1. Does not require TRIQS.
+    nickelates (``do_dftu`` remains independent). Prep + optional P3.2.1
+    nscf/pw2wannier90 + gated wannier90.x. Does not require TRIQS.
     """
 
     name = "qe-wannier"

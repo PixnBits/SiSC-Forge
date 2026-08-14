@@ -22,6 +22,7 @@ class QEEnvironment:
     matdyn: str | None = None
     epw: str | None = None
     wannier90: str | None = None
+    pw2wannier90: str | None = None
     mpirun: str | None = None
     jobflow: bool = False
     notes: list[str] = field(default_factory=list)
@@ -63,6 +64,7 @@ def detect_qe_environment() -> QEEnvironment:
     matdyn = resolve("matdyn.x")
     epw = resolve("epw.x")
     wannier90 = resolve("wannier90.x") or _which("wannier90.x")
+    pw2wannier90 = resolve("pw2wannier90.x") or _which("pw2wannier90.x")
     mpirun = _which("mpirun") or _which("mpiexec")
 
     if not pw:
@@ -79,6 +81,11 @@ def detect_qe_environment() -> QEEnvironment:
         notes.append(
             "wannier90.x not found; EPW typically needs Wannier90 on PATH."
         )
+    if pw and not pw2wannier90:
+        notes.append(
+            "pw2wannier90.x not found; standalone Wannier nscf→.amn/.mmn "
+            "orchestration (P3.2.1) will skip until it is on PATH / QE_BIN."
+        )
 
     return QEEnvironment(
         pw=pw,
@@ -87,6 +94,7 @@ def detect_qe_environment() -> QEEnvironment:
         matdyn=matdyn,
         epw=epw,
         wannier90=wannier90,
+        pw2wannier90=pw2wannier90,
         mpirun=mpirun,
         jobflow=jobflow_available(),
         notes=notes,
@@ -155,6 +163,22 @@ def require_epw() -> QEEnvironment:
 def wannier90_available() -> bool:
     """Return True if ``wannier90.x`` is on PATH / QE_BIN."""
     return detect_qe_environment().wannier90 is not None
+
+
+def pw2wannier90_available() -> bool:
+    """Return True if ``pw2wannier90.x`` is on PATH / QE_BIN."""
+    return detect_qe_environment().pw2wannier90 is not None
+
+
+def wannier_orchestration_available() -> bool:
+    """True when ``pw.x`` and ``pw2wannier90.x`` can drive P3.2.1 nscf → .amn/.mmn.
+
+    ``wannier90.x`` is still required for ``-pp`` and the MLWF step; callers
+    classify that separately so a missing Wannier90 is ``binary_missing``
+    rather than a hard import error.
+    """
+    env = detect_qe_environment()
+    return bool(env.pw and env.pw2wannier90)
 
 
 def require_wannier90() -> QEEnvironment:

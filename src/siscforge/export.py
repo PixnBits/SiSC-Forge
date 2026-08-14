@@ -1196,13 +1196,34 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         )
         if wannier.dmft_gate_notes:
             lines.append(f"- dmft_gate_notes: {wannier.dmft_gate_notes}")
-        if wannier.failure_class == "missing_files":
-            lines.append(
-                "- **operator next step**: stage nscf + pw2wannier90 outputs "
-                "(`.amn`/`.mmn`) into `work_dir`, then re-invoke or call "
-                "`run_wannier90_on_artifacts`. Automated nscf/pw2wannier90 is "
-                "residual P3.2.1."
-            )
+        next_step = None
+        raw = getattr(wannier, "raw", None) or {}
+        if isinstance(raw, dict):
+            next_step = raw.get("operator_next_step")
+        if not next_step:
+            cls = wannier.failure_class
+            if cls == "nscf_failed":
+                next_step = (
+                    "inspect wannier/nscf.out; upstream SCF/DFT+U kept; "
+                    "fix nscf and re-invoke"
+                )
+            elif cls == "pw2wannier_failed":
+                next_step = (
+                    "inspect wannier/pw2wan.out; upstream SCF/DFT+U kept; "
+                    "fix pw2wannier90 and re-invoke"
+                )
+            elif cls == "binary_missing":
+                next_step = (
+                    "install pw.x, pw2wannier90.x, and wannier90.x (or set QE_BIN) "
+                    "and re-invoke; or stage .amn/.mmn manually"
+                )
+            elif cls == "missing_files":
+                next_step = (
+                    "install pw.x + pw2wannier90.x and re-invoke for automated "
+                    "nscf + pw2wannier90, or stage `.amn`/`.mmn` into `work_dir`"
+                )
+        if next_step:
+            lines.append(f"- **operator next step**: {next_step}")
         lines.append(
             "- note: screening defaults may use proj=random + coarse k; "
             "material-specific production projections and spinor/collinear-spin "

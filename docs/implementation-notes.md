@@ -168,7 +168,7 @@ thin real path.
 | Failure classification / unused `n_loops` / `QEDmftCalculator` independence | Documented as best-effort / future / independent of `do_wannier` |
 
 **Still residual (not this slice):** automated solid_dmft launch,
-P3.2.1 nscf+pw2wannier90, P3.4 pairing → `performance_score`.
+P3.4 pairing → `performance_score`.
 
 ---
 
@@ -197,7 +197,7 @@ DMFT is disabled. Pairing → `performance_score` is **P3.4**.
 | Tests | `tests/test_dmft_p33.py` |
 
 **Out of scope**: pairing → performance_score (P3.4), O-vacancy (P3.5),
-mixed AL (P3.6), residual nscf+pw2wannier90 (P3.2.1), TRIQS as a hard dep.
+mixed AL (P3.6), TRIQS as a hard dep.
 
 ### Enable
 
