@@ -103,6 +103,17 @@ Outputs land under `outputs/<campaign_name>/` (JSON, CSV, synthesis cards).
 **This is all you need for development, CI, and ranking logic.**  
 `--dry-run` always forces the mock calculator and never requires QE/EPW.
 
+### A.4 Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs this same **Tier A** path on
+every pull request and on pushes to `main`: `pip install -e ".[dev]"` →
+`pytest -q` → `siscforge run --dry-run examples/dummy_campaign.yaml`.
+
+**Local-only (not in CI):** real Quantum ESPRESSO, EPW, Wannier90, TRIQS /
+solid_dmft / CTHYB, and any test gated on `SISCFORGE_RUN_QE` /
+`SISCFORGE_RUN_EPW`. Those stay skipped unless the env vars are set on a
+workstation that has the binaries.
+
 ---
 
 ## Tier B + C — Quantum ESPRESSO, EPW, and pseudos

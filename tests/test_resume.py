@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -357,5 +358,7 @@ def test_run_config_yaml_roundtrip(tmp_path: Path) -> None:
 def test_run_help_lists_resume_flags() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--force-rerun" in result.stdout
-    assert "--fail-fast" in result.stdout
+    # Rich/Typer may emit CSI codes even when stdout is not a TTY (CI).
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
+    assert "--force-rerun" in plain
+    assert "--fail-fast" in plain

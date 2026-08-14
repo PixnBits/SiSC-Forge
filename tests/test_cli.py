@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,13 @@ runner = CliRunner()
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 DUMMY_CAMPAIGN = EXAMPLES / "dummy_campaign.yaml"
 NBTI_CAMPAIGN = EXAMPLES / "nbti_n_strain.yaml"
+
+# Rich/Typer may emit CSI codes even when stdout is not a TTY (CI).
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _plain(text: str) -> str:
+    return _ANSI.sub("", text)
 
 
 @pytest.fixture
@@ -57,7 +65,7 @@ def test_rank_help() -> None:
 def test_run_help() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--dry-run" in result.stdout
+    assert "--dry-run" in _plain(result.stdout)
 
 
 def test_enumerate_writes_json(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ Usadel/BdG remain later.)*
 | §2.8 / §3.5 / §11 | P4.2 fabrication hints + presentation-only secondary sort recorded as shipped |
 | Acceptance | Phase 4 **Tier-1 exit met**; Usadel/BdG residual (not fabrication) |
 | Docs | `docs/phase4-exit.md` |
+| §9 | Phase 3 P3.1–P3.6 contract rows (software path vs CTHYB residual) |
 
 ### Changelog (v0.5.1 → v0.5.2)
 
@@ -568,6 +569,22 @@ josephson:
 | AC16 | Full prioritize → shortlist → mock-calculate → promote → retrain cycle succeeds in dry-run / mock mode | Yes |
 | AC17 | Retrain that produces NaNs or absurd metrics keeps the previous model and surfaces diagnostics | Yes |
 | AC18 | Attempt to train on mock data is hard-refused | Yes |
+
+### Phase 3 contracts (P3.1–P3.6)
+
+These sit beside AC1–AC18 rather than rewriting them. Verify against
+`docs/phase3-p3*.md` and the `tests/test_*_p3*.py` suite.
+
+| WP | Must | Residual |
+|----|------|----------|
+| P3.1 | DFT+U path produces typed `DFTUResult`; conventional campaigns unchanged when `do_dftu` is off | — |
+| P3.2 | Wannier prep + quality metrics + `ready_for_dmft` gate | Automated nscf + `pw2wannier90` (P3.2.1) |
+| P3.3 | `DMFTResult` scaffold (model + gate + mock + optional observables parser); unconventional steps default off | Full automated solid_dmft / CTHYB launch |
+| P3.4 | Pairing eigenvalue → `performance_score` with documented `epw_then_dmft` precedence; mock scores tagged | — |
+| P3.5 | Opt-in nickelate O-vacancy / infinite-layer enum; nitride path inert when family off | — |
+| P3.6 | Mixed conventional/unconventional AL pools (`off` / `joint` / `separate`); default `off` | — |
+
+**Not claimed:** full automated solid_dmft/CTHYB, production ALIGNN/MatGL λ/Tc heads.
 
 ---
 

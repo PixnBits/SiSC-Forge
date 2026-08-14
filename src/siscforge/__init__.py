@@ -1,4 +1,11 @@
 """SiSC-Forge: silicon-compatible superconductor materials discovery."""
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("siscforge")
+except PackageNotFoundError:  # pragma: no cover - source tree without install
+    # Fallback only. Authoritative value is [project].version in pyproject.toml.
+    __version__ = "0.4.3"
+
 __all__ = ["__version__"]
