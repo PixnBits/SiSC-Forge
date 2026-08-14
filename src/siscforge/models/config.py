@@ -931,6 +931,29 @@ class JosephsonConfig(BaseModel):
             raise ValueError("josephson numeric knobs must be finite and > 0")
         return v
 
+    @field_validator("family_gap_ratios")
+    @classmethod
+    def _family_ratios_positive(cls, v: dict[str, float]) -> dict[str, float]:
+        """Reject non-finite / non-positive overrides (no silent fallback)."""
+        cleaned: dict[str, float] = {}
+        bad: dict[str, object] = {}
+        for key, val in (v or {}).items():
+            try:
+                x = float(val)
+            except (TypeError, ValueError):
+                bad[str(key)] = val
+                continue
+            if not math.isfinite(x) or x <= 0.0:
+                bad[str(key)] = val
+                continue
+            cleaned[str(key)] = x
+        if bad:
+            raise ValueError(
+                "josephson.family_gap_ratios values must be finite and > 0; "
+                f"got invalid entries {bad}"
+            )
+        return cleaned
+
     @field_validator("temperature_K")
     @classmethod
     def _finite_temp(cls, v: float | None) -> float | None:

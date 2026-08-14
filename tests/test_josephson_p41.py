@@ -146,6 +146,37 @@ def test_ab_icrn_t0_is_pi_over_two_times_gap() -> None:
     assert 0.0 < warm < icrn
 
 
+def test_temperature_at_or_above_tc_zeros_transport() -> None:
+    """Fixed-Δ AB stays finite above Tc; estimate_tier1 must zero proxies."""
+    ev = _ev(eph=_eph(tc=16.0), tc=16.0, source="epw")
+    cold = estimate_tier1(ev, JosephsonConfig(enabled=True, temperature_K=4.2))
+    at_tc = estimate_tier1(ev, JosephsonConfig(enabled=True, temperature_K=16.0))
+    above = estimate_tier1(ev, JosephsonConfig(enabled=True, temperature_K=20.0))
+    default_t0 = estimate_tier1(ev, JosephsonConfig(enabled=True, temperature_K=None))
+
+    assert cold.status == "ok"
+    assert cold.icrn_mV is not None and cold.icrn_mV > 0.0
+    assert cold.jc_A_per_cm2 is not None and cold.jc_A_per_cm2 > 0.0
+    assert "t_ge_tc_transport_zeroed" not in cold.formula_tags
+
+    for metrics in (at_tc, above):
+        assert metrics.status == "ok"
+        assert metrics.icrn_mV == 0.0
+        assert metrics.jc_A_per_cm2 == 0.0
+        assert metrics.switching_energy_eV == 0.0
+        assert metrics.ej_K == 0.0
+        assert metrics.ic_uA == 0.0
+        assert metrics.gap_meV == pytest.approx(cold.gap_meV)
+        assert "t_ge_tc_transport_zeroed" in metrics.formula_tags
+        assert "T-independent" in metrics.notes
+        assert metrics.raw.get("t_ge_tc") is True
+
+    # Bare AB formula is unchanged (still finite); the guard is in estimate_tier1.
+    bare = ambegaokar_baratoff_icrn_mV(cold.gap_meV or 0.0, temperature_K=20.0)
+    assert bare > 0.0
+    assert default_t0.icrn_mV == pytest.approx((math.pi / 2.0) * (default_t0.gap_meV or 0.0))
+
+
 def test_jc_and_ej_are_positive_and_area_consistent() -> None:
     icrn = ambegaokar_baratoff_icrn_mV(1.5)
     jc = jc_proxy_A_per_cm2(icrn, rna_ohm_um2=20.0)
@@ -293,11 +324,13 @@ def test_enabled_populates_top_n_only() -> None:
     assert out[2].josephson is None
 
 
-def test_enabled_without_rank_skips_shortlist_gate() -> None:
+def test_enabled_without_rank_skips_shortlist_gate(caplog: pytest.LogCaptureFixture) -> None:
     """Unranked rows are left unset when shortlist_only requires a rank."""
     ev = _ev(eph=_eph(tc=16.0), rank=None)
-    out = attach_josephson_metrics([ev], JosephsonConfig(enabled=True, shortlist_size=5))
+    with caplog.at_level("WARNING", logger="siscforge.josephson.attach"):
+        out = attach_josephson_metrics([ev], JosephsonConfig(enabled=True, shortlist_size=5))
     assert out[0].josephson is None
+    assert any("rank is missing" in rec.message for rec in caplog.records)
 
 
 def test_shortlist_only_false_annotates_unranked() -> None:
@@ -325,6 +358,12 @@ def test_attach_never_raises_on_garbage() -> None:
     # attach helper must swallow unexpected exceptions.
     out = attach_josephson_metrics([ev], _Boom())  # type: ignore[arg-type]
     assert len(out) == 1
+    skipped = out[0].josephson
+    assert skipped is not None
+    assert skipped.status == "skipped"
+    assert skipped.raw.get("reason") == "attach_failed"
+    assert "boom" in str(skipped.raw.get("error", "")).lower()
+    assert "boom" in skipped.notes.lower()
 
 
 def test_ranker_has_no_josephson_fork() -> None:
@@ -479,6 +518,12 @@ def test_yaml_knobs_validate() -> None:
         JosephsonConfig(rna_ohm_um2=-1.0)
     with pytest.raises(ValidationError):
         JosephsonConfig(temperature_K=-4.0)
+    with pytest.raises(ValidationError):
+        JosephsonConfig(family_gap_ratios={"tm_nitride": -1.0})
+    with pytest.raises(ValidationError):
+        JosephsonConfig(family_gap_ratios={"tm_nitride": 0.0})
+    with pytest.raises(ValidationError):
+        JosephsonConfig(family_gap_ratios={"tm_nitride": float("nan")})
 
 
 def test_docs_exist() -> None:
@@ -489,6 +534,11 @@ def test_docs_exist() -> None:
     assert "dmft_pairing" in doc
     assert "1.764" in doc
     assert "P4.2" in doc
+    assert "family_gap_ratios" in doc
+    assert "tm_nitride" in doc
+    assert "Temperature-independent" in doc
+    assert "assume_SIS" in doc
+    assert "1/RnA" in doc
     roadmap = (ROOT / "docs" / "ROADMAP.md").read_text()
     assert "P4.1" in roadmap
 

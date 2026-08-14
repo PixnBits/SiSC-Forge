@@ -122,6 +122,10 @@ def ambegaokar_baratoff_icrn_mV(
 
     At finite T: multiply by tanh(Δ / 2 k_B T). ``temperature_K is None``
     means the T = 0 (ranking) limit.
+
+    Δ is **not** temperature-dependent here. When *T* ≥ Tc the caller
+    (:func:`estimate_tier1`) zeros transport proxies; this function is
+    the bare AB tunnel formula and will still return a finite IcRn.
     """
     gap = _finite_positive(gap_meV)
     if gap is None:
@@ -414,12 +418,33 @@ def estimate_tier1(
 
     gap = float(extracted.gap_meV)
     t_k = getattr(cfg, "temperature_K", None)
+    tc_used = extracted.tc_used_K
+    t_ge_tc = (
+        t_k is not None
+        and tc_used is not None
+        and math.isfinite(float(t_k))
+        and float(t_k) >= float(tc_used)
+    )
+    rna = float(getattr(cfg, "rna_ohm_um2", DEFAULT_RNA_OHM_UM2))
+    area = float(getattr(cfg, "reference_area_um2", DEFAULT_AREA_UM2))
     try:
-        icrn = ambegaokar_baratoff_icrn_mV(gap, temperature_K=t_k)
-        rna = float(getattr(cfg, "rna_ohm_um2", DEFAULT_RNA_OHM_UM2))
-        jc = jc_proxy_A_per_cm2(icrn, rna_ohm_um2=rna)
-        area = float(getattr(cfg, "reference_area_um2", DEFAULT_AREA_UM2))
-        ej_eV, ej_K, ic_uA = switching_energy_eV(jc, reference_area_um2=area)
+        if t_ge_tc:
+            # Fixed-Δ AB would stay finite above Tc. Zero transport instead.
+            icrn = 0.0
+            jc = 0.0
+            ej_eV = 0.0
+            ej_K = 0.0
+            ic_uA = 0.0
+            notes.append(
+                f"temperature_K={float(t_k):g} K ≥ tc_used_K={float(tc_used):g} K — "
+                "Δ is T-independent in Tier-1; IcRn/Jc/EJ forced to 0 "
+                "(gap does not close above Tc in this model)"
+            )
+            formula_tags.append("t_ge_tc_transport_zeroed")
+        else:
+            icrn = ambegaokar_baratoff_icrn_mV(gap, temperature_K=t_k)
+            jc = jc_proxy_A_per_cm2(icrn, rna_ohm_um2=rna)
+            ej_eV, ej_K, ic_uA = switching_energy_eV(jc, reference_area_um2=area)
     except (TypeError, ValueError) as exc:
         notes.append(f"analytic estimate failed: {exc}")
         return JosephsonMetrics(
@@ -445,10 +470,11 @@ def estimate_tier1(
 
     if extracted.note:
         notes.append(extracted.note)
-    notes.append(
-        f"IcRn=(πΔ/2e)tanh(Δ/2kT); Jc=IcRn/RnA with RnA={rna:g} Ω·μm²; "
-        f"EJ=Φ0 Ic/2π at A={area:g} μm²"
-    )
+    if not t_ge_tc:
+        notes.append(
+            f"IcRn=(πΔ/2e)tanh(Δ/2kT); Jc=IcRn/RnA with RnA={rna:g} Ω·μm²; "
+            f"EJ=Φ0 Ic/2π at A={area:g} μm²"
+        )
     family = getattr(getattr(evaluation, "candidate", None), "material_family", None)
     if family == "mgb2_boride":
         notes.append(
@@ -482,6 +508,7 @@ def estimate_tier1(
             "reason": extracted.reason,
             "bcs_gap_ratio": ratio,
             "extract_note": extracted.note,
+            "t_ge_tc": t_ge_tc,
         },
         provenance=Provenance(
             source="siscforge.josephson.tier1",

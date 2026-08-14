@@ -57,7 +57,17 @@ r   = 1.764          # 2Δ / k_B Tc = 3.528 (weak-coupling BCS)
 
 `r` is `josephson.bcs_gap_ratio` (default 1.764). Optional
 `family_gap_ratios` may override per `material_family`. Empty by
-default — **no hidden family forks**.
+default — **no hidden family forks**. Typical literature 2Δ/k_B Tc
+values for the families this platform actually screens:
+
+| `material_family` | Suggested `family_gap_ratios` entry | Notes |
+|-------------------|--------------------------------------|-------|
+| *(default)* | `1.764` (`bcs_gap_ratio`) | Weak-coupling BCS |
+| `tm_nitride` | `2.05` | NbN tunnel data typically ~2.0–2.2 |
+| `mgb2_boride` | `2.1` | Isotropic / σ-gap effective; two-gap — ranking only |
+
+These are **operator knobs**, not hidden defaults. See the commented
+block in `examples/nbn_mgb2_josephson_tier1.yaml`.
 
 Tc itself comes from `ElectronPhononResult.best_tc_K()` (Eliashberg,
 else Allen–Dynes). `performance_score` is used **only** when
@@ -73,6 +83,16 @@ IcRn [mV] = (π/2) × Δ[meV] × tanh(Δ / 2 k_B T)
 `josephson.temperature_K: null` (default) is the T = 0 limit
 (`tanh → 1`), so `IcRn = (π/2) Δ`.
 
+Δ itself is **temperature-independent** (explicit or BCS-from-Tc).
+The tanh factor is *not* a Δ(T) closing law. When `temperature_K` ≥
+`tc_used_K`, transport proxies (`IcRn`, `Jc`, `EJ`) are forced to **0**
+and a note / `t_ge_tc_transport_zeroed` tag is recorded.
+
+This is the classic **Ambegaokar–Baratoff SIS tunnel** result.
+`assume_SIS` is recorded in `assumptions` but does **not** change the
+computation. SNS / proximity / high-transparency junctions are **not**
+covered (Tier-2 Usadel).
+
 ### Jc proxy (ranking geometry)
 
 ```
@@ -80,7 +100,10 @@ Jc [A/cm²] = IcRn [mV] / RnA [Ω·μm²] × 10⁵
 ```
 
 Default `rna_ohm_um2 = 20` (SIS-like screening default). This is **not**
-a measured specific resistance and **not** a device layout.
+a measured specific resistance and **not** a device layout. Jc scales
+**linearly with 1/RnA**; EJ and Ic scale **linearly with area and
+1/RnA**. A global rescale of the knobs does not change ranking *order*
+when every row shares the same RnA / area.
 
 ### Switching / EJ proxy
 
@@ -149,9 +172,19 @@ as such.
 
 - No Usadel, no BdG, no circuit simulation.
 - No fabrication-compatibility engine (SIS/SNS/ramp-edge rules) — **P4.2**.
+- AB formula is SIS tunnel only. `assume_SIS` is a recorded assumption,
+  not a model switch; SNS / proximity / high-transparency junctions are
+  out of scope.
+- **Temperature-independent Δ.** Tier-1 uses a fixed gap (explicit or
+  BCS-from-Tc). The AB tanh factor is applied, but the gap itself does
+  not close. If a user sets `temperature_K` ≥ `tc_used_K`, IcRn / Jc /
+  EJ are forced to 0 (otherwise the fixed-Δ formula stays finite above
+  Tc). Default `temperature_K: null` is the T = 0 ranking limit.
 - No secondary ranking on IcRn / Jc (`secondary_ranking` is reserved).
-- No family forks in the ranker.
+- No family forks in the ranker. `family_gap_ratios` is an explicit
+  operator map (empty by default).
 - Default RnA / area are ranking assumptions, not process recipes.
+  Jc ∝ 1/RnA; EJ ∝ area / RnA.
 - Mock EPW Tc produces `quality_tag=mock` metrics — still approximate.
 
 ## Enable

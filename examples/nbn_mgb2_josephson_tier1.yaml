@@ -44,6 +44,12 @@ josephson:
   rna_ohm_um2: 20.0
   assume_SIS: true
   temperature_K: null
+  # Weak-coupling BCS default is 1.764. Nitrides / MgB2 typically sit
+  # higher (literature 2Δ/k_B Tc). Uncomment to use family knobs —
+  # empty by default (no hidden forks). See docs/phase4-p41-josephson-tier1.md.
+  # family_gap_ratios:
+  #   tm_nitride: 2.05    # NbN tunnel data typically ~2.0–2.2
+  #   mgb2_boride: 2.1    # isotropic / σ-gap effective; two-gap — ranking only
   secondary_ranking: false
 
 output_dir: outputs/nbn_mgb2_josephson_tier1
