@@ -182,6 +182,18 @@ class SurrogateRegistry:
         self._write_current_pointer(meta)
         return meta
 
+    def list_prioritization_records(self, *, limit: int = 20) -> list[PrioritizationRecord]:
+        """Newest-first audit log (mtime). Empty if none written yet."""
+        root = self.root / "prioritization"
+        if not root.is_dir():
+            return []
+        paths = sorted(root.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        out: list[PrioritizationRecord] = []
+        for path in paths[: max(0, int(limit))]:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            out.append(PrioritizationRecord.model_validate(raw))
+        return out
+
     def record_prioritization(self, record: PrioritizationRecord) -> Path:
         path = self.root / "prioritization" / f"{record.record_id}.json"
         path.write_text(
@@ -394,6 +406,8 @@ def al_status(
     registry: SurrogateRegistry,
 ) -> dict[str, Any]:
     """Operator-facing status: label count, model version, bootstrap flag (AC15)."""
+    from siscforge.active_learning.pools import count_pools, derive_pool
+
     ts = training_store.summary()
     current = registry.current()
     n = int(ts.get("n_examples") or 0)
@@ -401,6 +415,31 @@ def al_status(
     bootstrap = ctx.bootstrap
     target = DEFAULT_BOOTSTRAP_MAX_LABELS
     by_family = dict(ts.get("by_family") or {})
+
+    examples = training_store.load_examples()
+    pool_counts = count_pools(
+        derive_pool(
+            material_family=e.material_family,
+            performance_score_source=e.tc_source,
+        ).pool
+        for e in examples
+    )
+    latest_pri = None
+    try:
+        recs = registry.list_prioritization_records(limit=1)
+        latest_pri = recs[0] if recs else None
+    except Exception:
+        latest_pri = None
+    last_mode = getattr(latest_pri, "acquisition_mode", None) if latest_pri else None
+    last_selected_by_pool = (
+        dict(getattr(latest_pri, "selected_by_pool", None) or {})
+        if latest_pri
+        else {}
+    )
+    mixed_used = (last_mode in {"joint", "separate"}) or (
+        pool_counts.get("conventional", 0) > 0
+        and pool_counts.get("unconventional", 0) > 0
+    )
     return {
         "training_set": ts,
         "model": (
@@ -432,6 +471,10 @@ def al_status(
             else f"Active model {current.model_version} ({current.training_set_size} labels)."
         ),
         "has_trained_payload": ctx.has_trained_payload,
+        "pools": pool_counts,
+        "acquisition_mode_last": last_mode,
+        "selected_by_pool_last": last_selected_by_pool,
+        "mixed_pools_used": mixed_used,
     }
 
 
@@ -446,9 +489,15 @@ def build_prioritization_record(
     deferred_ids: Sequence[str],
     notes: str = "",
     context: ActiveSurrogateContext | None = None,
+    acquisition_mode: str | None = None,
+    pool_counts: dict[str, int] | None = None,
+    selected_by_pool: dict[str, int] | None = None,
 ) -> PrioritizationRecord:
     """Attach provenance to a prioritization decision (AC14)."""
     scores = []
+    mode = acquisition_mode
+    pools: dict[str, int] = dict(pool_counts or {})
+    selected_pools: dict[str, int] = dict(selected_by_pool or {})
     for r in ranked:
         if hasattr(r, "model_dump"):
             d = r.model_dump(mode="json")
@@ -459,8 +508,19 @@ def build_prioritization_record(
                     "selected": d.get("selected_for_expensive"),
                     "predicted_tc": d.get("predicted_tc"),
                     "uncertainty": d.get("uncertainty"),
+                    "pool": d.get("pool"),
+                    "pool_reason": d.get("pool_reason"),
+                    "acquisition_mode": d.get("acquisition_mode"),
+                    "score_signal": d.get("score_signal"),
                 }
             )
+            if mode is None and d.get("acquisition_mode"):
+                mode = d.get("acquisition_mode")
+            pool = d.get("pool")
+            if pool:
+                pools[str(pool)] = pools.get(str(pool), 0) + 1
+                if d.get("selected_for_expensive"):
+                    selected_pools[str(pool)] = selected_pools.get(str(pool), 0) + 1
         elif isinstance(r, dict):
             scores.append(r)
     if context is not None:
@@ -491,6 +551,9 @@ def build_prioritization_record(
         deferred_ids=list(deferred_ids),
         ranked_scores=scores,
         notes=notes,
+        acquisition_mode=mode or "off",
+        pool_counts=pools,
+        selected_by_pool=selected_pools,
     )
 
 

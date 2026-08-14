@@ -337,7 +337,8 @@ def test_docs_exist() -> None:
     assert "P3.6" in doc
     assert "material_families" in doc
     assert "Hayward" in doc
-    assert "pending merge" in doc.lower()
+    assert "done" in doc.lower() or "shipped" in doc.lower()
+    assert "P3.6" in doc
 
 
 def test_nickelate_supercell_validation() -> None:

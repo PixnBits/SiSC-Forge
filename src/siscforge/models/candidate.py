@@ -195,6 +195,15 @@ class CandidateEvaluation(BaseModel):
     al_selected_for_expensive: bool | None = None
     """Whether AL selected this candidate for the expensive calculator path."""
 
+    acquisition_pool: str | None = None
+    """P3.6 pathway pool: ``conventional`` | ``unconventional`` | ``unknown``."""
+
+    acquisition_mode: str | None = None
+    """P3.6 acquisition mode used for this row: ``off`` | ``joint`` | ``separate``."""
+
+    acquisition_pool_reason: str | None = None
+    """Documented pool-derivation winner (e.g. ``source:dmft_pairing``)."""
+
     result_quality: Literal[
         "production",
         "screening",

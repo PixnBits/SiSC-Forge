@@ -1,0 +1,69 @@
+# P3.6 mixed conventional / unconventional acquisition (dry-run)
+#
+#   siscforge run --dry-run examples/mixed_al_pools.yaml
+#
+# Demonstrates pool_mode: separate so nitrides (EPW / surrogate) and
+# nickelates (DMFT pairing) cannot starve each other. Switch to `joint`
+# for a single ranked list on the common performance_score axis.
+# Default campaigns omit pool_mode (off) and keep pre-P3.6 behaviour.
+#
+# See docs/phase3-p36-mixed-al.md.
+
+name: mixed_al_pools
+description: >
+  Tiny mixed nitride + nickelate campaign exercising P3.6 separate-pool
+  acquisition. Mock calculator only — no real EPW or CTHYB.
+version: "0.1"
+dry_run: true
+
+enumeration:
+  material_families:
+    - tm_nitride
+    - nickelate
+  metals:
+    - Nb
+    - Ti
+  strain_values:
+    - 0.0
+  substrates:
+    - Si(001)
+  nickelate_rare_earths:
+    - Nd
+  nickelate_patterns:
+    - stoichiometric
+  max_candidates: 12
+
+calculators:
+  - name: mock
+
+active_learning:
+  enabled: true
+  strategy: uncertainty_si_tc
+  max_epw_jobs: 4
+  pool_mode: separate
+  pool_quotas:
+    conventional: 0.5
+    unconventional: 0.5
+    unknown: 0.0
+  weights:
+    uncertainty: 0.4
+    predicted_tc: 0.3
+    si_feasibility: 0.3
+    hull_penalty: 0.1
+
+dft:
+  do_dmft: true
+  dmft:
+    enabled: true
+    solver: mock
+
+ranking:
+  performance_weight: 0.55
+  si_feasibility_weight: 0.45
+  performance_precedence: epw_then_dmft
+
+output_dir: outputs/mixed_al_pools
+export_formats:
+  - json
+  - csv
+  - markdown

@@ -136,7 +136,7 @@ A first useful prioritization model should appear after a few months of steady w
 3. Acquisition function that records its decisions.
 4. Lightweight retrain/update trigger after each shortlist cycle.
 5. Full observability, bootstrap-mode messaging, and the failure-mode table above.
-6. Later: mature mixed conventional/unconventional acquisition (Phase 3).
+6. Later: mature mixed conventional/unconventional acquisition (Phase 3 **P3.6** — shipped; see `docs/phase3-p36-mixed-al.md`).
 
 The existing phonon-first, trust-layer, resume, and shortlist machinery already supplies most of the scaffolding. The work above is largely state management, provenance, and operator-facing contracts.
 

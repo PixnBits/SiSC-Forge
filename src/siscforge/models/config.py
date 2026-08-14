@@ -183,6 +183,19 @@ class ActiveLearningWeights(BaseModel):
     hull_penalty: float = Field(default=0.1, ge=0.0)
 
 
+class ActiveLearningPoolQuotas(BaseModel):
+    """Max fraction of ``max_epw_jobs`` reserved per pool (``separate`` mode).
+
+    Slots are ``floor(fraction × k)``. Leftover batch slots fill by global
+    acquisition score so an empty pool cannot starve a present one.
+    Unused when ``pool_mode`` is ``off`` or ``joint``.
+    """
+
+    conventional: float = Field(default=0.5, ge=0.0, le=1.0)
+    unconventional: float = Field(default=0.5, ge=0.0, le=1.0)
+    unknown: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class ActiveLearningConfig(BaseModel):
     enabled: bool = False
     strategy: Literal["uncertainty_si_tc"] = "uncertainty_si_tc"
@@ -192,6 +205,21 @@ class ActiveLearningConfig(BaseModel):
     evaluate_deferred_with_surrogate: bool = True
     al_root: str | None = None
     version: str = "0.2-flywheel"
+    # --- P3.6 mixed conventional / unconventional pools ---
+    pool_mode: Literal["off", "joint", "separate"] = Field(
+        default="off",
+        description=(
+            "P3.6 acquisition pools. ``off`` (default) is pre-P3.6 top-k on "
+            "the family-mean surrogate. ``joint`` is one ranked list using "
+            "common performance_score + uncertainty when present. "
+            "``separate`` keeps per-pool reserved quotas so one pathway "
+            "cannot starve the other."
+        ),
+    )
+    pool_quotas: ActiveLearningPoolQuotas = Field(
+        default_factory=ActiveLearningPoolQuotas,
+        description="Per-pool max fractions of max_epw_jobs (separate mode).",
+    )
 
 
 class CandidateSpec(BaseModel):
@@ -679,7 +707,8 @@ class DMFTConfig(BaseModel):
 
     Extension points (not implemented here):
     - **P3.5** oxygen-vacancy enumeration (**shipped** — structure generation)
-    - **P3.6** mixed conventional/unconventional AL
+    - **P3.6** mixed conventional/unconventional AL (**shipped** — see
+      ``docs/phase3-p36-mixed-al.md``)
     """
 
     enabled: bool = False
