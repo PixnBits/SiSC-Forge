@@ -491,8 +491,80 @@ class DMFTResult(BaseModel):
         return "; ".join(bits)
 
 
+class JosephsonFabricationHints(BaseModel):
+    """P4.2 rule-based fabrication-compatibility hints (heuristic only).
+
+    Nested on :class:`JosephsonMetrics.fabrication`. Reuses Phase-2
+    Si-feasibility signals; does **not** qualify a process or foundry PDK.
+    See ``docs/phase4-p42-fabrication.md``.
+    """
+
+    suggested_junction_class: Literal["SIS", "SNS", "ramp_edge", "unknown"] = "unknown"
+    """Heuristic junction-class label. Not a process assignment."""
+
+    alternative_classes: list[str] = Field(default_factory=list)
+    """Other class labels worth considering (e.g. ramp-edge next to SNS)."""
+
+    beol_friendly: bool | None = None
+    """True when process ceiling ≤ CMOS-ish BEOL limit; None if unknown."""
+
+    thermal_budget_caution: bool = False
+    """True when the Si process ceiling (or high_thermal_budget flag) conflicts
+    with a CMOS-ish BEOL limit."""
+
+    process_temp_ceiling_c: float | None = None
+    """Copied from Si-feasibility for audit (not re-derived)."""
+
+    chemical_flags: list[str] = Field(default_factory=list)
+    """Copied Si chemical / process-window flags."""
+
+    recommended_stacks: list[str] = Field(default_factory=list)
+    """Copied Si recommended buffers / stacks."""
+
+    membrane_transfer_candidate: bool | None = None
+    """Copied Si membrane flag; None when Si-feasibility is missing."""
+
+    flags: list[str] = Field(default_factory=list)
+    """Machine-readable tags (``sis``, ``thermal_budget_caution``, …)."""
+
+    notes: list[str] = Field(default_factory=list)
+    """Short human notes, always including the heuristic caveat."""
+
+    status: str = "unknown"
+    """``ok`` when a class or Si signal was available; ``unknown`` otherwise."""
+
+    heuristic: bool = True
+    """These labels are never a process qualification."""
+
+    assume_sis: bool | None = None
+    """Snapshot of ``josephson.assume_SIS`` used for the class rule."""
+
+    beol_temp_ceiling_c: float | None = None
+    """CMOS-ish BEOL comparison threshold (°C) used for this row."""
+
+    family: str | None = None
+    """``material_family`` used for the class table."""
+
+    def summary_line(self) -> str:
+        bits = [
+            f"class={self.suggested_junction_class}",
+            "heuristic=true",
+        ]
+        if self.alternative_classes:
+            bits.append("alts=" + ",".join(self.alternative_classes))
+        if self.beol_friendly is True:
+            bits.append("beol_friendly")
+        elif self.beol_friendly is False:
+            bits.append("not_beol_friendly")
+        if self.thermal_budget_caution:
+            bits.append("thermal_caution")
+        bits.append(f"status={self.status}")
+        return "; ".join(bits)
+
+
 class JosephsonMetrics(BaseModel):
-    """Tier-1 analytic Josephson figures of merit (P4.1).
+    """Tier-1 analytic Josephson figures of merit (P4.1) plus optional
+    P4.2 fabrication hints.
 
     Optional attachment on :class:`~siscforge.models.candidate.CandidateEvaluation`.
     Produced only when ``josephson.enabled`` is true. Conventional campaigns
@@ -500,7 +572,8 @@ class JosephsonMetrics(BaseModel):
 
     **Always approximate / ranking only.** ``approximate`` is forced True
     for this tier. Units: gap **meV**, IcRn **mV**, Jc **A/cm²**,
-    switching energy **eV**. See ``docs/phase4-p41-josephson-tier1.md``.
+    switching energy **eV**. See ``docs/phase4-p41-josephson-tier1.md``
+    and ``docs/phase4-p42-fabrication.md``.
     """
 
     approximate: bool = True
@@ -562,6 +635,15 @@ class JosephsonMetrics(BaseModel):
     assumptions: dict[str, Any] = Field(default_factory=dict)
     """Documented geometry / ratio knobs used for this row."""
 
+    fabrication: JosephsonFabricationHints | None = None
+    """P4.2 fabrication-compatibility hints. None when hints are off / inert."""
+
+    secondary_ranking: str | None = None
+    """P4.2 presentation sort key actually applied (``icrn`` / ``jc``); None if none."""
+
+    secondary_order: int | None = None
+    """1-based order within the Josephson shortlist after optional secondary sort."""
+
     raw: dict[str, Any] = Field(default_factory=dict)
     provenance: Provenance = Field(default_factory=Provenance)
 
@@ -584,6 +666,8 @@ class JosephsonMetrics(BaseModel):
             bits.append(f"Jc={self.jc_A_per_cm2:g} A/cm²")
         if self.switching_energy_eV is not None:
             bits.append(f"EJ={self.switching_energy_eV:g} eV")
+        if self.fabrication is not None:
+            bits.append(f"fab={self.fabrication.suggested_junction_class}")
         bits.append(f"method={self.method}")
         bits.append(f"status={self.status}")
         return "; ".join(bits)

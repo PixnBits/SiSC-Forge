@@ -1,8 +1,16 @@
 # SiSC-Forge
 ## Product Requirements Document
 
-**Version 0.4.2 – Phase 2 complete + Phase 3 software path (P3.1–P3.6) + P4.1**  
-*(Extends v0.4.1 with Josephson Tier-1 analytic estimates. Module remains inert unless enabled. Usadel/BdG and fabrication heuristics remain later.)*
+**Version 0.4.3 – Phase 2 complete + Phase 3 software path (P3.1–P3.6) + P4.1 + P4.2**  
+*(Extends v0.4.2 with fabrication-compatibility heuristics and an optional
+Josephson shortlist presentation sort. Module remains inert unless enabled.
+Usadel/BdG remain later.)*
+
+### Changelog (v0.4.2 → v0.4.3)
+
+| Theme | What was added / corrected |
+|-------|----------------------------|
+| P4.2 | Fabrication-compatibility hints (SIS / SNS / ramp-edge, BEOL / thermal flags, stack notes) reused from Si-feasibility. Optional presentation-only `secondary_ranking` on IcRn / Jc. No ranker-math change. |
 
 ### Changelog (v0.4.1 → v0.4.2)
 

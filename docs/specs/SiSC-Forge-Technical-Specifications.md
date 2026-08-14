@@ -298,10 +298,15 @@ BCS-from-Tc metrics to the top-N ranked evaluations.
 - EJ-style switching energy at `reference_area_um2` (default 1 μm²).
 - Always labelled **approximate / ranking only**. `approximate: true` is
   forced.
-- No ranker fork. `secondary_ranking` is reserved.
-- Fabrication-compatibility heuristics, Usadel, and BdG are later.
+- No ranker fork. Optional `secondary_ranking: none | icrn | jc` reorders
+  only the Josephson-annotated shortlist for presentation (`rank` /
+  `composite_score` unchanged).
+- Fabrication-compatibility heuristics (P4.2) attach SIS / SNS /
+  ramp-edge labels and BEOL / thermal flags by reusing Si-feasibility
+  signals. Usadel and BdG remain later.
 
-See `docs/phase4-p41-josephson-tier1.md`.
+See `docs/phase4-p41-josephson-tier1.md` and
+`docs/phase4-p42-fabrication.md`.
 
 
 ### 2.9 Docker / distribution
@@ -482,7 +487,9 @@ josephson:
   temperature_K: null
   bcs_gap_ratio: 1.764
   family_gap_ratios: {}
-  secondary_ranking: false   # reserved; P4.1 does not change ranking
+  fabrication_hints: true    # P4.2; only runs when enabled
+  beol_temp_ceiling_c: 400
+  secondary_ranking: none    # none | icrn | jc — presentation only
 ```
 
 ---
@@ -582,4 +589,4 @@ josephson:
 
 ---
 
-*This document (v0.5.2) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson Tier-1 is inert unless `josephson.enabled`. PRD v0.4.2 is the product authority; this file is the engineering contract.*
+*This document (v0.5.2) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1–P4.2). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson is inert unless `josephson.enabled`. PRD v0.4.3 is the product authority; this file is the engineering contract.*

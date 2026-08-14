@@ -1,9 +1,13 @@
-# P4.1 — Josephson Tier-1 analytics on a nitride + MgB2 mock campaign.
+# P4.1 / P4.2 — Josephson Tier-1 analytics + fabrication heuristics
+# on a nitride + MgB2 mock campaign.
 #
-# Dry-run (mock EPW Tc → BCS gap → Ambegaokar–Baratoff proxies):
+# Dry-run (mock EPW Tc → BCS gap → Ambegaokar–Baratoff proxies +
+# Si-feasibility-driven SIS/SNS / thermal hints):
 #   siscforge run --dry-run examples/nbn_mgb2_josephson_tier1.yaml
 #
-# Metrics are APPROXIMATE / RANKING ONLY. See docs/phase4-p41-josephson-tier1.md.
+# Metrics are APPROXIMATE / RANKING ONLY. Fabrication labels are
+# heuristics, not process qualification.
+# See docs/phase4-p41-josephson-tier1.md and docs/phase4-p42-fabrication.md.
 
 name: nbn_mgb2_josephson_tier1
 description: >
@@ -50,7 +54,9 @@ josephson:
   # family_gap_ratios:
   #   tm_nitride: 2.05    # NbN tunnel data typically ~2.0–2.2
   #   mgb2_boride: 2.1    # isotropic / σ-gap effective; two-gap — ranking only
-  secondary_ranking: false
+  fabrication_hints: true
+  beol_temp_ceiling_c: 400
+  secondary_ranking: none   # none | icrn | jc — presentation only; rank unchanged
 
 output_dir: outputs/nbn_mgb2_josephson_tier1
 export_formats:

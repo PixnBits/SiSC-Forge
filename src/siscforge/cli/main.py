@@ -43,7 +43,7 @@ from siscforge.export import (
     write_evaluations_json,
     write_synthesis_cards,
 )
-from siscforge.josephson import attach_josephson_metrics
+from siscforge.josephson import attach_josephson_metrics, secondary_ranking_summary
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import CampaignConfig, RunConfig
 from siscforge.models.provenance import Provenance
@@ -282,6 +282,7 @@ def rank_cmd(
     )
     if camp is not None:
         ranked = attach_josephson_metrics(ranked, camp.josephson)
+        _print_josephson_presentation_note(ranked)
     _print_rank_table(ranked, title="Ranked candidates", ranking_config=ranking_cfg)
 
     if output is not None:
@@ -1772,6 +1773,7 @@ def run_cmd(
         evaluations, config.ranking, stable_first=phonon_only
     )
     ranked = attach_josephson_metrics(ranked, config.josephson)
+    _print_josephson_presentation_note(ranked)
     store.save_evaluations(ranked, ranked=True)
     store.save_evaluations(ranked, ranked=False)  # canonical evaluations.json
     store.save_campaign(config)
@@ -1865,6 +1867,15 @@ def _print_acquisition_table(
     if len(records) > max_rows:
         table.caption = f"Showing top {max_rows} of {len(records)} (see active_learning.json)"
     console.print(table)
+
+
+def _print_josephson_presentation_note(
+    evaluations: list[CandidateEvaluation],
+) -> None:
+    """One-line reminder when P4.2 reordered the Josephson shortlist."""
+    msg = secondary_ranking_summary(evaluations)
+    if msg:
+        console.print(f"[cyan]{msg}[/cyan]")
 
 
 def _print_rank_table(

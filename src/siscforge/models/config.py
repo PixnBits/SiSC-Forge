@@ -892,16 +892,18 @@ class DFTConfig(BaseModel):
 
 
 class JosephsonConfig(BaseModel):
-    """P4.1 Josephson Tier-1 analytics — **disabled by default**.
+    """P4.1/P4.2 Josephson analytics — **disabled by default**.
 
     When ``enabled`` is false the module is completely inert: no metrics
     are attached and existing campaigns are unchanged. When enabled,
     Ambegaokar–Baratoff / BCS-from-Tc estimates are attached to the
     top-``shortlist_size`` ranked evaluations (or all rows when
-    ``shortlist_only`` is false / ``shortlist_size`` ≤ 0).
+    ``shortlist_only`` is false / ``shortlist_size`` ≤ 0). P4.2 also
+    attaches fabrication-compatibility hints (default on whenever the
+    module is enabled) and may soft-reorder the Josephson shortlist
+    for presentation when ``secondary_ranking`` is ``icrn`` or ``jc``.
 
-    ``secondary_ranking`` is reserved for a later package and is **not**
-    applied by P4.1 (the ranker has no Josephson fork).
+    Secondary sort does **not** change ``rank`` / ``composite_score``.
     """
 
     enabled: bool = False
@@ -921,10 +923,51 @@ class JosephsonConfig(BaseModel):
     """Δ / k_B Tc used when no Eliashberg / explicit gap is present."""
     family_gap_ratios: dict[str, float] = Field(default_factory=dict)
     """Optional per-``material_family`` BCS ratio overrides (documented)."""
-    secondary_ranking: bool = False
-    """Reserved. P4.1 does not change ranking / Pareto."""
+    fabrication_hints: bool = True
+    """When Josephson is enabled, also attach P4.2 fabrication heuristics.
+    Opt-out; default on so enabling Josephson surfaces SIS/SNS/thermal notes.
+    """
+    beol_temp_ceiling_c: float = Field(default=400.0, gt=0.0)
+    """CMOS-ish BEOL comparison threshold (°C). Heuristic, not a PDK limit."""
+    secondary_ranking: Literal["none", "icrn", "jc"] = "none"
+    """Soft presentation sort **within** the Josephson-annotated shortlist.
+    ``none`` (default) leaves list order as composite rank. ``icrn`` / ``jc``
+    reorder those rows only; ``rank`` and ``composite_score`` stay put.
+    YAML ``false`` / ``true`` coerce to ``none`` / ``icrn``.
+    """
 
-    @field_validator("reference_area_um2", "rna_ohm_um2", "bcs_gap_ratio")
+    @classmethod
+    def normalize_secondary_ranking(cls, v: object) -> Literal["none", "icrn", "jc"]:
+        """Single source of truth for ``secondary_ranking`` YAML coercion.
+
+        ``false`` / ``None`` / ``\"none\"`` → ``none``;
+        ``true`` / ``\"icrn\"`` → ``icrn``; ``\"jc\"`` → ``jc``.
+        """
+        if v is None or v is False:
+            return "none"
+        if v is True:
+            return "icrn"
+        if isinstance(v, str):
+            text = v.strip().lower()
+            if text in {"", "none", "false", "off", "0"}:
+                return "none"
+            if text in {"true", "on", "1", "icrn"}:
+                return "icrn"
+            if text == "jc":
+                return "jc"
+        raise ValueError(
+            "josephson.secondary_ranking must be one of: none, icrn, jc "
+            f"(bool false→none, true→icrn); got {v!r}"
+        )
+
+    @field_validator("secondary_ranking", mode="before")
+    @classmethod
+    def _coerce_secondary_ranking(cls, v: object) -> str:
+        return cls.normalize_secondary_ranking(v)
+
+    @field_validator(
+        "reference_area_um2", "rna_ohm_um2", "bcs_gap_ratio", "beol_temp_ceiling_c"
+    )
     @classmethod
     def _finite_positive_knob(cls, v: float) -> float:
         if not math.isfinite(v) or v <= 0.0:
