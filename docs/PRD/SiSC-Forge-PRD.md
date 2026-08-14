@@ -1,8 +1,17 @@
 # SiSC-Forge
 ## Product Requirements Document
 
-**Version 0.3.1 – Active-learning flywheel & bootstrap**  
-*(Extends v0.3 with explicit intermediate LN₂+ target, interleaved active-learning bootstrap, seed-set guidance, and operator-experience requirements for the surrogate flywheel. See also `docs/design/active-learning-flywheel.md`.)*
+**Version 0.4.0 – Phase 2 complete + Phase 3 vertical slice (DFT+U → Wannier gate → DMFT scaffold → pairing score)**  
+*(Extends v0.3.1 with Silicon Integration maturity (P2.1–P2.5), process-recommendation cards, and the first unconventional pathway slice. Family-mean AL surrogate remains the production prioritization model; full ALIGNN/MatGL GNN heads and real solid_dmft/CTHYB launch remain residual.)*
+
+### Changelog (v0.3.1 → v0.4.0)
+
+| Theme | What was added / corrected |
+|-------|----------------------------|
+| Phase 2 | Si component weights + YAML override + export (P2.1); multi-layer buffer stacks + chemical/thermal windows (P2.2); critical thickness (Matthews–Blakeslee / People–Bean) + membrane heuristics (P2.3); multi-objective ranking + Pareto + provenance (P2.4); process-recommendation synthesis cards + schema 1.0 freeze (P2.5) — **complete** |
+| Phase 3 partial | DFT+U + `DFTUResult` (P3.1); Wannier prep + quality metrics + `ready_for_dmft` (P3.2, residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + optional observables parser — **not** full automated solid_dmft/CTHYB) (P3.3); pairing eigenvalue → common `performance_score` with `epw_then_dmft` precedence (P3.4); oxygen-vacancy / infinite-layer enumeration (P3.5) |
+| Status honesty | Mock DMFT numbers are illustrative; no guaranteed room-temp SC; production GNN λ/Tc heads and full real DMFT launch remain later |
+| Ranking | Ranking already consumes DMFT pairing-derived `performance_score`; process-recommendation cards exist |
 
 ### Changelog (v0.3 → v0.3.1)
 
@@ -132,22 +141,22 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Explicit promotion of clean results into the training set (never silent).
 - Active-learning prioritization (already shipped) **plus** a lightweight retrain/update path that can be triggered after each shortlist cycle.
 - Bootstrap-mode observability and the operator-experience requirements in `docs/design/active-learning-flywheel.md`.
-- Improved buffer-layer recommendation engine and thermal-budget scoring (v0.2 scorer + buffers shipped; multi-layer stacks later).
+- Improved buffer-layer recommendation engine and thermal-budget scoring (v0.2 scorer + buffers shipped; multi-layer stacks + critical thickness shipped in Phase 2).
 - MgB₂ and simple boride support.
 - Screening-quality vs production-quality calculation tags.
 
-**P2 – Unconventional Pathway & Advanced Si Integration**
-- TRIQS/solid_dmft DFT+DMFT + pairing-eigenvalue pathway for infinite-layer nickelates.
-- Full multi-layer buffer stacks, interface-slab calculations, and freestanding membrane models.
-- Explicit oxygen-vacancy enumeration for nickelates.
-- Multi-objective Pareto ranking and richer synthesis recipe cards.
-- **Material-specific Wannier projections** automation beyond `proj=random` screening template.
+**P2 – Silicon Integration Maturity + Ranking Polish — DELIVERED (P2.1–P2.5)**
+- Full Si-feasibility component breakdown with YAML weights and export (P2.1).
+- Multi-layer buffer stacks + chemical/thermal window flags (P2.2).
+- Critical thickness (Matthews–Blakeslee / People–Bean) + membrane-transfer heuristics (P2.3).
+- Multi-objective ranking weights + Pareto front + ranking provenance (P2.4).
+- Process-recommendation synthesis cards + frozen schema `1.0` (`process_recommendations.json`) (P2.5).
+- (Deferred from P2) interface-slab DFT, FEM membrane mechanics, CALPHAD — later.
 
-**P3 – Device-Aware Ranking & Later**
-- Simple Josephson-junction device modeling (critical current Ic, Ic Rn, gap Δ, switching energy, basic BdG/Usadel estimates).
-- Anisotropic Eliashberg / SCDFT.
-- Proximity-effect modeling refinements.
-- Generative structure models, web dashboard, community data contribution.
+**P3 – Unconventional Pathway (in progress) + Device-Aware Ranking (later)**
+- **Shipped (P3.1–P3.5):** DFT+U + `DFTUResult`; Wannier prep + `ready_for_dmft` gate (residual automated nscf+pw2wannier90); `DMFTResult` scaffold (model + gate + mock + drop-in parser — **not** full automated solid_dmft/CTHYB launch); pairing eigenvalue → common `performance_score` with documented precedence; oxygen-vacancy / infinite-layer enumeration for nickelates.
+- **Residual / next:** P3.6 mixed conventional/unconventional AL acquisition; full real solid_dmft / CTHYB launch (`p3_x_real_launch`); production GNN λ/Tc heads (ALIGNN/MatGL); material-specific production Wannier libraries.
+- **Later (Phase 4+):** Simple Josephson-junction device modeling (Ic, Ic Rn, gap, switching energy); anisotropic Eliashberg / SCDFT; proximity refinements; generative models, web dashboard.
 
 ## 6. User Stories / Key Workflows
 
@@ -155,10 +164,10 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 As a computational materials scientist, I want to define a single YAML campaign that explores Nb₁₋ₓTiₓN compositions under epitaxial strain on Si(001), so that the system enumerates cells, filters by ML stability and Si-feasibility, runs phonon (and later EPW) calculations on the most promising candidates, and returns a ranked list with recommended buffers and synthesis metadata.
 
 **US2 – Unconventional Superconductivity Specialist**  
-As a theorist focused on nickelates, I want the same ranking framework to accept either Eliashberg Tc or DMFT leading pairing eigenvalues as the performance metric, so that conventional and unconventional candidates can be compared on equal footing with a consistent Silicon Feasibility Score.
+As a theorist focused on nickelates, I want the same ranking framework to accept either Eliashberg Tc or DMFT leading pairing eigenvalues as the performance metric (via the common `performance_score` and documented precedence), so that conventional and unconventional candidates can be compared on equal footing with a consistent Silicon Feasibility Score. (Pairing map and ranking wiring shipped; full automated DMFT launch residual.)
 
 **US3 – Process / Device Engineer**  
-As a superconducting-electronics process engineer, I want every high-ranking candidate accompanied by a clear synthesis metadata card (max thermal budget, preferred buffer stack, lattice mismatch, oxygen/nitrogen window, membrane-transfer notes), so that I can assess foundry compatibility immediately.
+As a superconducting-electronics process engineer, I want every high-ranking candidate accompanied by a clear synthesis metadata card and machine-readable process-recommendation record (schema 1.0: max thermal budget, preferred buffer stack, lattice mismatch, chemical/thermal windows, membrane-transfer notes), so that I can assess foundry compatibility immediately. (Process-recommendation cards and schema freeze shipped in P2.5.)
 
 **US4 – Developer / Extender**  
 As a developer, I want to implement a new Calculator class (new property, new solver, or new material-family enumerator) that returns a validated Pydantic result model and have it automatically appear in the workflow registry, ranking, and active-learning loop without modifying core orchestration code.
@@ -264,9 +273,9 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 | Material-specific Wannier projections | Still required for reliable production λ/Tc |
 | Guaranteed EPW success on all strained cells | Terminal phonon-complete / EPW-blocked is valid |
 | Full mature AL retrain on large EPW corpora | Prioritization + lightweight retrain first; mature loops later |
-| DMFT / Josephson | Phases 2–3+ |
+| Full real DMFT launch / Josephson | Phase 3 residual / Phase 4 |
 | Room-temperature SC discovery | Non-goal |
 
 ---
 
-*This PRD (v0.3.1) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document, the companion Technical Specifications, and the design note `docs/design/active-learning-flywheel.md`. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28); this PRD states the requirements those slices satisfy.*
+*This PRD (v0.4.0) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document, the companion Technical Specifications, and the design note `docs/design/active-learning-flywheel.md`. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28); this PRD states the requirements those slices satisfy.*
