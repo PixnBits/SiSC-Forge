@@ -589,4 +589,4 @@ josephson:
 
 ---
 
-*This document (v0.5.2) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson Tier-1 is inert unless `josephson.enabled`. PRD v0.4.2 is the product authority; this file is the engineering contract.*
+*This document (v0.5.2) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1–P4.2). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson is inert unless `josephson.enabled`. PRD v0.4.3 is the product authority; this file is the engineering contract.*

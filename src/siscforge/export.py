@@ -8,6 +8,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from siscforge.josephson.fabrication import (
+    NON_SIS_AB_CAVEAT,
+    format_fab_notes_for_csv,
+)
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 
 # ---------------------------------------------------------------------------
@@ -277,6 +281,17 @@ def write_process_recommendations_json(
     return path
 
 
+def _jj(ev: CandidateEvaluation):
+    """JosephsonMetrics or None."""
+    return getattr(ev, "josephson", None)
+
+
+def _jj_fab(ev: CandidateEvaluation):
+    """Nested P4.2 fabrication hints or None."""
+    jj = _jj(ev)
+    return getattr(jj, "fabrication", None) if jj is not None else None
+
+
 def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
     """Flat row for CSV / tables with Phase-0 summary fields."""
     si = ev.si_feasibility
@@ -287,6 +302,8 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
     hull = cand.energy_above_hull_proxy
     if hull is None and scf is not None:
         hull = scf.energy_above_hull_eV_per_atom
+    jj = _jj(ev)
+    fab = _jj_fab(ev)
 
     return {
         "rank": ev.rank,
@@ -490,86 +507,43 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
             if getattr(ev, "dmft", None) is not None
             else ""
         ),
-        # P4.1 Josephson Tier-1 (empty when disabled / absent)
-        "josephson_approximate": (
-            True
-            if getattr(ev, "josephson", None) is not None
-            else None
-        ),
-        "josephson_status": (
-            ev.josephson.status if getattr(ev, "josephson", None) is not None else ""
-        ),
-        "josephson_gap_meV": (
-            ev.josephson.gap_meV if getattr(ev, "josephson", None) is not None else None
-        ),
-        "josephson_gap_source": (
-            (ev.josephson.gap_source or "")
-            if getattr(ev, "josephson", None) is not None
-            else ""
-        ),
-        "josephson_tc_used_K": (
-            ev.josephson.tc_used_K
-            if getattr(ev, "josephson", None) is not None
-            else None
-        ),
-        "josephson_icrn_mV": (
-            ev.josephson.icrn_mV if getattr(ev, "josephson", None) is not None else None
-        ),
-        "josephson_jc_A_per_cm2": (
-            ev.josephson.jc_A_per_cm2
-            if getattr(ev, "josephson", None) is not None
-            else None
-        ),
-        "josephson_switching_energy_eV": (
-            ev.josephson.switching_energy_eV
-            if getattr(ev, "josephson", None) is not None
-            else None
-        ),
-        "josephson_method": (
-            ev.josephson.method if getattr(ev, "josephson", None) is not None else ""
-        ),
-        "josephson_notes": (
-            ev.josephson.notes if getattr(ev, "josephson", None) is not None else ""
-        ),
-        "josephson_junction_class": (
-            (ev.josephson.fabrication.suggested_junction_class or "")
-            if getattr(ev, "josephson", None) is not None
-            and getattr(ev.josephson, "fabrication", None) is not None
-            else ""
-        ),
-        "josephson_beol_friendly": (
-            ev.josephson.fabrication.beol_friendly
-            if getattr(ev, "josephson", None) is not None
-            and getattr(ev.josephson, "fabrication", None) is not None
-            else None
-        ),
-        "josephson_thermal_caution": (
-            ev.josephson.fabrication.thermal_budget_caution
-            if getattr(ev, "josephson", None) is not None
-            and getattr(ev.josephson, "fabrication", None) is not None
-            else None
-        ),
-        "josephson_fab_flags": (
-            ";".join(ev.josephson.fabrication.flags)
-            if getattr(ev, "josephson", None) is not None
-            and getattr(ev.josephson, "fabrication", None) is not None
-            else ""
-        ),
-        "josephson_fab_notes": (
-            " | ".join(ev.josephson.fabrication.notes)
-            if getattr(ev, "josephson", None) is not None
-            and getattr(ev.josephson, "fabrication", None) is not None
-            else ""
-        ),
+        # P4.1 / P4.2 Josephson (empty when disabled / absent)
+        "josephson_approximate": True if jj is not None else None,
+        "josephson_status": (jj.status if jj is not None else ""),
         "josephson_secondary_ranking": (
-            (ev.josephson.secondary_ranking or "")
-            if getattr(ev, "josephson", None) is not None
-            else ""
+            (jj.secondary_ranking or "") if jj is not None else ""
         ),
         "josephson_secondary_order": (
-            ev.josephson.secondary_order
-            if getattr(ev, "josephson", None) is not None
-            else None
+            jj.secondary_order if jj is not None else None
+        ),
+        "josephson_gap_meV": (jj.gap_meV if jj is not None else None),
+        "josephson_gap_source": (
+            (jj.gap_source or "") if jj is not None else ""
+        ),
+        "josephson_tc_used_K": (jj.tc_used_K if jj is not None else None),
+        "josephson_icrn_mV": (jj.icrn_mV if jj is not None else None),
+        "josephson_jc_A_per_cm2": (
+            jj.jc_A_per_cm2 if jj is not None else None
+        ),
+        "josephson_switching_energy_eV": (
+            jj.switching_energy_eV if jj is not None else None
+        ),
+        "josephson_method": (jj.method if jj is not None else ""),
+        "josephson_notes": (jj.notes if jj is not None else ""),
+        "josephson_junction_class": (
+            (fab.suggested_junction_class or "") if fab is not None else ""
+        ),
+        "josephson_beol_friendly": (
+            fab.beol_friendly if fab is not None else None
+        ),
+        "josephson_thermal_caution": (
+            fab.thermal_budget_caution if fab is not None else None
+        ),
+        "josephson_fab_flags": (
+            ";".join(fab.flags) if fab is not None else ""
+        ),
+        "josephson_fab_notes": (
+            format_fab_notes_for_csv(fab.notes) if fab is not None else ""
         ),
     }
 
@@ -674,6 +648,8 @@ CSV_FIELDNAMES = [
     "dmft_summary",
     "josephson_approximate",
     "josephson_status",
+    "josephson_secondary_ranking",
+    "josephson_secondary_order",
     "josephson_gap_meV",
     "josephson_gap_source",
     "josephson_tc_used_K",
@@ -687,8 +663,6 @@ CSV_FIELDNAMES = [
     "josephson_thermal_caution",
     "josephson_fab_flags",
     "josephson_fab_notes",
-    "josephson_secondary_ranking",
-    "josephson_secondary_order",
 ]
 
 
@@ -792,7 +766,9 @@ def write_synthesis_cards(
                     (
                         f"- **secondary sort**: `{mode_s}` — reorders only rows "
                         "that already carry Josephson metrics. "
-                        "`rank` / `composite_score` are **unchanged**."
+                        "`rank` / `composite_score` are **unchanged**. "
+                        "Prefer `.rank` and `.josephson.secondary_order`; "
+                        "do not assume list index equals rank."
                     ),
                     "- fabrication class labels are **heuristics, not process qualification**.",
                     "",
@@ -1346,6 +1322,12 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                     "- suggested junction class: "
                     f"`{getattr(fab, 'suggested_junction_class', 'unknown')}` "
                     f"(alternatives: {alts})",
+                ]
+            )
+            if getattr(fab, "suggested_junction_class", "unknown") != "SIS":
+                lines.append(f"- **Tier-1 formula note**: {NON_SIS_AB_CAVEAT}")
+            lines.extend(
+                [
                     f"- BEOL-friendly (CMOS-ish ≤ "
                     f"{_fmt_num(getattr(fab, 'beol_temp_ceiling_c', None))} °C): "
                     f"**{beol_s}**",

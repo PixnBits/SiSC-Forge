@@ -17,6 +17,11 @@ off. No Usadel, no BdG, no PDK, no ranker-math change.
 | Docs | `docs/phase4-p42-fabrication.md` |
 | Tests | `tests/test_josephson_p42.py` |
 
+**Review follow-up**: non-SIS class gets an explicit AB-formula caveat;
+`JosephsonConfig.normalize_secondary_ranking` is the single coerce path;
+secondary-sort list-order contract documented + logged; README/PRD
+`v0.4.3`.
+
 **Out of scope**: Usadel/BdG, foundry PDK, changing AB/BCS or Si-score maths.
 
 ---

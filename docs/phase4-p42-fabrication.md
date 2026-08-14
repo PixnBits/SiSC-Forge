@@ -51,6 +51,20 @@ Implemented by `siscforge.josephson.fabrication.suggest_junction_class`.
 the class stays `SNS`. These labels are **heuristics**, not process
 qualification.
 
+**Tier-1 numbers stay Ambegaokar–Baratoff SIS-tunnel proxies** even when
+the class is `SNS` / `ramp_edge` / `unknown`. A dedicated note
+(`NON_SIS_AB_CAVEAT`) and the flag `ab_sis_proxy_on_nonsis_class` are
+appended so cards and CSV cannot hide the mismatch. Usadel (later) is
+the path for SNS / proximity transport.
+
+### Extending the class table
+
+Only `tm_nitride` and `mgb2_boride` have assigned labels. Add a new
+family **only** with a literature-justified rule in
+`suggest_junction_class` *and* a row in the table above. Until then
+the class must stay `unknown`. Do **not** infer `SIS` from
+`assume_SIS` alone.
+
 ## Thermal / BEOL
 
 ```
@@ -89,22 +103,35 @@ If `secondary_ranking` is `icrn` or `jc`:
    descending on `icrn_mV` or `jc_A_per_cm2` (missing last).
 3. `rank` and `composite_score` are **not** rewritten.
 4. `josephson.secondary_order` (1-based) and
-   `josephson.secondary_ranking` are stamped for export.
+   `josephson.secondary_ranking` are stamped for export (CSV columns
+   sit immediately after `josephson_status`).
+5. Attach logs, and `siscforge run` / `rank --config` print:
+   `Josephson shortlist reordered by {mode} for presentation only; rank identity unchanged.`
+
+**List-order contract:** after attachment, **do not assume list index
+equals rank**. Prefer:
+
+| Want | Read |
+|------|------|
+| Campaign / composite identity | `evaluation.rank`, `evaluation.composite_score` |
+| Josephson presentation key | `evaluation.josephson.secondary_order` |
+| Whether a sort ran | `evaluation.josephson.secondary_ranking` (`icrn` / `jc`) |
 
 This is **not** a ranker fork. Primary P2.4 composite maths is
 untouched.
 
 ## Export
 
-Additive CSV columns (empty when absent):
+Additive CSV columns (empty when absent). Secondary-sort columns sit
+next to `josephson_status` so they are not buried at the end:
 
+- `josephson_secondary_ranking`
+- `josephson_secondary_order`
 - `josephson_junction_class`
 - `josephson_beol_friendly`
 - `josephson_thermal_caution`
 - `josephson_fab_flags`
-- `josephson_fab_notes`
-- `josephson_secondary_ranking`
-- `josephson_secondary_order`
+- `josephson_fab_notes` (permanent caveats first, then science notes)
 
 Synthesis cards gain a **Fabrication compatibility (P4.2)** subsection
 under the existing Josephson block, repeating **approximate / ranking

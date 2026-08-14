@@ -34,7 +34,7 @@ In short: the search is for the missing manufacturing link that would let an alr
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Setup | [`docs/SETUP.md`](docs/SETUP.md) |
 
-## Current status — **Phase 2 complete; Phase 3 software path complete; P4.1 + P4.2 shipped** (`v0.4.2`)
+## Current status — **Phase 2 complete; Phase 3 software path complete; P4.1 + P4.2 shipped** (`v0.4.3`)
 
 | Phase | Focus | Status |
 |-------|-------|--------|

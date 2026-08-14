@@ -9,6 +9,7 @@ from siscforge import __version__
 from siscforge.josephson.fabrication import (
     apply_secondary_ranking,
     infer_fabrication_hints,
+    secondary_ranking_summary,
 )
 from siscforge.josephson.tier1 import RANKING_ONLY_CAVEAT, estimate_tier1
 from siscforge.models.provenance import Provenance
@@ -75,6 +76,10 @@ def attach_josephson_metrics(
       re-orders only the Josephson-annotated shortlist for presentation;
       ``rank`` / ``composite_score`` are unchanged.
 
+    After a secondary sort, **list index is not rank**. Prefer
+    ``evaluation.rank`` for campaign identity and
+    ``evaluation.josephson.secondary_order`` for the presentation key.
+
     Does **not** change ranking maths, Pareto, Si-feasibility, or pairing.
     """
     if not josephson_is_enabled(config):
@@ -127,6 +132,9 @@ def attach_josephson_metrics(
 
     try:
         out = apply_secondary_ranking(out, config)
+        banner = secondary_ranking_summary(out)
+        if banner:
+            logger.info("P4.2 %s", banner)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "P4.2 Josephson secondary ranking skipped: %s", exc, exc_info=True

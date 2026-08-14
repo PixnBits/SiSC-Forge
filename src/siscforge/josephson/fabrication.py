@@ -34,6 +34,15 @@ HEURISTIC_CAVEAT = (
     "Not a foundry PDK / process sign-off."
 )
 
+# Always-on reminder when the suggested class is not SIS: Tier-1 numbers
+# remain Ambegaokar–Baratoff SIS-tunnel proxies (P4.1). Do not treat them
+# as SNS / ramp-edge device values.
+NON_SIS_AB_CAVEAT = (
+    "Tier-1 IcRn/Jc still use the SIS Ambegaokar–Baratoff formula "
+    "(ranking proxy only). SNS / proximity performance can differ "
+    "substantially; treat numbers with extra caution until Tier-2 Usadel."
+)
+
 JunctionClass = Literal["SIS", "SNS", "ramp_edge", "unknown"]
 
 _NITRIDE_FAMILIES = frozenset({"tm_nitride"})
@@ -88,6 +97,10 @@ def suggest_junction_class(
       oxide is a poor SIS barrier; ``assume_SIS`` is recorded, not used.
     * membrane-transfer on a nitride → keep primary, add ``ramp_edge``.
     * anything else / missing family → ``unknown``.
+
+    Only ``tm_nitride`` and ``mgb2_boride`` have assigned labels. New
+    families must stay ``unknown`` until a literature-justified rule is
+    added here (do not infer SIS from ``assume_SIS`` alone).
     """
     notes: list[str] = []
     alternatives: list[str] = []
@@ -337,6 +350,10 @@ def _infer_fabrication_hints(
             flags.append(flag)
 
     notes: list[str] = [HEURISTIC_CAVEAT, RANKING_ONLY_CAVEAT]
+    flags.append("ab_sis_formula")
+    if primary != "SIS":
+        notes.append(NON_SIS_AB_CAVEAT)
+        flags.append("ab_sis_proxy_on_nonsis_class")
     notes.extend(class_notes)
     notes.extend(thermal_notes)
     notes.extend(s_notes)
@@ -400,6 +417,10 @@ def apply_secondary_ranking(
     Only rows that already have ``josephson`` attached are re-ordered
     among themselves (same slots). ``rank`` and ``composite_score`` are
     **not** changed. ``secondary_ranking`` of ``none`` / disabled is identity.
+
+    After this runs, **do not assume list index equals ``.rank``**. Prefer
+    ``evaluation.rank`` for campaign identity and
+    ``evaluation.josephson.secondary_order`` for the presentation key.
     """
     mode = normalize_secondary_ranking(getattr(config, "secondary_ranking", "none"))
     if mode == "none":
@@ -443,20 +464,43 @@ def apply_secondary_ranking(
 
 
 def normalize_secondary_ranking(value: object) -> Literal["none", "icrn", "jc"]:
-    """Coerce YAML bools / strings to the P4.2 secondary-ranking mode."""
-    if value is None or value is False:
-        return "none"
-    if value is True:
-        return "icrn"
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"", "none", "false", "off", "0"}:
-            return "none"
-        if text in {"true", "on", "1", "icrn"}:
-            return "icrn"
-        if text == "jc":
-            return "jc"
-    raise ValueError(
-        "josephson.secondary_ranking must be one of: none, icrn, jc "
-        f"(bool false→none, true→icrn); got {value!r}"
+    """Coerce YAML bools / strings to the P4.2 secondary-ranking mode.
+
+    Thin wrapper around :meth:`JosephsonConfig.normalize_secondary_ranking`
+    so the config validator stays the single source of truth.
+    """
+    from siscforge.models.config import JosephsonConfig
+
+    return JosephsonConfig.normalize_secondary_ranking(value)
+
+
+def format_fab_notes_for_csv(
+    notes: list[str] | None,
+    *,
+    max_notes: int = 6,
+) -> str:
+    """Join notes with the permanent caveats first (CSV cells get long)."""
+    raw = list(notes or [])
+    priority = (HEURISTIC_CAVEAT, RANKING_ONLY_CAVEAT, NON_SIS_AB_CAVEAT)
+    front = [item for item in priority if item in raw]
+    rest = [item for item in raw if item not in front]
+    return " | ".join((front + rest)[:max_notes])
+
+
+def secondary_ranking_summary(
+    evaluations: list[CandidateEvaluation],
+) -> str | None:
+    """One-line operator note when a presentation sort actually ran."""
+    modes: set[str] = set()
+    for ev in evaluations:
+        jj = getattr(ev, "josephson", None)
+        mode = getattr(jj, "secondary_ranking", None) if jj is not None else None
+        if mode and mode not in {"none", ""}:
+            modes.add(str(mode))
+    if not modes:
+        return None
+    mode_s = ", ".join(sorted(modes))
+    return (
+        f"Josephson shortlist reordered by {mode_s} for presentation only; "
+        "rank identity unchanged."
     )

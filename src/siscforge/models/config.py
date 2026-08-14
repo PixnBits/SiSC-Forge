@@ -936,10 +936,13 @@ class JosephsonConfig(BaseModel):
     YAML ``false`` / ``true`` coerce to ``none`` / ``icrn``.
     """
 
-    @field_validator("secondary_ranking", mode="before")
     @classmethod
-    def _coerce_secondary_ranking(cls, v: object) -> str:
-        # Keep this local so models do not import siscforge.josephson.
+    def normalize_secondary_ranking(cls, v: object) -> Literal["none", "icrn", "jc"]:
+        """Single source of truth for ``secondary_ranking`` YAML coercion.
+
+        ``false`` / ``None`` / ``\"none\"`` → ``none``;
+        ``true`` / ``\"icrn\"`` → ``icrn``; ``\"jc\"`` → ``jc``.
+        """
         if v is None or v is False:
             return "none"
         if v is True:
@@ -956,6 +959,11 @@ class JosephsonConfig(BaseModel):
             "josephson.secondary_ranking must be one of: none, icrn, jc "
             f"(bool false→none, true→icrn); got {v!r}"
         )
+
+    @field_validator("secondary_ranking", mode="before")
+    @classmethod
+    def _coerce_secondary_ranking(cls, v: object) -> str:
+        return cls.normalize_secondary_ranking(v)
 
     @field_validator(
         "reference_area_um2", "rna_ohm_um2", "bcs_gap_ratio", "beol_temp_ceiling_c"

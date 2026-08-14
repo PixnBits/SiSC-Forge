@@ -12,10 +12,15 @@ from siscforge.cli.main import app
 from siscforge.export import CSV_FIELDNAMES, write_evaluations_csv, write_synthesis_cards
 from siscforge.josephson import (
     HEURISTIC_CAVEAT,
+    NON_SIS_AB_CAVEAT,
+    RANKING_ONLY_CAVEAT,
     apply_secondary_ranking,
     attach_josephson_metrics,
+    format_fab_notes_for_csv,
     infer_fabrication_hints,
     josephson_is_enabled,
+    normalize_secondary_ranking,
+    secondary_ranking_summary,
     suggest_junction_class,
     thermal_compatibility,
 )
@@ -108,7 +113,10 @@ def test_nbn_with_si_fields_is_sis_and_notes() -> None:
     assert hints.notes
     assert any("heuristic" in n.lower() for n in hints.notes)
     assert HEURISTIC_CAVEAT in hints.notes
+    assert NON_SIS_AB_CAVEAT not in hints.notes
     assert "sis" in hints.flags
+    assert "ab_sis_formula" in hints.flags
+    assert "ab_sis_proxy_on_nonsis_class" not in hints.flags
     assert hints.recommended_stacks
     assert hints.chemical_flags == ["nitrogen_window"]
 
@@ -121,6 +129,18 @@ def test_mgb2_is_sns_even_if_assume_sis() -> None:
     assert hints.suggested_junction_class == "SNS"
     assert "ramp_edge" in hints.alternative_classes
     assert any("assume_SIS is recorded" in n for n in hints.notes)
+    assert NON_SIS_AB_CAVEAT in hints.notes
+    assert "ab_sis_proxy_on_nonsis_class" in hints.flags
+    assert "ab_sis_formula" in hints.flags
+
+
+def test_nitride_assume_sis_false_gets_ab_mismatch_note() -> None:
+    ev = _ev(family="tm_nitride")
+    hints = infer_fabrication_hints(
+        ev, JosephsonMetrics(status="ok"), JosephsonConfig(assume_SIS=False)
+    )
+    assert hints.suggested_junction_class == "SNS"
+    assert NON_SIS_AB_CAVEAT in hints.notes
 
 
 def test_high_process_temp_sets_thermal_caution() -> None:
@@ -271,6 +291,49 @@ def test_secondary_sort_reorders_jj_rows_only() -> None:
     # composite_score was never written — still None — and not invented.
     assert by_id["lo"].composite_score == lo.composite_score
     assert by_id["hi"].composite_score == hi.composite_score
+    banner = secondary_ranking_summary(out)
+    assert banner is not None
+    assert "icrn" in banner
+    assert "rank identity unchanged" in banner
+
+
+def test_secondary_sort_logs_presentation_note(caplog: pytest.LogCaptureFixture) -> None:
+    evs = [
+        _ev(formula="A", tc=8.0, rank=1, cid="a"),
+        _ev(formula="B", tc=30.0, rank=2, cid="b"),
+    ]
+    with caplog.at_level("INFO", logger="siscforge.josephson.attach"):
+        attach_josephson_metrics(
+            evs,
+            JosephsonConfig(enabled=True, shortlist_only=False, secondary_ranking="jc"),
+        )
+    assert any("presentation only" in rec.message for rec in caplog.records)
+
+
+def test_csv_notes_put_permanent_caveats_first() -> None:
+    ev = _ev(formula="MgB2", family="mgb2_boride", tc=39.0)
+    hints = infer_fabrication_hints(ev, JosephsonMetrics(status="ok"), JosephsonConfig())
+    joined = format_fab_notes_for_csv(hints.notes)
+    assert joined.startswith(HEURISTIC_CAVEAT)
+    assert RANKING_ONLY_CAVEAT.split("—")[0].strip() in joined or "RANKING ONLY" in joined
+    # Caveats precede the family/class science notes.
+    assert joined.index(HEURISTIC_CAVEAT) < joined.index("mgb2_boride")
+    assert NON_SIS_AB_CAVEAT in joined
+
+
+def test_normalize_secondary_ranking_matches_config() -> None:
+    """fabrication wrapper and JosephsonConfig share one coerce path."""
+    for raw, expected in (
+        (False, "none"),
+        (True, "icrn"),
+        ("none", "none"),
+        ("icrn", "icrn"),
+        ("jc", "jc"),
+        ("OFF", "none"),
+    ):
+        assert normalize_secondary_ranking(raw) == expected
+        assert JosephsonConfig.normalize_secondary_ranking(raw) == expected
+        assert JosephsonConfig(secondary_ranking=raw).secondary_ranking == expected  # type: ignore[arg-type]
 
 
 def test_secondary_none_preserves_order() -> None:
@@ -336,6 +399,11 @@ def test_export_includes_fabrication_columns(tmp_path: Path) -> None:
     body = csv_path.read_text()
     assert "SIS" in body
     assert "heuristic" in body.lower() or "not process qualification" in body.lower()
+    # Secondary columns sit next to status (presentation-sort visibility).
+    header_cols = header.split(",")
+    status_i = header_cols.index("josephson_status")
+    assert header_cols[status_i + 1] == "josephson_secondary_ranking"
+    assert header_cols[status_i + 2] == "josephson_secondary_order"
 
     cards = write_synthesis_cards(ranked, tmp_path / "cards.md", campaign_name="p42")
     text = cards.read_text()
@@ -381,6 +449,13 @@ def test_enabled_dry_run_shows_fabrication(tmp_path: Path) -> None:
     assert "Fabrication compatibility (P4.2)" in cards
     assert "heuristic" in cards.lower()
     assert "approximate / ranking only" in cards.lower()
+    # At least one non-SIS family (MgB2) should carry the AB-mismatch note.
+    if any(
+        e.josephson.fabrication.suggested_junction_class != "SIS"
+        for e in hinted
+    ):
+        assert "Ambegaokar–Baratoff" in cards or "Ambegaokar" in cards
+        assert "Tier-1 formula note" in cards or "SNS / proximity" in cards
 
 
 def test_dummy_dry_run_still_inert(tmp_path: Path) -> None:
@@ -443,6 +518,9 @@ def test_docs_exist() -> None:
     assert "secondary_ranking" in doc
     assert "not process qualification" in doc.lower() or "not a foundry" in doc.lower()
     assert "Usadel" in doc
+    assert "list index" in doc.lower() or "list-order contract" in doc.lower()
+    assert "suggest_junction_class" in doc
+    assert "unknown" in doc
     roadmap = (ROOT / "docs" / "ROADMAP.md").read_text()
     assert "P4.2" in roadmap
     assert "done" in roadmap.lower()
