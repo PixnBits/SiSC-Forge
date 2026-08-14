@@ -207,13 +207,13 @@ Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization on
 **Goal**: Add practical JJ figures of merit so that the highest-ranked, most Si-compatible candidates can also be filtered by approximate device performance.
 
 ### Key Deliverables
-- Josephson Junction Device Modeling module (§2.8 of Technical Specifications). **(P4.1 started)**
+- Josephson Junction Device Modeling module (§2.8 of Technical Specifications). **(P4.1 + P4.2)**
 - Tier-1 analytic estimates (Ambegaokar–Baratoff, gap from Eliashberg or BCS-like fallback, Jc, IcRn, switching-energy proxies). **(P4.1 — done)**
-- Fabrication-compatibility heuristics (SIS / SNS / ramp-edge, process-temperature flags). **(P4.2 — later)**
-- Expanded `JosephsonMetrics` data model. **(P4.1 — done)**
+- Fabrication-compatibility heuristics (SIS / SNS / ramp-edge, process-temperature flags). **(P4.2 — done)**
+- Expanded `JosephsonMetrics` data model. **(P4.1 — done; P4.2 nested fabrication hints)**
 - Campaign flag to enable the module on a configurable top-N shortlist only. **(P4.1 — done)**
-- Optional secondary ranking or soft filter on IcRn / Jc. **(reserved; not in P4.1)**
-- Clear “approximate / ranking only” labeling in all exports and synthesis cards. **(P4.1 — done)**
+- Optional secondary ranking or soft filter on IcRn / Jc. **(P4.2 — done; presentation-only, opt-in)**
+- Clear “approximate / ranking only” labeling in all exports and synthesis cards. **(P4.1 — done; P4.2 repeats + heuristic caveat)**
 - (Later within Phase 4) Tier-2 Usadel and optional Tier-3 BdG backends.
 
 ### Dependencies
@@ -224,13 +224,14 @@ Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization on
 1. `JosephsonMetrics` model (disabled by default). **(P4.1 — done; analytics-only, no calculator plugin)**
 2. Tier-1 analytic functions (Ambegaokar–Baratoff, Jc, simple switching energy). **(P4.1 — done)**
 3. Gap extraction helpers (Eliashberg → Δ, BCS fallback, optional family ratios). **(P4.1 — done)**
-4. Fabrication-compatibility rule engine. **(P4.2)**
+4. Fabrication-compatibility rule engine. **(P4.2 — done)**
 5. Shortlist trigger + attachment to CandidateEvaluation. **(P4.1 — done: `enabled` + top-N)**
 6. Export and synthesis-card integration with explicit caveats. **(P4.1 — done)**
 7. Unit + regression tests on Nb, NbN, MgB₂ (order-of-magnitude recovery). **(P4.1 — done)**
 8. (Later) Usadel solver wrapper and geometry parameters.
 
-See [phase4-p41-josephson-tier1.md](phase4-p41-josephson-tier1.md).
+See [phase4-p41-josephson-tier1.md](phase4-p41-josephson-tier1.md) and
+[phase4-p42-fabrication.md](phase4-p42-fabrication.md).
 
 ### What Can Be Validated Without Large-Scale Compute
 - Analytic estimates for Nb, NbN and MgB₂ recover experimental gap and IcRn within a factor of ~2–3. **(P4.1 tests)**
@@ -238,7 +239,7 @@ See [phase4-p41-josephson-tier1.md](phase4-p41-josephson-tier1.md).
 - Synthesis cards and JSON exports correctly surface the metrics with “approximate” labeling.
 - Changing the shortlist size or enabling/disabling the module via YAML behaves as specified.
 
-**Exit criteria (partial)**: Top-ranked Si-compatible candidates can carry useful, clearly caveated JJ metrics when `josephson.enabled` is set; the module remains completely inert when disabled. Fabrication heuristics and Usadel/BdG remain later.
+**Exit criteria (partial)**: Top-ranked Si-compatible candidates can carry useful, clearly caveated JJ metrics **and** fabrication-class / thermal hints when `josephson.enabled` is set; the module remains completely inert when disabled. Usadel/BdG remain later.
 
 ---
 

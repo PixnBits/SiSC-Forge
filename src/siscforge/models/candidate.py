@@ -158,8 +158,9 @@ class CandidateEvaluation(BaseModel):
 
     # Optional later-phase attachments
     josephson: JosephsonMetrics | None = None
-    """Tier-1 analytic Josephson metrics (P4.1). Optional — leave None
-    unless ``josephson.enabled`` is set. Always approximate / ranking only.
+    """Tier-1 analytic Josephson metrics (P4.1) plus optional P4.2
+    fabrication hints. Optional — leave None unless ``josephson.enabled``
+    is set. Always approximate / ranking only.
     """
 
     performance_score: float | None = None

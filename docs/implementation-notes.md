@@ -1,5 +1,26 @@
 # Implementation Notes
 
+## Slice P4.2 (2026-08-14) — fabrication-compatibility heuristics
+
+**Scope**: Rule-based SIS / SNS / ramp-edge labels, BEOL / thermal flags,
+and stack notes on `JosephsonMetrics.fabrication`. Optional presentation
+sort of the Josephson shortlist by IcRn / Jc. Inert when Josephson is
+off. No Usadel, no BdG, no PDK, no ranker-math change.
+
+| Item | Location |
+|------|----------|
+| Heuristics | `siscforge.josephson.fabrication` |
+| Model | `JosephsonFabricationHints` nested on `JosephsonMetrics.fabrication` |
+| Config | `fabrication_hints` (default on when enabled), `beol_temp_ceiling_c`, `secondary_ranking: none\|icrn\|jc` |
+| Attach | same `attach_josephson_metrics` path; secondary sort after attach |
+| Export | Additive `josephson_junction_class` / `josephson_fab_*` / secondary columns + card subsection |
+| Docs | `docs/phase4-p42-fabrication.md` |
+| Tests | `tests/test_josephson_p42.py` |
+
+**Out of scope**: Usadel/BdG, foundry PDK, changing AB/BCS or Si-score maths.
+
+---
+
 ## Slice P4.1 (2026-08-14) — JosephsonMetrics + Tier-1 analytics
 
 **Scope**: Typed `JosephsonMetrics`, Ambegaokar–Baratoff / BCS-from-Tc
@@ -17,8 +38,8 @@ No Usadel, no BdG, no fabrication engine, no ranker fork.
 | Tests | `tests/test_josephson_p41.py` |
 | Example | `examples/nbn_mgb2_josephson_tier1.yaml` |
 
-**Out of scope**: Usadel/BdG, fabrication-compatibility engine (P4.2),
-secondary ranking on IcRn/Jc, CTHYB launch, production GNN.
+**Out of scope**: Usadel/BdG (later), CTHYB launch, production GNN.
+Fabrication heuristics + secondary sort landed in **P4.2**.
 
 ---
 

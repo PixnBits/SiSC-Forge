@@ -34,7 +34,7 @@ In short: the search is for the missing manufacturing link that would let an alr
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Setup | [`docs/SETUP.md`](docs/SETUP.md) |
 
-## Current status — **Phase 2 complete; Phase 3 software path complete; P4.1 shipped** (`v0.4.2`)
+## Current status — **Phase 2 complete; Phase 3 software path complete; P4.1 + P4.2 shipped** (`v0.4.2`)
 
 | Phase | Focus | Status |
 |-------|-------|--------|
@@ -44,7 +44,7 @@ In short: the search is for the missing manufacturing link that would let an alr
 | **1.5b** | Trained predictions change rankings; run-loop provenance; operator UX | **Done** — [phase15b-exit](docs/phase15b-exit.md) |
 | **2** | Si-integration maturity + ranking polish (P2.1–P2.5) | **Done** — [phase2-exit](docs/phase2-exit.md) |
 | 3 | Unconventional / DMFT | **Software path done** — P3.1–P3.6 shipped (DMFT launch + GNN heads residual) |
-| 4 | Josephson device metrics | **P4.1 done** — Tier-1 analytic estimates, inert by default — [phase4-p41-josephson-tier1](docs/phase4-p41-josephson-tier1.md) |
+| 4 | Josephson device metrics | **P4.1 + P4.2 done** — Tier-1 analytics + fabrication heuristics, inert by default — [phase4-p41](docs/phase4-p41-josephson-tier1.md) · [phase4-p42](docs/phase4-p42-fabrication.md) |
 
 
 ### Phase 1 delivered
@@ -110,9 +110,9 @@ Nickelate enumeration and DMFT are **off by default**. Conventional nitride / Mg
 
 **Still residual:** real solid_dmft/CTHYB launch, production ALIGNN/MatGL λ/Tc heads, golden NdNiO₂ science campaign.
 
-### Phase 4 Josephson metrics — P4.1 shipped
+### Phase 4 Josephson metrics — P4.1 + P4.2 shipped
 
-Tier-1 analytic IcRn / Jc / gap proxies (Ambegaokar–Baratoff + BCS-from-Tc fallback) attach to evaluations when `josephson.enabled: true`. **Disabled by default.** Always labelled **approximate / ranking only**. Usadel, BdG, and fabrication-rule engines are later.
+Tier-1 analytic IcRn / Jc / gap proxies (Ambegaokar–Baratoff + BCS-from-Tc fallback) attach to evaluations when `josephson.enabled: true`. **P4.2** adds fabrication-compatibility hints (SIS / SNS / ramp-edge labels, BEOL / thermal flags, stack notes) and an optional presentation-only secondary sort on IcRn / Jc. **Disabled by default.** Always labelled **approximate / ranking only**; fabrication labels are heuristics, not process qualification. Usadel and BdG remain later.
 
 ```bash
 siscforge run --dry-run examples/nbn_mgb2_josephson_tier1.yaml
@@ -160,7 +160,7 @@ Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).
 | `examples/ndnio2_dmft_mock.yaml` | P3.3/P3.4 DMFT mock + pairing score |
 | `examples/ndnio2_ovac_enumerate.yaml` | P3.5 infinite-layer + O-vacancy enum |
 | `examples/mixed_al_pools.yaml` | P3.6 mixed conventional/unconventional AL pools |
-| `examples/nbn_mgb2_josephson_tier1.yaml` | P4.1 Josephson Tier-1 (NbN + MgB₂ mock) |
+| `examples/nbn_mgb2_josephson_tier1.yaml` | P4.1/P4.2 Josephson Tier-1 + fabrication hints (NbN + MgB₂ mock) |
 
 Walkthroughs: [docs/examples/](docs/examples/).
 

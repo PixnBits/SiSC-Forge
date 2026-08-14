@@ -531,6 +531,46 @@ def _evaluation_row(ev: CandidateEvaluation) -> dict[str, object]:
         "josephson_notes": (
             ev.josephson.notes if getattr(ev, "josephson", None) is not None else ""
         ),
+        "josephson_junction_class": (
+            (ev.josephson.fabrication.suggested_junction_class or "")
+            if getattr(ev, "josephson", None) is not None
+            and getattr(ev.josephson, "fabrication", None) is not None
+            else ""
+        ),
+        "josephson_beol_friendly": (
+            ev.josephson.fabrication.beol_friendly
+            if getattr(ev, "josephson", None) is not None
+            and getattr(ev.josephson, "fabrication", None) is not None
+            else None
+        ),
+        "josephson_thermal_caution": (
+            ev.josephson.fabrication.thermal_budget_caution
+            if getattr(ev, "josephson", None) is not None
+            and getattr(ev.josephson, "fabrication", None) is not None
+            else None
+        ),
+        "josephson_fab_flags": (
+            ";".join(ev.josephson.fabrication.flags)
+            if getattr(ev, "josephson", None) is not None
+            and getattr(ev.josephson, "fabrication", None) is not None
+            else ""
+        ),
+        "josephson_fab_notes": (
+            " | ".join(ev.josephson.fabrication.notes)
+            if getattr(ev, "josephson", None) is not None
+            and getattr(ev.josephson, "fabrication", None) is not None
+            else ""
+        ),
+        "josephson_secondary_ranking": (
+            (ev.josephson.secondary_ranking or "")
+            if getattr(ev, "josephson", None) is not None
+            else ""
+        ),
+        "josephson_secondary_order": (
+            ev.josephson.secondary_order
+            if getattr(ev, "josephson", None) is not None
+            else None
+        ),
     }
 
 
@@ -642,6 +682,13 @@ CSV_FIELDNAMES = [
     "josephson_switching_energy_eV",
     "josephson_method",
     "josephson_notes",
+    "josephson_junction_class",
+    "josephson_beol_friendly",
+    "josephson_thermal_caution",
+    "josephson_fab_flags",
+    "josephson_fab_notes",
+    "josephson_secondary_ranking",
+    "josephson_secondary_order",
 ]
 
 
@@ -725,6 +772,29 @@ def write_synthesis_cards(
                         f"- performance ceiling: "
                         f"{rw.get('performance_ceiling_K', 40)} K"
                     ),
+                    "",
+                ]
+            )
+        # P4.2: label presentation-only JJ secondary sort (rank identity unchanged)
+        sec_modes = {
+            getattr(getattr(ev, "josephson", None), "secondary_ranking", None)
+            for ev in eval_list
+            if getattr(ev, "josephson", None) is not None
+        }
+        sec_modes.discard(None)
+        sec_modes.discard("")
+        sec_modes.discard("none")
+        if sec_modes:
+            mode_s = ", ".join(sorted(str(m) for m in sec_modes))
+            lines.extend(
+                [
+                    "### Josephson shortlist presentation (P4.2)",
+                    (
+                        f"- **secondary sort**: `{mode_s}` — reorders only rows "
+                        "that already carry Josephson metrics. "
+                        "`rank` / `composite_score` are **unchanged**."
+                    ),
+                    "- fabrication class labels are **heuristics, not process qualification**.",
                     "",
                 ]
             )
@@ -1258,6 +1328,47 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
         )
         if getattr(jj, "notes", None):
             lines.append(f"- notes: {jj.notes}")
+        fab = getattr(jj, "fabrication", None)
+        if fab is not None:
+            alts = ", ".join(getattr(fab, "alternative_classes", None) or []) or "—"
+            flags = ", ".join(getattr(fab, "flags", None) or []) or "—"
+            beol = getattr(fab, "beol_friendly", None)
+            beol_s = "yes" if beol is True else "no" if beol is False else "unknown"
+            lines.extend(
+                [
+                    "",
+                    "#### Fabrication compatibility (P4.2) — "
+                    "**heuristic, not process qualification**",
+                    "- **caveat**: labels reuse Si-feasibility signals "
+                    "(process-temp ceiling, chemical flags, stacks, membrane). "
+                    "**Not** a foundry PDK or process sign-off. "
+                    "Repeat: **approximate / ranking only**.",
+                    "- suggested junction class: "
+                    f"`{getattr(fab, 'suggested_junction_class', 'unknown')}` "
+                    f"(alternatives: {alts})",
+                    f"- BEOL-friendly (CMOS-ish ≤ "
+                    f"{_fmt_num(getattr(fab, 'beol_temp_ceiling_c', None))} °C): "
+                    f"**{beol_s}**",
+                    f"- thermal-budget caution: "
+                    f"**{'yes' if getattr(fab, 'thermal_budget_caution', False) else 'no'}** "
+                    "(process ceiling "
+                    f"{_fmt_num(getattr(fab, 'process_temp_ceiling_c', None))} °C)",
+                    f"- recommended stacks: "
+                    f"{', '.join(getattr(fab, 'recommended_stacks', None) or []) or '—'}",
+                    f"- flags: {flags}",
+                    f"- summary: {fab.summary_line() if hasattr(fab, 'summary_line') else '—'}",
+                ]
+            )
+            for note in list(getattr(fab, "notes", None) or [])[:8]:
+                lines.append(f"- note: {note}")
+        sec_mode = getattr(jj, "secondary_ranking", None)
+        sec_ord = getattr(jj, "secondary_order", None)
+        if sec_mode or sec_ord is not None:
+            lines.append(
+                f"- Josephson secondary presentation order: "
+                f"{sec_ord if sec_ord is not None else '—'} "
+                f"(key=`{sec_mode or '—'}`; campaign rank unchanged)"
+            )
 
     if ev.notes:
         lines.extend(["", f"_Notes: {ev.notes}_"])

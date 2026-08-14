@@ -4,8 +4,8 @@
 analytics, inert-by-default attachment, caveated export  
 **Prerequisite**: Phase 1 conventional Tc (`ElectronPhononResult`) and
 Phase 2 ranking / export  
-**Next**: P4.2 fabrication-compatibility heuristics; later Tier-2 Usadel
-/ Tier-3 BdG
+**Next**: P4.2 fabrication-compatibility heuristics (**done** —
+`docs/phase4-p42-fabrication.md`); later Tier-2 Usadel / Tier-3 BdG
 
 This package does **not** implement Usadel, BdG, a fabrication rule
 engine, or any ranker fork. DMFT `performance_score` is **not** a gap.
@@ -129,7 +129,8 @@ josephson:
   temperature_K: null      # T = 0 AB limit
   bcs_gap_ratio: 1.764
   family_gap_ratios: {}    # optional, e.g. tm_nitride: 2.05
-  secondary_ranking: false # reserved; P4.1 does not change the ranker
+  fabrication_hints: true  # P4.2; only runs when enabled
+  secondary_ranking: none  # P4.2: none | icrn | jc (presentation only)
 ```
 
 When `enabled: false`, `attach_josephson_metrics` is an identity and
@@ -171,16 +172,19 @@ as such.
 ## Limits (honest)
 
 - No Usadel, no BdG, no circuit simulation.
-- No fabrication-compatibility engine (SIS/SNS/ramp-edge rules) — **P4.2**.
+- Fabrication-compatibility engine (SIS/SNS/ramp-edge, BEOL flags) is
+  **P4.2** — see `docs/phase4-p42-fabrication.md`.
 - AB formula is SIS tunnel only. `assume_SIS` is a recorded assumption,
   not a model switch; SNS / proximity / high-transparency junctions are
-  out of scope.
+  out of scope for Tier-1 analytics.
 - **Temperature-independent Δ.** Tier-1 uses a fixed gap (explicit or
   BCS-from-Tc). The AB tanh factor is applied, but the gap itself does
   not close. If a user sets `temperature_K` ≥ `tc_used_K`, IcRn / Jc /
   EJ are forced to 0 (otherwise the fixed-Δ formula stays finite above
   Tc). Default `temperature_K: null` is the T = 0 ranking limit.
-- No secondary ranking on IcRn / Jc (`secondary_ranking` is reserved).
+- Secondary ranking on IcRn / Jc is **P4.2** (`secondary_ranking: none |
+  icrn | jc`) and is presentation-only — it does not change
+  `composite_score`.
 - No family forks in the ranker. `family_gap_ratios` is an explicit
   operator map (empty by default).
 - Default RnA / area are ranking assumptions, not process recipes.
