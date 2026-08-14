@@ -237,7 +237,7 @@ Produces `leading_pairing_eigenvalue` that feeds the common `performance_score` 
 
 **Implemented contracts:**
 - `DFTUResult` + optional DFT+U (`qe-dftu` / `do_dftu`) — P3.1
-- `WannierResult` + quality metrics + `ready_for_dmft` gate (`qe-wannier`) — P3.2 (residual automated nscf+pw2wannier90)
+- `WannierResult` + quality metrics + `ready_for_dmft` gate (`qe-wannier`) — P3.2 + P3.2.1 automated nscf+pw2wannier90
 - `DMFTResult` scaffold (model + gate + mock + optional observables parser; **not** full automated solid_dmft/CTHYB launch) — P3.3
 - Pairing → `performance_score` with `ranking.performance_precedence` (default `epw_then_dmft`) — P3.4
 - Oxygen-vacancy / infinite-layer enumeration (opt-in via `material_families: [nickelate]`) — P3.5
@@ -578,7 +578,7 @@ These sit beside AC1–AC18 rather than rewriting them. Verify against
 | WP | Must | Residual |
 |----|------|----------|
 | P3.1 | DFT+U path produces typed `DFTUResult`; conventional campaigns unchanged when `do_dftu` is off | — |
-| P3.2 | Wannier prep + quality metrics + `ready_for_dmft` gate | Automated nscf + `pw2wannier90` (P3.2.1) |
+| P3.2 | Wannier prep + quality metrics + `ready_for_dmft` + P3.2.1 nscf/`pw2wannier90` | Spinor manifolds; production projection libraries; real-QE golden optional |
 | P3.3 | `DMFTResult` scaffold (model + gate + mock + optional observables parser); unconventional steps default off | Full automated solid_dmft / CTHYB launch |
 | P3.4 | Pairing eigenvalue → `performance_score` with documented `epw_then_dmft` precedence; mock scores tagged | — |
 | P3.5 | Opt-in nickelate O-vacancy / infinite-layer enum; nitride path inert when family off | — |

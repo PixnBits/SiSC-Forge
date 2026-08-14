@@ -495,8 +495,9 @@ Known limitations of the **thin P3.3 wrapper**:
   for a future launcher and are **unused** by the parser.
 - Observables parse is best-effort JSON key matching, not a solid_dmft
   schema guarantee.
-- Real (non-mock) Wannier artifacts still depend on residual **P3.2.1**
-  (automated nscf + `pw2wannier90`).
+- Real (non-mock) Wannier artifacts use **P3.2.1** automated nscf +
+  `pw2wannier90` when `pw.x` / `pw2wannier90.x` and an upstream
+  `{prefix}.save` are present; otherwise the path classifies cleanly.
 - Pairing eigenvalue → `performance_score` is **P3.4**.
 
 Optional real-path pytest (skipped unless the stack is importable):

@@ -1,4 +1,4 @@
-"""Standalone Wannier prep + quality metrics — Phase 3.2.
+"""Standalone Wannier prep + quality metrics + nscf/pw2wannier90 — Phase 3.2/3.2.1.
 
 Provides:
 - enablement helper from :class:`~siscforge.models.config.WannierConfig`
@@ -6,16 +6,18 @@ Provides:
 - Wannier90 log parse → spreads / failure classes
 - DMFT readiness gate for **P3.3** (TRIQS / solid_dmft)
 - mock :class:`~siscforge.models.results.WannierResult` for dry-run
-- gated ``wannier90.x`` when ``.amn``/``.mmn`` are already staged
+- **P3.2.1** automated nscf + ``pw2wannier90`` when binaries and an
+  upstream ``{prefix}.save`` are present (soft skip otherwise)
+- gated ``wannier90.x`` on the resulting ``.amn``/``.mmn``
 - sequential recipe glue after SCF / DFT+U (sacred upstream artifacts)
 
-This is **prep + metrics + gated wannier90.x**, not a turnkey nscf +
-pw2wannier90 orchestration. Residual **P3.2.1** (or under P3.3) covers
-minimal automated nscf + ``pw2wannier90`` when binaries are present.
+When ``.amn``/``.mmn`` are already staged, the nscf / pw2wannier90 steps
+are skipped. Missing binaries or charge density classify as
+``missing_files`` / ``binary_missing`` and never crash dry-run or ``pytest``.
 
-**Out of scope (later packages):** TRIQS/solid_dmft (P3.3), pairing
-eigenvalue (P3.4), oxygen-vacancy enumeration (P3.5), material-specific
-production projection libraries, spinor / collinear-spin Wannier manifolds.
+**Out of scope (later packages):** TRIQS/solid_dmft launch (``p3_x_real_launch``),
+material-specific production projection libraries, spinor / collinear-spin
+Wannier manifolds. Real-QE golden nscf+pw2wannier90 is optional / local.
 
 The conventional EPW pathway still owns its own internal Wannier90 step
 (``proj=random``, coarse grids, remediation). This module does **not**
@@ -57,6 +59,11 @@ WANNIER_FAILURE_CLASSES: frozenset[str] = frozenset(
 )
 
 _EXTENSION_HOOKS: dict[str, str] = {
+    "p3_2_1_orchestration": (
+        "Automated nscf + pw2wannier90 when pw.x / pw2wannier90.x and an "
+        "upstream {prefix}.save are present (P3.2.1). Soft-skip when binaries "
+        "or charge density are absent."
+    ),
     "p3_3_dmft": (
         "TRIQS/solid_dmft consumes WannierResult.work_dir / .chk / spreads; "
         "P3.3 refuses launch when ready_for_dmft is False "
@@ -109,7 +116,10 @@ def classify_wannier_failure(text: str | None) -> str:
         or ("bvector" in blob and "not enough" in blob)
     ):
         return "kmesh_bvector"
-    if "wannier90.x" in blob and (
+    if any(
+        exe in blob
+        for exe in ("wannier90.x", "pw2wannier90.x", "pw.x")
+    ) and (
         "not found" in blob or "no such file" in blob or "cannot execute" in blob
     ):
         return "binary_missing"
@@ -117,6 +127,8 @@ def classify_wannier_failure(text: str | None) -> str:
         "error" in blob or "abort" in blob or "failed" in blob
     ):
         return "pw2wannier_failed"
+    if "nscf" in blob and ("error" in blob or "failed" in blob or "abort" in blob):
+        return "nscf_failed"
     if "error opening" in blob or "dafopen" in blob or "file not found" in blob:
         return "missing_files"
     if "projection" in blob and ("error" in blob or "invalid" in blob):
@@ -129,8 +141,6 @@ def classify_wannier_failure(text: str | None) -> str:
         return "spread_divergence"
     if "did not converge" in blob or "not converged" in blob:
         return "convergence"
-    if "nscf" in blob and ("error" in blob or "failed" in blob):
-        return "nscf_failed"
     return "other"
 
 
@@ -146,8 +156,11 @@ def primary_wannier_failure_reason(
         "kmesh_bvector": "wannier: kmesh_get_bvector / not enough bvectors",
         "disentanglement": "wannier: disentanglement failure",
         "spread_divergence": "wannier: Wannier spreads diverged / unusable",
-        "missing_files": "wannier: missing .amn/.mmn — stage nscf+pw2wannier90 into work_dir",
-        "binary_missing": "wannier: wannier90.x not found",
+        "missing_files": (
+            "wannier: missing .amn/.mmn — install pw.x + pw2wannier90.x "
+            "or stage nscf+pw2wannier90 into work_dir"
+        ),
+        "binary_missing": "wannier: pw.x / pw2wannier90.x / wannier90.x not found",
         "projection": "wannier: projection specification error",
         "nscf_failed": "wannier: nscf prerequisite failed",
         "pw2wannier_failed": "wannier: pw2wannier90 failed",
@@ -167,6 +180,53 @@ def primary_wannier_failure_reason(
     if len(msg) > max_len:
         msg = msg[: max_len - 1] + "…"
     return msg
+
+
+def operator_next_step(
+    failure_class: str | None,
+    *,
+    missing_reason: str | None = None,
+    automation_attempted: bool = False,
+) -> str:
+    """Concrete operator next-step for notes / synthesis cards / summary_line."""
+    cls = failure_class or ""
+    if cls == "nscf_failed":
+        return (
+            "inspect wannier/nscf.out; upstream SCF/DFT+U kept; "
+            "fix nscf (k-mesh / charge density / bands) and re-invoke"
+        )
+    if cls == "pw2wannier_failed":
+        return (
+            "inspect wannier/pw2wan.out; upstream SCF/DFT+U kept; "
+            "fix pw2wannier90 (seedname / .nnkp / outdir) and re-invoke"
+        )
+    if cls == "binary_missing":
+        return (
+            "install pw.x, pw2wannier90.x, and wannier90.x (or set QE_BIN) "
+            "and re-invoke; or stage .amn/.mmn manually"
+        )
+    if cls == "missing_files":
+        if missing_reason == "no_charge":
+            return (
+                "finish SCF/DFT+U first (need {prefix}.save charge density), "
+                "then re-invoke for automated nscf + pw2wannier90"
+            )
+        if missing_reason == "auto_disabled":
+            return (
+                "stage nscf+pw2wannier90 (.amn/.mmn) into work_dir, "
+                "then re-invoke / run_wannier90_on_artifacts "
+                "(or set wannier.auto_nscf_pw2wannier: true)"
+            )
+        if automation_attempted:
+            return (
+                "automated nscf + pw2wannier90 did not produce .amn/.mmn — "
+                "inspect wannier/ logs or stage artifacts and re-invoke"
+            )
+        return (
+            "install pw.x + pw2wannier90.x (QE_BIN) and re-invoke for "
+            "automated nscf + pw2wannier90, or stage .amn/.mmn into work_dir"
+        )
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -919,6 +979,622 @@ def mock_wannier_result(
 
 
 # ---------------------------------------------------------------------------
+# P3.2.1 — nscf + pw2wannier90 (soft binary / charge-density dependency)
+# ---------------------------------------------------------------------------
+
+_SAVE_MARKERS: tuple[str, ...] = (
+    "charge-density.dat",
+    "charge-density.hdf5",
+    "charge-density.dat.hdf5",
+    "data-file-schema.xml",
+    "data-file.xml",
+)
+
+
+def is_qe_save_dir(path: Path | str) -> bool:
+    """True when *path* looks like a QE ``{prefix}.save`` directory.
+
+    Accepts a stub ``*.save`` directory (unit tests) as well as a real save
+    that contains charge-density or ``data-file*.xml``.
+    """
+    p = Path(path)
+    if not p.is_dir():
+        return False
+    if any((p / name).is_file() for name in _SAVE_MARKERS):
+        return True
+    return p.name.endswith(".save")
+
+
+def find_upstream_save_dir(
+    scf_work_dir: Path | str | None,
+    prefix: str = "siscforge",
+) -> Path | None:
+    """Locate a finished SCF / DFT+U ``{prefix}.save`` without mutating it.
+
+    Preference: DFT+U sibling (``dftu/out`` then ``dftu/``), then conventional
+    ``out/``, then a flat EPW-style save. Never searches inside ``wannier/``.
+    """
+    if scf_work_dir is None:
+        return None
+    root = Path(scf_work_dir)
+    if not root.is_dir():
+        return None
+    name = f"{prefix}.save"
+    candidates = [
+        root / "dftu" / "out" / name,
+        root / "dftu" / name,
+        root / "out" / name,
+        root / name,
+    ]
+    for cand in candidates:
+        if is_qe_save_dir(cand):
+            return cand
+    return None
+
+
+def stage_save_for_wannier(
+    src_save: Path | str,
+    wannier_dir: Path | str,
+    prefix: str = "siscforge",
+) -> Path:
+    """Copy upstream ``{prefix}.save`` into ``wannier/out/`` (never delete src).
+
+    Reuses an existing isolated copy so resume does not rewrite the SCF
+    directory. The copy keeps EPW / DFT+U wavefunctions from being overwritten
+    by the Wannier nscf k-mesh.
+    """
+    import shutil
+
+    src = Path(src_save)
+    dest_out = Path(wannier_dir) / "out"
+    dest_out.mkdir(parents=True, exist_ok=True)
+    dest = dest_out / f"{prefix}.save"
+    if dest.resolve() == src.resolve():
+        return dest
+    if dest.exists():
+        return dest
+    shutil.copytree(src, dest)
+    return dest
+
+
+def build_pw2wannier90_input(
+    *,
+    prefix: str = "siscforge",
+    outdir: str = "./out",
+    seedname: str = "siscforge",
+    write_unk: bool = False,
+    spin_component: str = "none",
+) -> str:
+    """Minimal ``pw2wannier90.x`` namelist (no spinor / collinear manifolds)."""
+    unk = ".true." if write_unk else ".false."
+    return (
+        "&inputpp\n"
+        f"  prefix = '{prefix}'\n"
+        f"  outdir = '{outdir}'\n"
+        f"  seedname = '{seedname}'\n"
+        f"  spin_component = '{spin_component}'\n"
+        "  write_mmn = .true.\n"
+        "  write_amn = .true.\n"
+        f"  write_unk = {unk}\n"
+        "/\n"
+    )
+
+
+def nscf_job_done(stdout_path: Path | str) -> bool:
+    """True when an nscf log looks successfully finished."""
+    p = Path(stdout_path)
+    if not p.is_file():
+        return False
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    low = text.lower()
+    return "job done" in low or "convergence has been achieved" in low
+
+
+def run_nscf_for_wannier(
+    structure: Structure,
+    config: DFTConfig,
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+    qe_env=None,
+    outdir: Path | str | None = None,
+    kmesh: list[int] | None = None,
+    include_hubbard: bool = False,
+) -> Any:
+    """Write ``nscf.in`` and run ``pw.x`` under the Wannier workdir.
+
+    *outdir* defaults to ``work_dir/out`` (isolated save copy). Does not
+    delete or rewrite files under the upstream SCF / DFT+U directory.
+    """
+    from siscforge.calculators.qe.env import detect_qe_environment
+    from siscforge.calculators.qe.inputs import build_nscf_wannier_input
+    from siscforge.calculators.qe.recipes import (
+        QEStepResult,
+        _heartbeat_eta_enabled,
+        _heartbeat_seconds_from_config,
+        _mpi_prefix,
+        _run_cmd,
+    )
+
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    env = qe_env or detect_qe_environment()
+    if not getattr(env, "pw", None):
+        return QEStepResult(
+            name="nscf",
+            work_dir=work_dir,
+            returncode=127,
+            stdout_path=work_dir / "nscf.out",
+            input_path=work_dir / "nscf.in",
+            success=False,
+            message="nscf failed: pw.x not found",
+        )
+
+    out = Path(outdir).resolve() if outdir is not None else (work_dir / "out").resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    outdir_str = "./out" if out.resolve() == (work_dir / "out").resolve() else str(out)
+
+    dft = config
+    if dft.pseudo_dir:
+        dft = dft.model_copy(update={"pseudo_dir": str(Path(dft.pseudo_dir).resolve())})
+
+    mesh = list(kmesh) if kmesh is not None else resolve_kmesh(dft, structure)
+    nscf_text = build_nscf_wannier_input(
+        structure,
+        dft,
+        prefix=prefix,
+        outdir=outdir_str,
+        nk=mesh,
+        include_hubbard=include_hubbard,
+    )
+    in_path = work_dir / "nscf.in"
+    out_path = work_dir / "nscf.out"
+    in_path.write_text(nscf_text, encoding="utf-8")
+
+    cmd = [*_mpi_prefix(env, config.nproc), env.pw, "-in", in_path.name]
+    rc = _run_cmd(
+        cmd,
+        cwd=work_dir,
+        stdout_path=out_path,
+        heartbeat_seconds=_heartbeat_seconds_from_config(config),
+        step_label="nscf (pw.x, Wannier prep)",
+        heartbeat_eta=_heartbeat_eta_enabled(config),
+    )
+    ok = rc == 0 and out_path.is_file()
+    msg = f"pw.x nscf (Wannier) rc={rc}"
+    if not ok:
+        try:
+            tail = out_path.read_text(encoding="utf-8", errors="replace")[-800:]
+            msg += f"\n--- output tail ---\n{tail}"
+        except OSError:
+            pass
+        msg = f"nscf failed: {msg}"
+    return QEStepResult(
+        name="nscf",
+        work_dir=work_dir,
+        returncode=rc,
+        stdout_path=out_path,
+        input_path=in_path,
+        success=ok,
+        message=msg,
+    )
+
+
+def run_wannier90_pp(
+    work_dir: Path | str,
+    seedname: str,
+    *,
+    qe_env=None,
+) -> Any:
+    """Run ``wannier90.x -pp`` to produce ``{seed}.nnkp`` for pw2wannier90."""
+    import shutil
+    import subprocess
+
+    from siscforge.calculators.qe.env import detect_qe_environment
+    from siscforge.calculators.qe.recipes import QEStepResult
+
+    work_dir = Path(work_dir)
+    env = qe_env or detect_qe_environment()
+    w90 = getattr(env, "wannier90", None) or shutil.which("wannier90.x")
+    nnkp = work_dir / f"{seedname}.nnkp"
+    if not w90:
+        return QEStepResult(
+            name="wannier90-pp",
+            work_dir=work_dir,
+            returncode=127,
+            stdout_path=work_dir / f"{seedname}.wout",
+            input_path=work_dir / f"{seedname}.win",
+            success=False,
+            message="wannier90.x not found (needed for -pp / .nnkp)",
+        )
+    cmd = [str(w90), "-pp", seedname]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(work_dir),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        rc = int(proc.returncode)
+    except OSError as exc:
+        return QEStepResult(
+            name="wannier90-pp",
+            work_dir=work_dir,
+            returncode=127,
+            stdout_path=work_dir / f"{seedname}.wout",
+            input_path=work_dir / f"{seedname}.win",
+            success=False,
+            message=f"wannier90.x -pp launch error ({exc})",
+        )
+    ok = rc == 0 and nnkp.is_file()
+    msg = f"wannier90.x -pp rc={rc}"
+    if not ok:
+        tail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()[-400:]
+        msg += f"\n{tail}" if tail else ""
+    return QEStepResult(
+        name="wannier90-pp",
+        work_dir=work_dir,
+        returncode=rc,
+        stdout_path=work_dir / f"{seedname}.wout",
+        input_path=work_dir / f"{seedname}.win",
+        success=ok,
+        message=msg,
+    )
+
+
+def run_pw2wannier90(
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+    seedname: str = "siscforge",
+    qe_env=None,
+    outdir: str = "./out",
+) -> Any:
+    """Write ``pw2wan.in`` and run ``pw2wannier90.x`` in *work_dir*."""
+    from siscforge.calculators.qe.env import detect_qe_environment
+    from siscforge.calculators.qe.recipes import (
+        QEStepResult,
+        _heartbeat_eta_enabled,
+        _run_cmd,
+    )
+
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    env = qe_env or detect_qe_environment()
+    exe = getattr(env, "pw2wannier90", None)
+    in_path = work_dir / "pw2wan.in"
+    out_path = work_dir / "pw2wan.out"
+    if not exe:
+        return QEStepResult(
+            name="pw2wannier90",
+            work_dir=work_dir,
+            returncode=127,
+            stdout_path=out_path,
+            input_path=in_path,
+            success=False,
+            message="pw2wannier90.x not found",
+        )
+
+    in_path.write_text(
+        build_pw2wannier90_input(prefix=prefix, outdir=outdir, seedname=seedname),
+        encoding="utf-8",
+    )
+    # pw2wannier90 is typically serial; do not wrap with mpirun.
+    cmd = [str(exe), "-in", in_path.name]
+    rc = _run_cmd(
+        cmd,
+        cwd=work_dir,
+        stdout_path=out_path,
+        heartbeat_seconds=0,
+        step_label="pw2wannier90.x",
+        heartbeat_eta=_heartbeat_eta_enabled(None),
+    )
+    amn = work_dir / f"{seedname}.amn"
+    mmn = work_dir / f"{seedname}.mmn"
+    ok = rc == 0 and amn.is_file() and mmn.is_file()
+    msg = f"pw2wannier90.x rc={rc}"
+    if not ok:
+        try:
+            tail = out_path.read_text(encoding="utf-8", errors="replace")[-800:]
+            msg += f"\n--- output tail ---\n{tail}"
+        except OSError:
+            pass
+        msg = f"pw2wannier90 failed: {msg}"
+    return QEStepResult(
+        name="pw2wannier90",
+        work_dir=work_dir,
+        returncode=rc,
+        stdout_path=out_path,
+        input_path=in_path,
+        success=ok,
+        message=msg,
+    )
+
+
+def _hubbard_for_save(src_save: Path, config: DFTConfig) -> bool:
+    """Inject DFT+U extras when the charge density came from a Hubbard SCF."""
+    if bool(getattr(config, "do_dftu", False)):
+        return True
+    dftu = getattr(config, "dftu", None)
+    if dftu is not None and bool(getattr(dftu, "enabled", False)):
+        return True
+    parts = {p.lower() for p in src_save.parts}
+    return "dftu" in parts
+
+
+def prepare_amn_mmn(
+    structure: Structure,
+    config: DFTConfig,
+    work_dir: Path | str,
+    *,
+    prefix: str = "siscforge",
+    fermi_eV: float | None = None,
+    qe_env=None,
+    scf_work_dir: Path | str | None = None,
+    step_log: list[str] | None = None,
+) -> WannierResult | None:
+    """Run nscf + ``wannier90.x -pp`` + pw2wannier90 when possible.
+
+    Returns a failed :class:`WannierResult` when the automated path cannot
+    finish, or ``None`` when ``.amn``/``.mmn`` are now on disk. Never deletes
+    files under *scf_work_dir*.
+    """
+    from siscforge.calculators.qe.env import detect_qe_environment
+
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    log: list[str] = step_log if step_log is not None else []
+    seed = config.wannier.seedname
+    amn = work_dir / f"{seed}.amn"
+    mmn = work_dir / f"{seed}.mmn"
+    if amn.is_file() and mmn.is_file():
+        return None
+
+    env = qe_env or detect_qe_environment()
+    pw = getattr(env, "pw", None)
+    p2w = getattr(env, "pw2wannier90", None)
+    w90 = getattr(env, "wannier90", None)
+
+    if not pw or not p2w:
+        missing = [n for n, v in (("pw.x", pw), ("pw2wannier90.x", p2w)) if not v]
+        log.append(
+            "wannier P3.2.1 skip — binaries missing: " + ", ".join(missing)
+        )
+        return _prep_failure_result(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            scf_work_dir=scf_work_dir,
+            failure_class="missing_files",
+            missing_reason="no_binaries",
+            note=(
+                "Automated nscf + pw2wannier90 skipped "
+                f"(missing {', '.join(missing)}). "
+                "Install binaries or stage .amn/.mmn."
+            ),
+        )
+
+    src_save = find_upstream_save_dir(scf_work_dir, prefix=prefix)
+    if src_save is None:
+        log.append(f"wannier P3.2.1 skip — no upstream {prefix}.save")
+        return _prep_failure_result(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            scf_work_dir=scf_work_dir,
+            failure_class="missing_files",
+            missing_reason="no_charge",
+            note=(
+                "Automated nscf + pw2wannier90 skipped "
+                f"(no {prefix}.save under scf_work_dir). "
+                "Finish SCF/DFT+U first."
+            ),
+        )
+
+    try:
+        stage_save_for_wannier(src_save, work_dir, prefix=prefix)
+    except OSError as exc:
+        log.append(f"wannier P3.2.1 save stage failed: {exc}")
+        return _prep_failure_result(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            scf_work_dir=scf_work_dir,
+            failure_class="nscf_failed",
+            note=f"nscf failed: could not stage isolated save copy ({exc})",
+        )
+    log.append(f"staged isolated save from {src_save} → {work_dir / 'out'}")
+
+    mesh = resolve_kmesh(config, structure)
+    nscf_out = work_dir / "nscf.out"
+    if nscf_job_done(nscf_out):
+        log.append("skip nscf (existing JOB DONE)")
+    else:
+        step = run_nscf_for_wannier(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            qe_env=env,
+            kmesh=mesh,
+            include_hubbard=_hubbard_for_save(src_save, config),
+        )
+        log.append(step.message)
+        if not step.success:
+            blob = step.message or ""
+            if step.stdout_path.is_file():
+                try:
+                    blob = step.stdout_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    pass
+            return _prep_failure_result(
+                structure,
+                config,
+                work_dir,
+                prefix=prefix,
+                scf_work_dir=scf_work_dir,
+                failure_class="nscf_failed",
+                note=step.message,
+                extra_raw={
+                    "nscf_returncode": step.returncode,
+                    "nscf_out": str(step.stdout_path),
+                    "classify_blob": classify_wannier_failure(f"nscf failed:\n{blob}"),
+                },
+            )
+
+    nnkp = work_dir / f"{seed}.nnkp"
+    if not nnkp.is_file():
+        if not w90:
+            return _prep_failure_result(
+                structure,
+                config,
+                work_dir,
+                prefix=prefix,
+                scf_work_dir=scf_work_dir,
+                failure_class="binary_missing",
+                note="wannier90.x not found (needed for -pp / .nnkp before pw2wannier90)",
+            )
+        pp = run_wannier90_pp(work_dir, seed, qe_env=env)
+        log.append(pp.message)
+        if not pp.success:
+            return _prep_failure_result(
+                structure,
+                config,
+                work_dir,
+                prefix=prefix,
+                scf_work_dir=scf_work_dir,
+                failure_class="binary_missing"
+                if "not found" in (pp.message or "").lower()
+                else "pw2wannier_failed",
+                note=f"pw2wannier90 prerequisite failed: {pp.message}",
+            )
+
+    p2w_step = run_pw2wannier90(
+        work_dir,
+        prefix=prefix,
+        seedname=seed,
+        qe_env=env,
+        outdir="./out",
+    )
+    log.append(p2w_step.message)
+    if not p2w_step.success:
+        return _prep_failure_result(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            scf_work_dir=scf_work_dir,
+            failure_class="pw2wannier_failed",
+            note=p2w_step.message,
+            extra_raw={
+                "pw2wannier_returncode": p2w_step.returncode,
+                "pw2wan_out": str(p2w_step.stdout_path),
+            },
+        )
+
+    if not amn.is_file() or not mmn.is_file():
+        return _prep_failure_result(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            scf_work_dir=scf_work_dir,
+            failure_class="missing_files",
+            missing_reason="automation_incomplete",
+            automation_attempted=True,
+            note="pw2wannier90 reported success but .amn/.mmn are still missing",
+        )
+    log.append(f"wrote {amn.name} {mmn.name}")
+    _ = fermi_eV  # reserved for future nscf Fermi-window refresh
+    return None
+
+
+def _prep_failure_result(
+    structure: Structure,
+    config: DFTConfig,
+    work_dir: Path,
+    *,
+    prefix: str,
+    scf_work_dir: Path | str | None,
+    failure_class: str,
+    note: str,
+    missing_reason: str | None = None,
+    automation_attempted: bool = False,
+    extra_raw: dict[str, Any] | None = None,
+) -> WannierResult:
+    """Build a failed WannierResult for a prep / orchestration miss."""
+    seed = config.wannier.seedname
+    win = work_dir / f"{seed}.win"
+    amn = work_dir / f"{seed}.amn"
+    mmn = work_dir / f"{seed}.mmn"
+    next_step = operator_next_step(
+        failure_class,
+        missing_reason=missing_reason,
+        automation_attempted=automation_attempted
+        or failure_class in {"nscf_failed", "pw2wannier_failed"},
+    )
+    gate = f"not ready for DMFT: {note}"
+    if next_step:
+        gate = f"{gate} — {next_step}"
+    raw: dict[str, Any] = {
+        "pathway": "wannier",
+        "prefix": prefix,
+        "scf_work_dir": str(scf_work_dir) if scf_work_dir else None,
+        "extension_hooks": dict(_EXTENSION_HOOKS),
+        "actual_kmesh": resolve_kmesh(config, structure),
+        "note": note,
+        "operator_next_step": next_step,
+        "upstream_sacred": (
+            "SCF / DFT+U artifacts must not be deleted on Wannier failure"
+        ),
+        "orchestration": "p3.2.1",
+    }
+    if extra_raw:
+        raw.update(extra_raw)
+    return WannierResult(
+        wannier_ok=False,
+        ready_for_dmft=False,
+        dmft_gate_notes=gate,
+        status="failed",
+        quality_tag=config.quality_tag,
+        failure_class=failure_class,
+        num_wann=config.wannier.num_wann
+        or default_num_wann_screening(
+            num_bands=config.nbnd or config.wannier.num_bands,
+            structure=structure,
+            explicit=config.wannier.num_wann,
+            auto=config.wannier.auto_num_wann,
+        ),
+        num_bands=config.nbnd or config.wannier.num_bands,
+        projection_mode=projection_block(config.wannier)[0],
+        projection_summary=projection_block(config.wannier)[2],
+        frozen_window_notes=(
+            "screening tight frozen window" if config.wannier.screening_tight_froz else ""
+        ),
+        kmesh=resolve_kmesh(config, structure),
+        work_dir=str(work_dir),
+        win_path=str(win) if win.is_file() else None,
+        amn_path=str(amn) if amn.is_file() else None,
+        mmn_path=str(mmn) if mmn.is_file() else None,
+        raw=raw,
+        provenance=Provenance(
+            source="qe_wannier",
+            software={"siscforge": __version__},
+            notes=f"Wannier P3.2.1 prep — {failure_class}",
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Real-path sequential recipe (optional; gated on binaries)
 # ---------------------------------------------------------------------------
 
@@ -1003,16 +1679,17 @@ def run_wannier90_on_artifacts(
             ),
         )
 
-    # Pre-check amn/mmn (pw2wannier90 must have been run by caller for real path)
+    # Pre-check amn/mmn (P3.2.1 or operator staging must have produced them)
     amn = work_dir / f"{seed}.amn"
     mmn = work_dir / f"{seed}.mmn"
     if not amn.is_file() or not mmn.is_file():
-        # Still allow wannier90 -pp (preprocess) only when missing; full MLWF needs them
-        # For a complete run we classify as missing_files.
+        next_step = operator_next_step("missing_files")
         result = WannierResult(
             wannier_ok=False,
             ready_for_dmft=False,
-            dmft_gate_notes="not ready for DMFT: missing .amn/.mmn (stage nscf+pw2wannier90 into work_dir)",
+            dmft_gate_notes=(
+                "not ready for DMFT: missing .amn/.mmn — " + next_step
+            ),
             status="failed",
             quality_tag=dft.quality_tag,
             failure_class="missing_files",
@@ -1023,7 +1700,8 @@ def run_wannier90_on_artifacts(
             mmn_path=str(mmn) if mmn.is_file() else None,
             raw={
                 "pathway": "wannier",
-                "note": "prep-only or incomplete pw2wannier90",
+                "note": "missing .amn/.mmn after prep (P3.2.1 did not produce them)",
+                "operator_next_step": next_step,
                 "extension_hooks": dict(_EXTENSION_HOOKS),
             },
         )
@@ -1094,19 +1772,20 @@ def run_wannier_workflow(
     scf_work_dir: Path | str | None = None,
     step_log: list[str] | None = None,
 ) -> WannierResult:
-    """Prep + optional gated ``wannier90.x`` under *work_dir*.
+    """Prep + optional nscf/pw2wannier90 + gated ``wannier90.x`` under *work_dir*.
 
-    Writes ``.win`` always. Invokes ``wannier90.x`` only when ``.amn``/``.mmn``
-    are already staged (no automated nscf / pw2wannier90 in P3.2 — residual
-    **P3.2.1**). Missing prep returns ``failure_class=missing_files`` with an
-    operator next-step; upstream SCF/DFT+U is never touched.
+    Writes ``.win`` always. When ``.amn``/``.mmn`` are missing and
+    ``wannier.auto_nscf_pw2wannier`` is True, runs nscf + ``pw2wannier90``
+    if ``pw.x``, ``pw2wannier90.x``, and an upstream ``{prefix}.save`` are
+    available (P3.2.1). Otherwise classifies ``missing_files`` /
+    ``binary_missing`` / step failure. Upstream SCF/DFT+U is never deleted.
 
     Parameters
     ----------
     scf_work_dir:
         Optional path to finished SCF / DFT+U artifacts. **Never modified or
         deleted** on Wannier failure (sacred-upstream contract, same philosophy
-        as EPW-after-DFPT).
+        as EPW-after-DFPT). Used only to locate ``{prefix}.save``.
     """
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1119,63 +1798,39 @@ def run_wannier_workflow(
     if scf_work_dir is not None:
         log.append(f"upstream_scf={scf_work_dir} (sacred — not modified)")
 
-    # Real path requires .amn/.mmn from pw2wannier90 — if absent, classify
-    # cleanly without destroying upstream.
     seed = config.wannier.seedname
     amn = work_dir / f"{seed}.amn"
     mmn = work_dir / f"{seed}.mmn"
+    auto = bool(getattr(config.wannier, "auto_nscf_pw2wannier", True))
+    if (not amn.is_file() or not mmn.is_file()) and auto:
+        fail = prepare_amn_mmn(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            fermi_eV=fermi_eV,
+            qe_env=qe_env,
+            scf_work_dir=scf_work_dir,
+            step_log=log,
+        )
+        if fail is not None:
+            if step_log is not None:
+                step_log[:] = log
+            return fail
+
     if not amn.is_file() or not mmn.is_file():
-        # Attempt is still valuable: .win is ready for operators / later steps
-        result = WannierResult(
-            wannier_ok=False,
-            ready_for_dmft=False,
-            dmft_gate_notes=(
-                "not ready for DMFT: .amn/.mmn not present — "
-                "stage nscf + pw2wannier90 outputs into this work_dir, "
-                "then re-invoke or call run_wannier90_on_artifacts"
-            ),
-            status="failed",
-            quality_tag=config.quality_tag,
+        reason = "auto_disabled" if not auto else "no_binaries"
+        result = _prep_failure_result(
+            structure,
+            config,
+            work_dir,
+            prefix=prefix,
+            scf_work_dir=scf_work_dir,
             failure_class="missing_files",
-            num_wann=config.wannier.num_wann
-            or default_num_wann_screening(
-                num_bands=config.nbnd or config.wannier.num_bands,
-                structure=structure,
-                explicit=config.wannier.num_wann,
-                auto=config.wannier.auto_num_wann,
-            ),
-            num_bands=config.nbnd or config.wannier.num_bands,
-            projection_mode=projection_block(config.wannier)[0],
-            projection_summary=projection_block(config.wannier)[2],
-            frozen_window_notes=(
-                "screening tight frozen window" if config.wannier.screening_tight_froz else ""
-            ),
-            kmesh=resolve_kmesh(config, structure),
-            work_dir=str(work_dir),
-            win_path=str(win),
-            amn_path=str(amn) if amn.is_file() else None,
-            mmn_path=str(mmn) if mmn.is_file() else None,
-            raw={
-                "pathway": "wannier",
-                "prefix": prefix,
-                "scf_work_dir": str(scf_work_dir) if scf_work_dir else None,
-                "extension_hooks": dict(_EXTENSION_HOOKS),
-                "actual_kmesh": resolve_kmesh(config, structure),
-                "note": (
-                    "Real path is prep + gated wannier90.x only (P3.2). "
-                    "Stage nscf + pw2wannier90 (.amn/.mmn) into this work_dir, "
-                    "then re-invoke or call run_wannier90_on_artifacts. "
-                    "Automated nscf/pw2wannier90 orchestration is residual P3.2.1."
-                ),
-                "operator_next_step": (
-                    "stage nscf+pw2wannier90 (.amn/.mmn) into work_dir, "
-                    "then re-invoke / run_wannier90_on_artifacts"
-                ),
-            },
-            provenance=Provenance(
-                source="qe_wannier",
-                software={"siscforge": __version__},
-                notes="Wannier prep only — missing .amn/.mmn",
+            missing_reason=reason,
+            note=(
+                "Real path is prep + gated wannier90.x. "
+                ".amn/.mmn not present after optional P3.2.1 orchestration."
             ),
         )
         log.append("wannier prep incomplete (missing .amn/.mmn)")

@@ -242,7 +242,8 @@ class WannierResult(BaseModel):
 
     First-class prep + quality-metrics step after SCF / DFT+U for correlated
     (nickelate) candidates. Consumed later by TRIQS / solid_dmft (**P3.3**).
-    Full automated nscf + pw2wannier90 orchestration is residual **P3.2.1**.
+    **P3.2.1** automates nscf + ``pw2wannier90`` when binaries and an upstream
+    charge density are present; otherwise the path classifies cleanly.
 
     Inert for conventional nitride / MgB₂ campaigns: leave
     ``CandidateEvaluation.wannier`` as ``None`` unless Wannier is enabled
@@ -364,8 +365,20 @@ class WannierResult(BaseModel):
             bits.append(f"fail={self.failure_class}")
             if self.failure_class == "missing_files":
                 bits.append(
-                    "next=stage nscf+pw2wannier90 (.amn/.mmn) into work_dir, "
-                    "then re-invoke / run_wannier90_on_artifacts"
+                    "next=install pw.x+pw2wannier90.x or stage "
+                    "nscf+pw2wannier90 (.amn/.mmn) into work_dir, then re-invoke"
+                )
+            elif self.failure_class == "nscf_failed":
+                bits.append(
+                    "next=inspect wannier/nscf.out (SCF/DFT+U kept) and re-invoke"
+                )
+            elif self.failure_class == "pw2wannier_failed":
+                bits.append(
+                    "next=inspect wannier/pw2wan.out (SCF/DFT+U kept) and re-invoke"
+                )
+            elif self.failure_class == "binary_missing":
+                bits.append(
+                    "next=install pw.x / pw2wannier90.x / wannier90.x or stage .amn/.mmn"
                 )
         bits.append(f"status={self.status}")
         return "; ".join(bits)

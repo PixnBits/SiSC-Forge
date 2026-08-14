@@ -11,10 +11,10 @@ This package is **not** a turnkey TRIQS/solid_dmft jobflow. It ships the
 consumption contract P3.4 needs (typed `DMFTResult`, gate, mock, parser)
 and leaves a documented hook for a real launcher.
 
-Automated nscf + `pw2wannier90` is still residual **P3.2.1**. Real
-(non-mock) Wannier → DMFT still depends on that residual for artifact
-readiness. P3.3 does **not** block on it: mock / explicit inputs / a
-drop-in `observables.json` are enough.
+Automated nscf + `pw2wannier90` is **P3.2.1 shipped**. Real
+(non-mock) Wannier → DMFT still needs a usable `WannierResult`
+(`ready_for_dmft`). P3.3 does **not** block on real QE: mock /
+explicit inputs / a drop-in `observables.json` are enough.
 
 ## Goal
 
@@ -126,8 +126,8 @@ Defaults are conservative for real solvers and convenient for dry-run.
 ### Real-path operator workflow (drop-in, not auto-launch)
 
 1. Produce Wannier artifacts and a `WannierResult` with
-   `ready_for_dmft=True` (today: P3.2 prep + **you** or residual **P3.2.1**
-   stage nscf + `pw2wannier90` + gated `wannier90.x`).
+   `ready_for_dmft=True` (P3.2 + P3.2.1 automated nscf + `pw2wannier90`
+   + gated `wannier90.x`, or staged `.amn`/`.mmn`).
 2. Run solid_dmft / CTHYB **externally** (your TRIQS environment, your
    wall-time, your interaction / β / loop settings).
 3. Drop `observables.json` (or `observables_imp0.json` /
@@ -147,20 +147,21 @@ ready-to-run solid_dmft config from `WannierResult` + `DMFTConfig` is
 intentionally not in this package. See
 `DMFTResult.raw["extension_hooks"]["p3_x_real_launch"]`.
 
-## Residual P3.2.1 (still open)
+## Residual P3.2.1 (orchestration shipped)
 
-The full automated chain is **not** closed:
+Automated nscf + `pw2wannier90` is **P3.2.1 shipped** (soft-skip without
+binaries / charge density). The remaining unconventional chain is:
 
 ```
-SCF / DFT+U  →  [P3.2.1 residual: nscf + pw2wannier90]  →  wannier90.x
+SCF / DFT+U  →  nscf + pw2wannier90 (P3.2.1)  →  wannier90.x
              →  ready_for_dmft  →  [P3.3 mock | drop-in parse]
              →  [residual: auto solid_dmft launch]
              →  [P3.4: pairing → performance_score]
 ```
 
 Non-mock DMFT still needs a ready `WannierResult`. The gate correctly
-refuses when that residual has not produced artifacts. Mock +
-`mock_bypass_gate` is how dry-run proceeds without P3.2.1.
+refuses when Wannier did not produce a usable manifold. Mock +
+`mock_bypass_gate` is how dry-run proceeds without real QE / Wannier90.
 
 ## Sacred upstream
 
@@ -196,7 +197,6 @@ Mock eigenvalues are illustrative.
 - Pairing eigenvalue normalization into `performance_score` (**P3.4**)
 - Oxygen-vacancy structure generation (**P3.5**)
 - Mixed conventional/unconventional AL (**P3.6**)
-- Finishing residual automated nscf + `pw2wannier90` (**P3.2.1**)
 - Automated solid_dmft / CTHYB launch (residual; see operator workflow)
 - Making TRIQS a required dependency
 - Josephson, GNN heads, GPU QE

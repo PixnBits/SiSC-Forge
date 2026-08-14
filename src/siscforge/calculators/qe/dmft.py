@@ -14,8 +14,7 @@ Provides:
 still does not launch CTHYB.
 
 **Out of scope (later packages):** oxygen-vacancy enumeration (P3.5), mixed
-AL pools (P3.6), finishing residual nscf+pw2wannier90 (P3.2.1),
-automated solid_dmft launch (residual ``p3_x_real_launch``).
+AL pools (P3.6), automated solid_dmft launch (residual ``p3_x_real_launch``).
 
 Conventional nitride / MgB₂ / EPW paths are unchanged when DMFT is off.
 """

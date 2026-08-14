@@ -149,6 +149,28 @@ def uniform_crystal_kpoints(nk1: int, nk2: int, nk3: int) -> list[tuple[float, f
     return pts
 
 
+def apply_crystal_kpoints(text: str, nk1: int, nk2: int, nk3: int) -> str:
+    """Replace a ``K_POINTS automatic`` block with a full Γ-centered crystal mesh."""
+    import re
+
+    pts = uniform_crystal_kpoints(nk1, nk2, nk3)
+    k_lines = [f"K_POINTS crystal\n{len(pts)}"]
+    for kx, ky, kz, w in pts:
+        k_lines.append(f"  {kx:.8f}  {ky:.8f}  {kz:.8f}  {w:.8e}")
+    k_block = "\n".join(k_lines)
+
+    new_text, nsub = re.subn(
+        r"K_POINTS\s+automatic\s*\n[^\n]+",
+        k_block,
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    if nsub != 1:
+        new_text = text.rstrip() + "\n" + k_block + "\n"
+    return new_text if new_text.endswith("\n") else new_text + "\n"
+
+
 def build_nscf_epw_input(
     structure: Structure,
     config: DFTConfig,
@@ -184,27 +206,77 @@ def build_nscf_epw_input(
         outdir=outdir,
         extra_system={"nbnd": n_bands},
     )
-    text = str(pw)
-    # Replace automatic MP block with full crystal mesh required by EPW.
-    pts = uniform_crystal_kpoints(nk1, nk2, nk3)
-    k_lines = [f"K_POINTS crystal\n{len(pts)}"]
-    for kx, ky, kz, w in pts:
-        k_lines.append(f"  {kx:.8f}  {ky:.8f}  {kz:.8f}  {w:.8e}")
-    k_block = "\n".join(k_lines)
+    return apply_crystal_kpoints(str(pw), nk1, nk2, nk3)
 
-    import re
 
-    new_text, nsub = re.subn(
-        r"K_POINTS\s+automatic\s*\n[^\n]+",
-        k_block,
-        text,
-        count=1,
-        flags=re.IGNORECASE,
+def build_nscf_wannier_input(
+    structure: Structure,
+    config: DFTConfig,
+    *,
+    prefix: str = "siscforge",
+    outdir: str = "./out",
+    nk: tuple[int, int, int] | list[int] | None = None,
+    nbnd: int | None = None,
+    include_hubbard: bool = False,
+) -> str:
+    """Build a standalone-Wannier NSCF input with a full crystal k-mesh.
+
+    Uses the Wannier ``.win`` mesh (``resolve_kmesh`` / ``WannierConfig.kmesh``)
+    rather than the EPW coarse grid. ``nosym`` / ``noinv`` are set so the
+    unreduced mesh matches Wannier90 ``mp_grid``. When *include_hubbard* is
+    True, DFT+U SYSTEM extras (and a HUBBARD card if that dialect is selected)
+    are injected so nscf can restart from a DFT+U charge density.
+
+    The input is written under the Wannier workdir; ``outdir`` should point at
+    an isolated copy of ``{prefix}.save`` so EPW / DFT+U artifacts are not
+    overwritten.
+    """
+    if nk is not None:
+        nkc = (list(nk) + [4, 4, 4])[:3]
+    else:
+        from siscforge.calculators.qe.wannier import resolve_kmesh
+
+        nkc = resolve_kmesh(config, structure)
+    nk1, nk2, nk3 = int(nkc[0]), int(nkc[1]), int(nkc[2])
+
+    if nbnd is not None:
+        n_bands = int(nbnd)
+    elif config.wannier.num_bands is not None:
+        n_bands = int(config.wannier.num_bands)
+    elif config.nbnd is not None:
+        n_bands = int(config.nbnd)
+    else:
+        n_wann = int(config.wannier.num_wann) if config.wannier.num_wann else 8
+        n_bands = max(24, n_wann + 8)
+
+    extra_system: dict[str, Any] = {"nbnd": n_bands}
+    extra_control: dict[str, Any] = {"nosym": True, "noinv": True}
+    hubbard_dialect = "namelist"
+    if include_hubbard:
+        from siscforge.calculators.qe.dftu import hubbard_system_extras
+
+        hubbard_dialect = (config.dftu.hubbard_syntax or "namelist").lower()
+        extra_system.update(
+            hubbard_system_extras(structure, config.dftu, syntax=hubbard_dialect)
+        )
+
+    pw = build_pw_input(
+        structure,
+        config,
+        calculation="nscf",
+        prefix=prefix,
+        outdir=outdir,
+        extra_system=extra_system,
+        extra_control=extra_control,
     )
-    if nsub != 1:
-        # Fallback: append if automatic block not found
-        new_text = text.rstrip() + "\n" + k_block + "\n"
-    return new_text if new_text.endswith("\n") else new_text + "\n"
+    text = apply_crystal_kpoints(str(pw), nk1, nk2, nk3)
+    if include_hubbard and hubbard_dialect == "card":
+        from siscforge.calculators.qe.dftu import append_hubbard_card
+
+        text = append_hubbard_card(text, structure, config.dftu)
+        if not text.endswith("\n"):
+            text += "\n"
+    return text
 
 
 def build_ph_input(
