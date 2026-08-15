@@ -343,8 +343,6 @@ class QECalculator(BaseCalculator):
                     primary_wannier_failure_reason,
                 )
                 from siscforge.models.results import WannierResult
-                from siscforge.models.provenance import Provenance
-                from siscforge import __version__ as _sf_ver
 
                 _LOG.exception(
                     "Wannier step failed (upstream preserved) work_dir=%s",
@@ -362,7 +360,7 @@ class QECalculator(BaseCalculator):
                     raw={"error": str(exc), "pathway": "wannier"},
                     provenance=Provenance(
                         source="qe_wannier",
-                        software={"siscforge": _sf_ver},
+                        software={"siscforge": __version__},
                         notes=primary_wannier_failure_reason(str(exc)),
                     ),
                 )
@@ -390,9 +388,7 @@ class QECalculator(BaseCalculator):
                         + dres.summary_line()
                     )
             except Exception as exc:  # noqa: BLE001 — never destroy upstream
-                from siscforge import __version__ as _sf_ver
                 from siscforge.calculators.qe.dmft import classify_dmft_failure
-                from siscforge.models.provenance import Provenance
                 from siscforge.models.results import DMFTResult
 
                 _LOG.exception(
@@ -411,7 +407,7 @@ class QECalculator(BaseCalculator):
                     raw={"error": str(exc), "pathway": "dmft"},
                     provenance=Provenance(
                         source="qe_dmft",
-                        software={"siscforge": _sf_ver},
+                        software={"siscforge": __version__},
                         notes=str(exc),
                     ),
                 )

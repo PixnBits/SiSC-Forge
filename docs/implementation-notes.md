@@ -23,6 +23,12 @@ mesh → mesh artefact is the primary suspect.
 | Contracts | PRD v0.4.4 US10; Specs v0.5.4 §2.3c / AC19–AC22 |
 | Tests | `tests/test_soft_modes.py`, `tests/test_pilot.py` |
 
+**Follow-up:** phonon-only `QECalculator.run()` raised `UnboundLocalError`
+on `Provenance` after successful `ph.x` because Wannier/DMFT except
+blocks re-imported the name locally (making it function-scoped). Those
+local imports were removed; module-level `Provenance` / `__version__`
+are used. Regression: `tests/test_qe_calculator.py`.
+
 **Out of scope / TODO later:** feed `soft_mode_class` and pilot
 provenance into AL acquisition; automatic q-convergence beyond a single
 denser pilot; production dynamical-stability certification.
