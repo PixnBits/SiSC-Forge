@@ -1652,7 +1652,7 @@ def run_cmd(
             if (
                 dft.do_phonon
                 and int(dft.ph_niter) > 100
-                and ("/usr/bin/" in ph_path or "/bin/ph.x" in ph_path)
+                and ph_path.endswith("/usr/bin/ph.x")
             ):
                 console.print(
                     "[yellow]Warning:[/yellow] ph.x looks like a distro binary "
