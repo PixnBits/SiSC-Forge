@@ -1,12 +1,14 @@
 # P3.3 — DMFTResult model + gate + mock + controlled launcher
 
-**Status**: scaffold + **controlled launcher shipped** (`p3_x_real_launch`,
-issue #18) — typed model, Wannier gate, mock path, drop-in parser, and a
-workstation-first solid_dmft run package that invokes when the stack is
-present.  
+**Status**: scaffold + **controlled launcher** (`p3_x_real_launch`,
+issue #18) + **native h5/dat bridge** (issue #35) — typed model, Wannier
+gate, mock path, JSON drop-in, solid_dmft `observables_imp*.dat` / 
+`DMFT_results` h5 extractors, and a workstation-first run package that
+invokes when the stack is present.  
 **Prerequisite**: P3.2 Wannier prep + `ready_for_dmft` (`docs/phase3-p32-wannier.md`)  
 **Next residuals**: production U/J/β calibration, solid_dmft version
-matrix, NdNiO₂ literature golden (not this package). P3.4 pairing map is
+matrix, NdNiO₂ literature golden (not this package). Exotic archive
+layouts may still need a JSON drop-in. P3.4 pairing map is
 **shipped** (`docs/phase3-p34-pairing-score.md`).
 
 This package is **not** a turnkey production CTHYB jobflow. It ships the
@@ -16,7 +18,8 @@ defaults stay screening defaults.
 Automated nscf + `pw2wannier90` is **P3.2.1 shipped**. Real
 (non-mock) Wannier → DMFT still needs a usable `WannierResult`
 (`ready_for_dmft`). P3.3 does **not** block on real QE: mock /
-explicit inputs / a drop-in `observables.json` are enough.
+explicit inputs / a drop-in `observables.json` / native
+`observables_imp*.dat` are enough.
 
 ## Goal
 
@@ -41,7 +44,7 @@ Provide a **first-class, optional DMFT step** that:
 | Sequential recipe | `run_dmft_after_wannier` in `qe/recipes.py` | sequential glue, not jobflow |
 | Calculator | `qe-dmft` / `dmft` alias; additive when `do_dmft` on `qe` | shipped |
 | Mock path | `MockCalculator` fills success/failure `DMFTResult` | shipped |
-| Real path | Run package + optional invoke + drop-in `observables.json` parser; **skips** if TRIQS missing | **controlled launcher** — not production QMC |
+| Real path | Run package + optional invoke + JSON / native `.dat` / h5 parser; **skips** if TRIQS missing | **controlled launcher + native bridge** — not production QMC |
 | Export | CSV columns `dmft_*` + synthesis-card launch notes | shipped |
 | Dry-run example | `examples/ndnio2_dmft_mock.yaml` | shipped |
 | Tests | `tests/test_dmft_p33.py`, `tests/test_dmft_real_launch.py` | shipped |
@@ -120,7 +123,8 @@ Defaults are conservative for real solvers and convenient for dry-run.
   fit). Pairing fields stay `None`. The label is also stored on
   `DMFTResult.raw["physics_label"]` and in provenance notes.
 - **Real (optional, controlled launcher):** writes a sibling `dmft/` run
-  package, optionally invokes solid_dmft, and parses observables. If the
+  package, optionally invokes solid_dmft, and parses JSON drop-ins or
+  native solid_dmft outputs (`.dat` / h5). If the
   stack is missing, the result is `status=skipped`,
   `failure_class=solver_missing`. **TRIQS is never a hard install
   dependency of `siscforge`.** See [SETUP.md](SETUP.md) Tier D.
@@ -133,13 +137,22 @@ Defaults are conservative for real solvers and convenient for dry-run.
 2. Write / refresh `siscforge_dmft_config.json` plus a native
    `dmft_config.toml` (U/J, β, `n_iter_dmft` ← `n_loops`, CTHYB
    `n_cycles` / warmup) and `run_solid_dmft.sh` + `LAUNCH.md`.
-3. If `observables.json` (or `observables_imp0.json` /
-   `siscforge_dmft_observables.json`) is already in `dmft/`, parse it
-   **without requiring TRIQS** (resume / operator drop-in).
+3. Discover occupancy / filling / Z into `DMFTResult` **without
+   requiring TRIQS**, first usable source wins:
+   1. JSON drop-in: `observables.json`, `observables_imp0.json`,
+      `siscforge_dmft_observables.json` (resume / operator hand-off).
+   2. Native solid_dmft text tables: `observables_imp0.dat` and close
+      variants (also under `out/` / the toml `jobname`).
+   3. HDF5 archive under common `DMFT_results` / impurity-observable
+      keys, **when** `h5py` is importable (still soft; missing extra
+      skips this source, never crashes).
+   A successful native `.dat` / h5 parse materializes a compatible
+   `observables.json` in `dmft/` so later resume does not need TRIQS
+   or h5py again.
 4. If `auto_launch: true` (default) and the stack is importable — or
    `SISCFORGE_SOLID_DMFT` points at a wrapper — invoke, capture
-   `solid_dmft.log` + exit code, then parse observables into
-   `DMFTResult`. Pairing keys, if present, land in the reserved P3.4
+   `solid_dmft.log` + exit code, then re-run the discovery above.
+   Pairing keys, if present, land in the reserved P3.4
    fields and flow through the existing map.
 5. Copy (never move / delete) an existing `{seed}.h5` into `dmft/` when
    found; best-effort DFTTools Wannier90 convert when that extra is
@@ -153,13 +166,14 @@ Defaults are conservative for real solvers and convenient for dry-run.
   screening).
 - solid_dmft / TRIQS version matrix.
 - Literature-validated NdNiO₂ recovery (science golden).
+- Exotic solid_dmft HDF5 layouts not covered by the best-effort walker.
 
 Set `auto_launch: false` to write the package only and invoke yourself:
 
 ```bash
 # in the candidate's sibling dmft/ directory
 sh run_solid_dmft.sh
-# then re-invoke siscforge, or drop observables.json and re-invoke
+# then re-invoke siscforge, or drop observables.json / leave native .dat and re-invoke
 ```
 
 `n_loops`, `n_cycles`, and `n_warmup_cycles` are consumed by the toml
@@ -172,7 +186,7 @@ binaries / charge density). The unconventional chain is:
 
 ```
 SCF / DFT+U  →  nscf + pw2wannier90 (P3.2.1)  →  wannier90.x
-             →  ready_for_dmft  →  [P3.3 mock | drop-in parse | auto-launch]
+             →  ready_for_dmft  →  [P3.3 mock | JSON / native .dat / h5 | auto-launch]
              →  [P3.4: pairing → performance_score]
 ```
 
@@ -229,4 +243,5 @@ Mock eigenvalues are illustrative.
 - Fake/stub launcher writes the run package, classifies failures, keeps
   upstream sacred
 - Language in this doc / README / ROADMAP matches the controlled launcher
-  (no longer “P3.3 only writes a sidecar and never launches”)
+  + native h5/dat bridge (JSON still preferred; no longer “must drop
+  observables.json” for a non-failed `DMFTResult`)

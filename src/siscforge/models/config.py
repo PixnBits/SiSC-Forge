@@ -735,8 +735,9 @@ class DMFTConfig(BaseModel):
     Real ``solid_dmft`` / ``cthyb`` write a run package
     (``dmft_config.toml`` + invoke script) and, when ``auto_launch`` is
     True and the stack is present, invoke it. Drop-in ``observables.json``
-    is still parsed (does not require TRIQS). TRIQS is never a hard
-    dependency of siscforge.
+    is still preferred; native ``observables_imp*.dat`` and
+    ``DMFT_results`` h5 are parsed when JSON is absent (h5py is soft).
+    TRIQS is never a hard dependency of siscforge.
     """
 
     U_eV: float = Field(

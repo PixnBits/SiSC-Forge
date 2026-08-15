@@ -11,7 +11,8 @@ screening defaults. TRIQS is never a hard dependency of ``siscforge``.
 Automated
     native ``dmft_config.toml`` from :class:`DMFTConfig` + Wannier refs;
     invoke script + ``LAUNCH.md``; optional subprocess when an entrypoint
-    is discoverable; parse drop-in / produced ``observables.json``.
+    is discoverable; parse JSON drop-in, native ``observables_imp*.dat``,
+    or ``DMFT_results`` h5 (soft h5py) into ``DMFTResult``.
 
 Operator-owned (honest residual)
     Wannier90 → ``{seed}.h5`` via TRIQS DFTTools when the converter is
@@ -52,7 +53,7 @@ AUTOMATED_STEPS: tuple[str, ...] = (
     "write native dmft_config.toml from WannierResult + DMFTConfig knobs",
     "write run_solid_dmft.sh + LAUNCH.md in the sibling dmft/ workdir",
     "invoke solid_dmft (or SISCFORGE_SOLID_DMFT) when auto_launch and stack present",
-    "parse drop-in or produced observables.json into DMFTResult",
+    "parse JSON drop-in, then native observables_imp*.dat, then DMFT_results h5",
 )
 
 OPERATOR_OWNED_STEPS: tuple[str, ...] = (
@@ -216,17 +217,28 @@ Then copy `{seedname}.h5` into this `dmft/` directory (do not move the
 Wannier originals). siscforge will try this converter automatically when
 `triqs_dft_tools` is importable.
 
-## Observables drop-in / resume
+## Observables discovery / resume
 
-If a full QMC run already finished, drop one of:
+After a launch (or on re-invoke) siscforge looks for occupancy / filling
+in this order — first *usable* source wins:
 
-- `observables.json`
-- `observables_imp0.json`
-- `siscforge_dmft_observables.json`
+1. JSON drop-in (preferred; no TRIQS required):
+   - `observables.json`
+   - `observables_imp0.json`
+   - `siscforge_dmft_observables.json`
+2. Native solid_dmft text tables such as `observables_imp0.dat`
+   (also `out/observables_imp0.dat`, `observables_imp0_up.dat` +
+   `_down.dat`, and close filename variants).
+3. HDF5 archive under common `DMFT_results` / impurity-observable keys,
+   **when** `h5py` (or a TRIQS helper) is importable — still soft.
 
-into this directory and re-invoke `siscforge` / `run_solid_dmft`. The
-parser does **not** require TRIQS in the siscforge environment. Pairing
-keys (`leading_pairing_eigenvalue`, `pairing_symmetry`) flow into P3.4.
+A successful native `.dat` / h5 parse materializes a compatible
+`observables.json` in this directory so later resume does not need
+TRIQS or h5py again.
+
+Pairing keys (`leading_pairing_eigenvalue`, `pairing_symmetry`) flow
+into P3.4 when present. Exotic solid_dmft layouts can still drop a
+hand-written JSON.
 
 ## Honesty
 
@@ -361,6 +373,11 @@ def invoke_solid_dmft(
 
 
 def find_observables_file(work_dir: Path) -> Path | None:
+    """Return the first JSON drop-in in *work_dir* (legacy helper).
+
+    Native ``.dat`` / h5 discovery lives in
+    :func:`siscforge.calculators.qe.dmft_observables.discover_dmft_metrics`.
+    """
     for name in OBSERVABLES_CANDIDATES:
         cand = work_dir / name
         if cand.is_file():

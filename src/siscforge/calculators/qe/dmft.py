@@ -7,9 +7,9 @@ Provides:
 - controlled real launcher: writes a sibling ``dmft/`` run package
   (``dmft_config.toml`` + invoke script + ``LAUNCH.md``), optionally
   shells out when TRIQS / solid_dmft is importable (or
-  ``SISCFORGE_SOLID_DMFT`` is set), and parses drop-in
-  ``observables.json``. Skips cleanly when the stack is absent (never a
-  hard dependency)
+  ``SISCFORGE_SOLID_DMFT`` is set), and parses JSON drop-ins **or**
+  native solid_dmft ``observables_imp*.dat`` / HDF5 (soft h5py). Skips
+  cleanly when the stack is absent (never a hard dependency)
 - sequential recipe glue after Wannier (sacred upstream artifacts)
 
 **P3.4** maps ``leading_pairing_eigenvalue`` onto the common
@@ -17,7 +17,8 @@ Provides:
 
 **Honest residual:** production U/J/β calibration, solid_dmft version
 matrix, Wannier90 → h5 when DFTTools is missing, NdNiO₂ literature
-golden. Screening knobs stay screening knobs.
+golden. Screening knobs stay screening knobs. Native h5/dat bridge is
+shipped; exotic archive layouts may still need a JSON drop-in.
 
 Conventional nitride / MgB₂ / EPW paths are unchanged when DMFT is off.
 """
@@ -41,6 +42,12 @@ from siscforge.calculators.qe.dmft_launch import (
     invoke_solid_dmft,
     stage_h5_archive,
     write_solid_dmft_run_package,
+)
+from siscforge.calculators.qe.dmft_observables import (
+    discover_dmft_metrics,
+    metrics_usable,
+    parse_dmft_dat,
+    parse_dmft_dat_text,
 )
 from siscforge.models.config import DFTConfig, DFTUConfig, DMFTConfig
 from siscforge.models.provenance import Provenance
@@ -73,10 +80,10 @@ _EXTENSION_HOOKS: dict[str, str] = {
     "p3_x_real_launch": (
         "Controlled launcher shipped: writes dmft_config.toml + "
         "run_solid_dmft.sh + LAUNCH.md; invokes when auto_launch and the "
-        "stack (or SISCFORGE_SOLID_DMFT) is present; drop-in "
-        "observables.json still parsed without TRIQS. Residual: "
-        "production U/J/β, solid_dmft version matrix, h5 convert without "
-        "DFTTools."
+        "stack (or SISCFORGE_SOLID_DMFT) is present; JSON drop-in still "
+        "preferred, then native observables_imp*.dat / DMFT_results h5 "
+        "(soft h5py). Residual: production U/J/β, solid_dmft version "
+        "matrix, h5 convert without DFTTools, exotic archive layouts."
     ),
     "limits": (
         "screening defaults (U, J, beta, n_cycles) are thin workstation knobs; "
@@ -472,15 +479,18 @@ def mock_dmft_result(
 def parse_dmft_observables(source: str | Path | dict[str, Any]) -> dict[str, Any]:
     """Best-effort extract occupancy / Z from solid_dmft-like JSON or text.
 
-    Accepts a path to a JSON file, a JSON/text body, or a pre-parsed dict.
-    Unknown formats return an empty metrics dict (never raise).
+    Accepts a path to a JSON file, a solid_dmft ``observables_imp*.dat``
+    table, a JSON/text body, or a pre-parsed dict. Unknown formats return
+    an empty metrics dict (never raise). HDF5 is handled separately by
+    :func:`siscforge.calculators.qe.dmft_observables.extract_dmft_h5`
+    (soft ``h5py``).
     """
     data: dict[str, Any] | None = None
     text = ""
+    path: Path | None = None
     if isinstance(source, dict):
         data = source
     else:
-        path: Path | None = None
         if isinstance(source, Path) or (
             isinstance(source, str)
             and len(source) < 4096
@@ -488,13 +498,21 @@ def parse_dmft_observables(source: str | Path | dict[str, Any]) -> dict[str, Any
             and Path(source).is_file()
         ):
             path = Path(source)
+            suffix = path.suffix.lower()
+            if suffix == ".dat":
+                return parse_dmft_dat(path)
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 return {}
         else:
             text = str(source)
-        if text.lstrip().startswith("{") or text.lstrip().startswith("["):
+        stripped = text.lstrip()
+        if "|" in text and (
+            "impurity occ" in text.lower() or "orbital occ" in text.lower()
+        ):
+            return parse_dmft_dat_text(text)
+        if stripped.startswith("{") or stripped.startswith("["):
             try:
                 loaded = json.loads(text)
                 if isinstance(loaded, dict):
@@ -619,8 +637,7 @@ def _write_dmft_config_sidecar(
 
 
 def _metrics_usable(metrics: dict[str, Any]) -> bool:
-    occ = metrics.get("occupancy_summary") or {}
-    return bool(occ) or metrics.get("filling") is not None
+    return metrics_usable(metrics)
 
 
 def _stack_or_override_available(
@@ -653,11 +670,11 @@ def run_solid_dmft(
     Always writes a sibling run package (``siscforge_dmft_config.json``,
     ``dmft_config.toml``, ``run_solid_dmft.sh``, ``LAUNCH.md``). Then:
 
-    1. Parse drop-in ``observables.json`` if present (no TRIQS required).
+    1. Discover metrics: JSON drop-in → native ``.dat`` → h5 (if available).
     2. If the stack is missing and nothing was parsed: ``status=skipped``,
        ``failure_class=solver_missing``.
     3. If ``auto_launch`` and an entrypoint is available: invoke, capture
-       logs, parse observables into :class:`DMFTResult`.
+       logs, re-discover native outputs into :class:`DMFTResult`.
     4. If ``auto_launch`` is False: leave the package for the operator.
 
     Never deletes files outside *work_dir*. Pairing fields, when present,
@@ -689,6 +706,8 @@ def run_solid_dmft(
         "automated": list(AUTOMATED_STEPS),
         "operator_owned": list(OPERATOR_OWNED_STEPS),
         "operator_next": None,
+        "observables_kind": None,
+        "observables_path": None,
     }
 
     def _base_raw(**more: Any) -> dict[str, Any]:
@@ -703,10 +722,23 @@ def run_solid_dmft(
         return raw
 
     obs_path = find_observables_file(work_dir)
-    metrics: dict[str, Any] = parse_dmft_observables(obs_path) if obs_path is not None else {}
+    seedname = (cfg.seedname or "siscforge").strip() or "siscforge"
+    metrics, src_kind, src_path = discover_dmft_metrics(
+        work_dir,
+        parse_json=parse_dmft_observables,
+        write_json=True,
+        seedname=seedname,
+    )
+    launch_meta["observables_kind"] = src_kind
+    launch_meta["observables_path"] = str(src_path) if src_path is not None else None
     if _metrics_usable(metrics):
-        launch_meta["status"] = "drop_in"
+        launch_meta["status"] = "drop_in" if src_kind == "json" else f"native_{src_kind}"
         launch_meta["operator_next"] = None
+        notes = (
+            "solid_dmft observables parse (drop-in / resume)"
+            if src_kind == "json"
+            else f"solid_dmft native {src_kind} parse (resume / pre-launch)"
+        )
         return _result_from_metrics(
             cfg=cfg,
             u=u,
@@ -717,8 +749,8 @@ def run_solid_dmft(
             qtag=qtag,
             work_dir=work_dir,
             refs=refs,
-            raw=_base_raw(observables=str(obs_path)),
-            notes="solid_dmft observables parse (drop-in / resume)",
+            raw=_base_raw(observables=str(src_path or obs_path or "")),
+            notes=notes,
         )
 
     stack_ok, command, source = _stack_or_override_available(launcher)
@@ -729,7 +761,8 @@ def run_solid_dmft(
         launch_meta["status"] = "skipped_solver_missing"
         launch_meta["operator_next"] = (
             "install TRIQS / solid_dmft (or set SISCFORGE_SOLID_DMFT) "
-            "and re-invoke, or drop observables.json into this dmft/ workdir"
+            "and re-invoke, or drop observables.json / leave native "
+            "observables_imp*.dat (or a DMFT_results h5) in this dmft/ workdir"
         )
         return DMFTResult(
             status="skipped",
@@ -758,7 +791,8 @@ def run_solid_dmft(
     if not bool(cfg.auto_launch):
         launch_meta["status"] = "deferred"
         launch_meta["operator_next"] = (
-            f"sh {package['script']}  (or drop observables.json and re-invoke)"
+            f"sh {package['script']}  (or drop observables.json / native "
+            "observables_imp*.dat and re-invoke)"
         )
         return DMFTResult(
             status="skipped",
@@ -814,7 +848,9 @@ def run_solid_dmft(
                 "run package written — see LAUNCH.md"
             )
             launch_meta["status"] = "failed"
-            launch_meta["operator_next"] = f"sh {package['script']} or drop observables.json"
+            launch_meta["operator_next"] = (
+                f"sh {package['script']} or drop observables.json / native .dat"
+            )
     except Exception as exc:  # noqa: BLE001 — never destroy upstream
         _LOG.exception("solid_dmft wrapper failed (upstream preserved) work_dir=%s", work_dir)
         err = str(exc)
@@ -829,13 +865,23 @@ def run_solid_dmft(
         elif not outcome.ok:
             err = outcome.error or outcome.stdout_tail or err
         obs_path = find_observables_file(work_dir)
-        if obs_path is not None:
-            metrics = parse_dmft_observables(obs_path)
+        metrics, src_kind, src_path = discover_dmft_metrics(
+            work_dir,
+            parse_json=parse_dmft_observables,
+            write_json=True,
+            seedname=seedname,
+        )
+        launch_meta["observables_kind"] = src_kind
+        launch_meta["observables_path"] = (
+            str(src_path) if src_path is not None else None
+        )
 
     if _metrics_usable(metrics):
         launch_meta["status"] = "invoked" if outcome is not None else "parsed"
         launch_meta["operator_next"] = None
         notes = "solid_dmft observables parse (p3_x_real_launch)"
+        if src_kind and src_kind != "json":
+            notes = f"solid_dmft native {src_kind} parse (p3_x_real_launch)"
         return _result_from_metrics(
             cfg=cfg,
             u=u,
@@ -846,19 +892,23 @@ def run_solid_dmft(
             qtag=qtag,
             work_dir=work_dir,
             refs=refs,
-            raw=_base_raw(),
+            raw=_base_raw(observables=str(src_path or obs_path or "")),
             notes=notes,
         )
 
     if err is None:
         err = (
-            "launch finished but no occupancy/filling in observables.json; "
-            "drop-in resume: write observables.json and re-invoke"
+            "launch finished but no occupancy/filling in JSON, "
+            "observables_imp*.dat, or DMFT_results h5; "
+            "drop-in resume: write observables.json (or leave native "
+            "solid_dmft outputs) and re-invoke"
         )
     launch_meta["status"] = "failed"
     if not launch_meta.get("operator_next"):
         launch_meta["operator_next"] = (
-            "inspect solid_dmft.log / LAUNCH.md; drop observables.json to resume"
+            "inspect solid_dmft.log / LAUNCH.md; native "
+            "observables_imp*.dat / DMFT_results h5 are now accepted, "
+            "or drop observables.json to resume"
         )
     return DMFTResult(
         status="failed",

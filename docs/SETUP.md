@@ -455,18 +455,21 @@ What the real path actually does (`p3_x_real_launch`):
    operator bypass).
 2. Writes a sibling `dmft/` run package: `siscforge_dmft_config.json`,
    native `dmft_config.toml`, `run_solid_dmft.sh`, and `LAUNCH.md`.
-3. If `observables.json` (or `observables_imp0.json` /
-   `siscforge_dmft_observables.json`) is already in that workdir, parses
-   occupancy / mass enhancement / pairing into `DMFTResult` **without
-   requiring TRIQS** (resume / operator drop-in).
+3. Discover occupancy / mass enhancement / pairing into `DMFTResult`
+   **without requiring TRIQS**, in this order (first usable source wins):
+   JSON drop-in (`observables.json`, `observables_imp0.json`,
+   `siscforge_dmft_observables.json`) → native
+   `observables_imp*.dat` (including `out/`) → HDF5 `DMFT_results`
+   when `h5py` is importable (still soft). A successful native parse
+   materializes `observables.json` for later resume.
 4. If TRIQS / solid_dmft is **not** importable (and
    `SISCFORGE_SOLID_DMFT` is unset), stores `status=skipped`,
    `failure_class=solver_missing` and leaves upstream DFT+U / Wannier
    artifacts untouched. The run package is still written so an operator
    can invoke later.
 5. If `auto_launch: true` (default) and an entrypoint is discoverable,
-   invokes it, captures `solid_dmft.log` + exit code, then parses
-   observables. `auto_launch: false` writes the package only.
+   invokes it, captures `solid_dmft.log` + exit code, then re-discovers
+   JSON / native `.dat` / h5. `auto_launch: false` writes the package only.
 
 It does **not** claim production CTHYB settings or a literature-validated
 NdNiO₂ recovery. Remaining residuals: U/J/β calibration, solid_dmft

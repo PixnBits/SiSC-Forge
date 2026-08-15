@@ -491,6 +491,8 @@ def test_docs_honest_about_scaffold_and_mock_physics() -> None:
     root = Path(__file__).resolve().parents[1]
     phase = (root / "docs" / "phase3-p33-dmft.md").read_text()
     assert "observables.json" in phase
+    assert "observables_imp" in phase
+    assert "DMFT_results" in phase or "native" in phase.lower()
     assert "residual" in phase.lower()
     assert "illustrative" in phase.lower()
     assert "Will this run or refuse" in phase

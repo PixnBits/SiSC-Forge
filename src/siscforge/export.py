@@ -1289,10 +1289,16 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                     "- launch: parsed drop-in observables.json "
                     "(no TRIQS required to ingest)"
                 )
+            elif str(launch.get("status") or "").startswith("native_"):
+                kind = str(launch.get("status")).removeprefix("native_")
+                lines.append(
+                    f"- launch: parsed native solid_dmft {kind} "
+                    "(JSON materialized for resume when possible)"
+                )
             elif launch.get("status") == "skipped_solver_missing":
                 lines.append(
                     "- launch: TRIQS/solid_dmft missing — run package written; "
-                    "drop observables.json or install the stack"
+                    "drop observables.json / native .dat or install the stack"
                 )
             elif launch.get("status") == "deferred":
                 lines.append(

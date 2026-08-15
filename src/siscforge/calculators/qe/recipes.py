@@ -1528,7 +1528,7 @@ def recipe_info() -> dict[str, Any]:
             "p3_3": (
                 "TRIQS/solid_dmft → DMFTResult "
                 "(scaffold + controlled launcher: toml/run package + optional "
-                "invoke; drop-in parser retained; production U/J/β residual)"
+                "invoke; JSON / native .dat / h5 parser; production U/J/β residual)"
             ),
             "p3_4": "pairing eigenvalue → performance_score",
         },
