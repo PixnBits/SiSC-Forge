@@ -10,6 +10,7 @@ from siscforge.calculators.qe.parser import (
     parse_frequency_list,
     parse_ph_output,
     parse_pw_output,
+    parse_qpoint_spectra,
     summarize_frequencies,
 )
 
@@ -59,6 +60,31 @@ def test_parse_ph_imaginary_fixture() -> None:
     assert ph.dynamically_stable is False
     assert ph.min_frequency_cm1 is not None
     assert ph.min_frequency_cm1 < 0
+
+
+def test_parse_ph_two_q_gamma_vs_finite() -> None:
+    """Γ mildly imaginary; campaign min is a later finite-q point."""
+    path = FIXTURES / "ph_two_q_gamma_and_finite.out"
+    ph = parse_ph_output(path)
+    assert ph.status == "ok"
+    assert ph.min_frequency_cm1 == pytest.approx(-72.064333, rel=1e-5)
+    assert ph.has_imaginary_modes is True
+    qps = ph.raw.get("qpoints") or []
+    assert len(qps) == 2
+    assert qps[0]["is_gamma"] is True
+    assert qps[0]["min_frequency_cm1"] == pytest.approx(-29.659722, rel=1e-5)
+    assert qps[1]["is_gamma"] is False
+    assert qps[1]["min_frequency_cm1"] == pytest.approx(-72.064333, rel=1e-5)
+    assert ph.raw.get("asr_applied") is False
+
+
+def test_parse_qpoint_spectra_dedups_repeated_q() -> None:
+    text = (FIXTURES / "ph_two_q_gamma_and_finite.out").read_text(encoding="utf-8")
+    doubled = text + "\n" + text
+    qps = parse_qpoint_spectra(doubled)
+    assert len(qps) == 2
+    assert qps[0]["is_gamma"] is True
+    assert qps[1]["is_gamma"] is False
 
 
 def test_summarize_frequencies_empty() -> None:

@@ -276,6 +276,10 @@ go-ahead for EPW).
 | `reasons` | Short machine-readable tokens (e.g. `known_stable_binary_nitride_on_coarse_or_screening_mesh`, `missing_frequency_list_conservative`) |
 | `acoustic_vs_optical` | `optical_imaginary` \| `acoustic_only_imaginary` \| `none_below_threshold` \| `undetermined` |
 | `asr_signal` | Optional; only when a single-q / Γ acoustic triplet is **detectable**. Otherwise `null` |
+| `softness_locus` | Optional. `gamma` \| `finite_q` \| `both` \| `none` \| `undetermined`. Set when per-q spectra exist (`raw.qpoints` from the parser, or a flat dump chunked into 3 N_at blocks with Γ first). |
+| `gamma_min_frequency_cm1` / `finite_q_min_frequency_cm1` | Optional. Lowest ω at Γ vs at any non-Γ q. Used to surface “softest q is finite-q, Γ only mildly imaginary”. |
+
+Parser `raw.qpoints` is additive and does **not** apply ASR. `acoustic_vs_optical` may be resolved per q when each block is length 3 N_at (optical imag at any q → `optical_soft`). A flat dump that is **not** a multiple of 3 N_at stays `undetermined`.
 
 **Classification rules (heuristic — must stay conservative):**
 
