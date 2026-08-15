@@ -489,6 +489,19 @@ def _mapping_get(obj: Any, key: str) -> Any:
     return None
 
 
+def _to_python(value: Any) -> Any:
+    """Unwrap numpy / h5py scalars and arrays to plain Python values."""
+    try:
+        import numpy as np
+    except ImportError:
+        return value
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 def _dataset_value(obj: Any) -> Any:
     if obj is None or isinstance(obj, (str, bytes)):
         return None
@@ -496,23 +509,17 @@ def _dataset_value(obj: Any) -> Any:
         return obj
     if hasattr(obj, "dtype") and hasattr(obj, "shape"):
         try:
-            return obj[()]
+            return _to_python(obj[()])
         except Exception:  # noqa: BLE001
             try:
-                return list(obj)
+                return _to_python(list(obj))
             except Exception:  # noqa: BLE001
                 return None
     if isinstance(obj, (list, tuple)):
         return list(obj)
-    try:
-        import numpy as np
-
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, np.generic):
-            return obj.item()
-    except ImportError:
-        pass
+    converted = _to_python(obj)
+    if converted is not obj:
+        return converted
     return None
 
 
