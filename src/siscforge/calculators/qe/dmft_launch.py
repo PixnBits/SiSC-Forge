@@ -54,6 +54,8 @@ AUTOMATED_STEPS: tuple[str, ...] = (
     "write run_solid_dmft.sh + LAUNCH.md in the sibling dmft/ workdir",
     "invoke solid_dmft (or SISCFORGE_SOLID_DMFT) when auto_launch and stack present",
     "parse JSON drop-in, then native observables_imp*.dat, then DMFT_results h5",
+    "prefer conv_imp*.dat / convergence_obs for DMFTResult.converged "
+    "(last-row occupancy fallback)",
 )
 
 OPERATOR_OWNED_STEPS: tuple[str, ...] = (
@@ -235,6 +237,25 @@ in this order — first *usable* source wins:
 A successful native `.dat` / h5 parse materializes a compatible
 `observables.json` in this directory so later resume does not need
 TRIQS or h5py again.
+
+## Convergence (`DMFTResult.converged`)
+
+Precedence (first matching row wins):
+
+1. Explicit JSON `converged` / `success` / `job_done` on an **operator**
+   drop-in. Bridged `observables.json` (`siscforge_bridge`) is *not*
+   treated as explicit so a live conv table can override it.
+2. Real solid_dmft signals when usable:
+   - `conv_imp*.dat` (also `out/`, close name variants)
+   - h5 `DMFT_results/convergence_obs` (soft `h5py`)
+3. Stored native-bridge verdict if those files are gone on resume.
+4. Last-row / occupancy heuristic — occupancy-only parses stay
+   non-failed when conv diagnostics are missing.
+5. Otherwise conservative `false`.
+
+Screening residual cutoffs (documented, not production CTHYB):
+`d_imp_occ=0.02`, `d_Gimp=d_G0=d_Sigma=0.05`. `d_mu` is recorded
+but informational. Missing conv files never invent a hard failure.
 
 Pairing keys (`leading_pairing_eigenvalue`, `pairing_symmetry`) flow
 into P3.4 when present. Exotic solid_dmft layouts can still drop a

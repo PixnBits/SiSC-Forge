@@ -1,4 +1,4 @@
-"""Best-effort native solid_dmft observables extractors (issue #35).
+"""Best-effort native solid_dmft observables extractors (issue #35 / #37).
 
 Discovery order (first *usable* source wins):
 
@@ -8,6 +8,17 @@ Discovery order (first *usable* source wins):
    filename variants (including ``out/`` / jobname subdirs)
 3. HDF5 archive under common ``DMFT_results`` keys — **soft** on
    ``h5py`` / TRIQS; missing extras skip this source cleanly
+
+Convergence precedence for ``DMFTResult.converged`` (issue #37):
+
+1. Explicit JSON ``converged`` / ``success`` / ``job_done`` on an
+   operator drop-in (``siscforge_bridge`` JSON is *not* explicit)
+2. Real solid_dmft signals: ``conv_imp*.dat`` then h5
+   ``DMFT_results/convergence_obs`` (soft h5py)
+3. Stored native-bridge verdict when live conv files are gone
+4. Last-row / occupancy heuristic (fallback — native paths stay
+   non-failed when conv diagnostics are missing)
+5. Otherwise conservative ``False``
 
 Produces the same metrics dict :func:`parse_dmft_observables` already
 understands. Never a hard dependency on TRIQS, solid_dmft, or h5py.
@@ -75,6 +86,33 @@ _CONV_KEYS: tuple[str, ...] = ("converged", "success", "job_done")
 
 _SPIN_KEYS = frozenset({"up", "down", "ud", "tot", "total"})
 
+# Screening-only residual cutoffs (issue #37). solid_dmft ships
+# occ_conv_crit / gimp_conv_crit / g0_conv_crit / sigma_conv_crit = -1
+# (disabled). These values let a last-row conv table set
+# DMFTResult.converged when no explicit flag is present. They are
+# **not** production CTHYB criteria.
+SCREENING_CONV_CUTOFFS: dict[str, float] = {
+    "d_imp_occ": 0.02,
+    "d_Gimp": 0.05,
+    "d_G0": 0.05,
+    "d_Sigma": 0.05,
+}
+
+_CONV_DAT_RE = re.compile(
+    r"^conv(?:ergence)?_imp(?P<imp>\d+)(?:_(?P<spin>up|down))?\.dat$",
+    re.IGNORECASE,
+)
+_CONV_DAT_LOOSE_RE = re.compile(
+    r"^conv(?:ergence)?(?:_imp(?P<imp>\d+))?(?:_(?P<spin>up|down))?\.dat$",
+    re.IGNORECASE,
+)
+_H5_CONV_GROUP_KEYS: tuple[str, ...] = (
+    "convergence_obs",
+    "convergence",
+    "conv_obs",
+    "Convergence_obs",
+)
+
 
 def empty_metrics() -> dict[str, Any]:
     """Canonical empty metrics dict (same keys as ``parse_dmft_observables``)."""
@@ -84,6 +122,9 @@ def empty_metrics() -> dict[str, Any]:
         "mass_enhancement": None,
         "mass_enhancement_by_orbital": {},
         "converged": False,
+        "converged_explicit": False,
+        "converged_source": None,
+        "convergence": None,
         "leading_pairing_eigenvalue": None,
         "pairing_symmetry": None,
     }
@@ -795,6 +836,543 @@ def find_h5_archives(work_dir: Path, *, seedname: str | None = None) -> list[Pat
 
 
 # ---------------------------------------------------------------------------
+# Convergence signals (issue #37)
+# ---------------------------------------------------------------------------
+
+
+def empty_conv_signal() -> dict[str, Any]:
+    """Structured convergence extract (``converged`` is bool or None)."""
+    return {
+        "converged": None,
+        "source": None,
+        "path": None,
+        "residuals": {},
+        "cutoffs": dict(SCREENING_CONV_CUTOFFS),
+        "notes": "",
+        "usable": False,
+    }
+
+
+def _conv_dat_identity(path: Path) -> tuple[int, str | None] | None:
+    name = path.name
+    for cre in (_CONV_DAT_RE, _CONV_DAT_LOOSE_RE):
+        m = cre.match(name)
+        if not m:
+            continue
+        # Avoid treating observables_imp0.dat as a conv table (loose regex
+        # only matches names that already start with conv*).
+        imp_s = m.groupdict().get("imp")
+        spin = m.groupdict().get("spin")
+        imp = int(imp_s) if imp_s is not None else 0
+        return imp, (spin.lower() if spin else None)
+    return None
+
+
+def find_conv_dat(work_dir: Path) -> list[Path]:
+    """Locate ``conv_imp*.dat`` tables under *work_dir* (and ``out/``)."""
+    roots: list[Path] = [work_dir]
+    if work_dir.is_dir():
+        for name in _JOBNAME_SUBDIRS:
+            child = work_dir / name
+            if child.is_dir():
+                roots.append(child)
+        for child in sorted(work_dir.iterdir()):
+            if child.is_dir() and child not in roots:
+                roots.append(child)
+
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for cand in sorted(entries):
+            if not cand.is_file():
+                continue
+            if _conv_dat_identity(cand) is None:
+                continue
+            try:
+                key = cand.resolve()
+            except OSError:
+                key = cand
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(cand)
+    found.sort(
+        key=lambda p: (
+            (_conv_dat_identity(p) or (99, "z"))[0],
+            1 if (_conv_dat_identity(p) or (0, None))[1] else 0,
+            p.name,
+        )
+    )
+    return found
+
+
+def _normalize_header(cell: str) -> str:
+    # Σ at end-of-word lowercases to final-sigma ς (U+03C2), not σ.
+    blob = cell.lower().replace("δ", "d").replace("Δ", "d")
+    blob = blob.replace("σ", "sigma").replace("ς", "sigma").replace("Σ", "sigma")
+    blob = blob.replace("μ", "mu").replace("µ", "mu")
+    blob = re.sub(r"\s+", " ", blob).strip()
+    return blob
+
+
+def _conv_header_kind(cell: str) -> str:
+    blob = _normalize_header(cell)
+    compact = blob.replace(" ", "").replace("_", "")
+    if compact in {"it", "iter", "iteration"}:
+        return "it"
+    if compact in {"dmu", "deltamu"} or blob in {"mu"}:
+        return "d_mu"
+    if "dimpocc" in compact or "dimpocc" in compact or (
+        "imp" in blob and "occ" in blob and blob.startswith("d")
+    ):
+        return "d_imp_occ"
+    if "dorbocc" in compact or "doccorb" in compact or (
+        "orb" in blob and "occ" in blob and blob.startswith("d")
+    ):
+        return "d_orb_occ"
+    if "dgimp" in compact or compact in {"gimp"}:
+        return "d_Gimp"
+    if "dg0" in compact or compact in {"g0", "g_0"}:
+        return "d_G0"
+    if "dsigma" in compact or compact in {"sigma", "dsig"}:
+        return "d_Sigma"
+    if "detot" in compact or "detot" in compact or "e_tot" in blob:
+        return "d_Etot"
+    if "converged" in blob:
+        return "converged"
+    return "other"
+
+
+def _worst_abs(vals: list[float]) -> float | None:
+    if not vals:
+        return None
+    return float(max(abs(v) for v in vals))
+
+
+def _decide_from_residuals(
+    residuals: dict[str, float],
+    *,
+    cutoffs: Mapping[str, float] | None = None,
+) -> tuple[bool | None, str]:
+    """Return ``(converged, note)`` from last-iteration residual norms.
+
+    Uses documented screening cutoffs. ``d_mu`` is recorded but not
+    used for the boolean (chemical potential can wander).
+    """
+    used = dict(SCREENING_CONV_CUTOFFS)
+    if cutoffs:
+        used.update({k: float(v) for k, v in cutoffs.items()})
+    checked: list[str] = []
+    for key, cutoff in used.items():
+        if cutoff <= 0.0:
+            continue
+        if key not in residuals:
+            continue
+        checked.append(key)
+        if abs(float(residuals[key])) > float(cutoff):
+            return False, f"{key}={residuals[key]:.4g} exceeds screening cutoff {cutoff:g}"
+    if not checked:
+        return None, "no residual keys to judge (screening cutoffs unused)"
+    return True, "all present residuals within screening cutoffs (" + ", ".join(checked) + ")"
+
+
+def parse_conv_dat_text(text: str) -> dict[str, Any]:
+    """Parse a solid_dmft ``conv_imp*.dat`` body into a conv-signal dict."""
+    out = empty_conv_signal()
+    if not text or not str(text).strip():
+        return out
+
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return out
+
+    header_idx = None
+    kinds: list[str] = []
+    for i, ln in enumerate(lines):
+        if "|" not in ln:
+            continue
+        cells = _split_pipe(ln)
+        joined = " ".join(cells).lower()
+        if (
+            "δ" in ln
+            or "d_mu" in joined
+            or "dimp" in joined.replace(" ", "")
+            or "gimp" in joined
+            or "δμ" in ln
+            or "δimp" in joined
+            or (cells and _normalize_header(cells[0]) in {"it", "iter"})
+        ):
+            # Prefer a real header (non-numeric first cell) over a data row.
+            first_nums = _floats(cells[0]) if cells else []
+            if not first_nums or _normalize_header(cells[0]) in {"it", "iter"}:
+                header_idx = i
+                kinds = [_conv_header_kind(c) for c in cells]
+                break
+
+    data_lines = lines[header_idx + 1 :] if header_idx is not None else lines
+    last: str | None = None
+    for ln in data_lines:
+        if ln.lstrip().startswith("#"):
+            continue
+        if "|" in ln or _floats(ln):
+            last = ln
+    if last is None:
+        return out
+
+    cells = _split_pipe(last) if "|" in last else [last]
+    if header_idx is None and "|" in last and len(cells) >= 6:
+        # it | d_mu | d_orb_occ… | d_imp_occ | d_Gimp | d_G0 | d_Sigma [| d_Etot]
+        kinds = ["it", "d_mu", "d_orb_occ", "d_imp_occ", "d_Gimp", "d_G0", "d_Sigma"]
+        if len(cells) >= 8:
+            kinds.append("d_Etot")
+
+    residuals: dict[str, float] = {}
+    explicit: bool | None = None
+    for kind, cell in zip(kinds or [], cells, strict=False):
+        nums = _floats(cell)
+        if kind == "converged" and cell.strip():
+            blob = cell.strip().lower()
+            if blob in {"1", "true", "yes", "converged"}:
+                explicit = True
+            elif blob in {"0", "false", "no", "unconverged", "not_converged"}:
+                explicit = False
+            continue
+        worst = _worst_abs(nums)
+        if worst is None:
+            continue
+        if kind in {
+            "d_mu",
+            "d_orb_occ",
+            "d_imp_occ",
+            "d_Gimp",
+            "d_G0",
+            "d_Sigma",
+            "d_Etot",
+        }:
+            residuals[kind] = worst
+
+    out["residuals"] = residuals
+    out["source"] = "conv_dat"
+    if explicit is not None:
+        out["converged"] = explicit
+        out["usable"] = True
+        out["notes"] = "explicit converged column in conv_imp*.dat"
+        return out
+    decided, note = _decide_from_residuals(residuals)
+    out["notes"] = note
+    if decided is not None:
+        out["converged"] = decided
+        out["usable"] = True
+    return out
+
+
+def parse_conv_dat(source: str | Path) -> dict[str, Any]:
+    """Read a ``conv_imp*.dat`` path. Never raises."""
+    path = Path(source)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return empty_conv_signal()
+    signal = parse_conv_dat_text(text)
+    signal["path"] = str(path)
+    return signal
+
+
+def _merge_conv_signals(signals: list[dict[str, Any]]) -> dict[str, Any]:
+    """Combine per-impurity conv tables: any False wins; else True if any True."""
+    if not signals:
+        return empty_conv_signal()
+    usable = [s for s in signals if s.get("usable")]
+    if not usable:
+        return signals[0]
+    merged = empty_conv_signal()
+    merged["source"] = usable[0].get("source") or "conv_dat"
+    merged["path"] = usable[0].get("path")
+    residuals: dict[str, float] = {}
+    notes: list[str] = []
+    verdicts: list[bool] = []
+    for s in usable:
+        for k, v in (s.get("residuals") or {}).items():
+            try:
+                fv = abs(float(v))
+            except (TypeError, ValueError):
+                continue
+            residuals[k] = max(residuals.get(k, 0.0), fv)
+        if s.get("converged") is not None:
+            verdicts.append(bool(s["converged"]))
+        if s.get("notes"):
+            notes.append(str(s["notes"]))
+        if s.get("path") and merged.get("path") is None:
+            merged["path"] = s["path"]
+    merged["residuals"] = residuals
+    if verdicts:
+        merged["converged"] = all(verdicts)
+        merged["usable"] = True
+    merged["notes"] = "; ".join(notes) if notes else ""
+    return merged
+
+
+def parse_conv_dat_group(paths: list[Path]) -> dict[str, Any]:
+    return _merge_conv_signals([parse_conv_dat(p) for p in paths])
+
+
+def _last_residual_from_obj(obj: Any) -> float | None:
+    vals = _flatten_last_numeric(obj)
+    return _worst_abs(vals) if vals else None
+
+
+def convergence_from_h5_tree(tree: Any) -> dict[str, Any]:
+    """Extract a conv-signal dict from an h5py File / nested mapping."""
+    out = empty_conv_signal()
+    if tree is None or not _is_mapping(tree):
+        return out
+
+    dmft_root = None
+    for name in _H5_ROOTS:
+        child = _mapping_get(tree, name)
+        if child is not None:
+            dmft_root = child
+            break
+    if dmft_root is None:
+        # Same sacred-seed rule as occupancy extract: no DMFT_results → skip.
+        if _mapping_get(tree, "convergence_obs") is None:
+            return out
+        dmft_root = tree
+
+    group = None
+    for key in _H5_CONV_GROUP_KEYS:
+        group = _mapping_get(dmft_root, key)
+        if group is not None:
+            break
+    if group is None:
+        group = _find_named(dmft_root, _H5_CONV_GROUP_KEYS)
+    if group is None:
+        return out
+
+    out["source"] = "h5_convergence_obs"
+    residuals: dict[str, float] = {}
+    key_map = {
+        "d_mu": ("d_mu", "delta_mu", "dmu"),
+        "d_imp_occ": ("d_imp_occ", "d_occ", "delta_imp_occ"),
+        "d_orb_occ": ("d_orb_occ", "delta_orb_occ"),
+        "d_Gimp": ("d_Gimp", "d_gimp", "delta_gimp"),
+        "d_G0": ("d_G0", "d_g0", "delta_g0"),
+        "d_Sigma": ("d_Sigma", "d_sigma", "delta_sigma"),
+        "d_Etot": ("d_Etot", "d_etot", "delta_etot"),
+    }
+    search = group
+    for dest, aliases in key_map.items():
+        hit = None
+        if _is_mapping(search):
+            for alias in aliases:
+                hit = _mapping_get(search, alias)
+                if hit is not None:
+                    break
+        if hit is None:
+            continue
+        worst = _last_residual_from_obj(hit)
+        if worst is not None:
+            residuals[dest] = worst
+    out["residuals"] = residuals
+
+    explicit_obj = None
+    if _is_mapping(group):
+        for alias in ("converged", "success", "job_done"):
+            explicit_obj = _mapping_get(group, alias)
+            if explicit_obj is not None:
+                break
+    if explicit_obj is None and _is_mapping(dmft_root):
+        explicit_obj = _mapping_get(dmft_root, "converged")
+
+    if explicit_obj is not None:
+        leaf = _dataset_value(explicit_obj)
+        if isinstance(leaf, (list, tuple)) and leaf:
+            leaf = leaf[-1]
+        if isinstance(leaf, bytes):
+            try:
+                leaf = leaf.decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                leaf = None
+        if isinstance(leaf, bool):
+            out["converged"] = leaf
+            out["usable"] = True
+            out["notes"] = "explicit converged flag on DMFT_results/convergence_obs"
+            return out
+        if isinstance(leaf, (int, float)) and not isinstance(leaf, bool):
+            out["converged"] = bool(leaf)
+            out["usable"] = True
+            out["notes"] = "explicit converged flag on DMFT_results/convergence_obs"
+            return out
+        if isinstance(leaf, str):
+            blob = leaf.strip().lower()
+            if blob in {"1", "true", "yes", "converged"}:
+                out["converged"] = True
+                out["usable"] = True
+                out["notes"] = "explicit converged flag on DMFT_results/convergence_obs"
+                return out
+            if blob in {"0", "false", "no", "unconverged", "not_converged"}:
+                out["converged"] = False
+                out["usable"] = True
+                out["notes"] = "explicit converged flag on DMFT_results/convergence_obs"
+                return out
+
+    decided, note = _decide_from_residuals(residuals)
+    out["notes"] = note
+    if decided is not None:
+        out["converged"] = decided
+        out["usable"] = True
+    return out
+
+
+def extract_convergence_h5(
+    source: str | Path | Mapping[str, Any] | None,
+    *,
+    opener: Callable[[Path], Any] | None = None,
+) -> dict[str, Any]:
+    """Best-effort h5 convergence extract. Soft on h5py — never raises."""
+    if source is None:
+        return empty_conv_signal()
+    if _is_mapping(source) and not isinstance(source, (str, Path)):
+        try:
+            return convergence_from_h5_tree(source)
+        except Exception:  # noqa: BLE001
+            _LOG.debug("in-memory convergence tree parse failed", exc_info=True)
+            return empty_conv_signal()
+
+    path = Path(source)
+    if not path.is_file():
+        return empty_conv_signal()
+
+    handle: Any = None
+    close = False
+    try:
+        if opener is not None:
+            handle = opener(path)
+            if hasattr(handle, "__enter__"):
+                handle = handle.__enter__()
+                close = True
+        else:
+            try:
+                import h5py
+            except ImportError:
+                return empty_conv_signal()
+            handle = h5py.File(path, "r")
+            close = True
+        signal = convergence_from_h5_tree(handle)
+        signal["path"] = str(path)
+        return signal
+    except Exception:  # noqa: BLE001
+        _LOG.debug("h5 convergence extract skipped for %s", path, exc_info=True)
+        return empty_conv_signal()
+    finally:
+        if close and handle is not None:
+            try:
+                closer = getattr(handle, "close", None) or getattr(
+                    handle, "__exit__", None
+                )
+                if closer is not None:
+                    if closer == getattr(handle, "__exit__", None):
+                        closer(None, None, None)
+                    else:
+                        closer()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def discover_convergence_signal(
+    work_dir: Path,
+    *,
+    seedname: str | None = None,
+    h5_opener: Callable[[Path], Any] | None = None,
+) -> dict[str, Any]:
+    """Find the first usable conv signal: ``conv_imp*.dat`` then h5."""
+    work_dir = Path(work_dir)
+    dats = find_conv_dat(work_dir)
+    if dats:
+        signal = parse_conv_dat_group(dats)
+        if signal.get("usable"):
+            return signal
+
+    for h5 in find_h5_archives(work_dir, seedname=seedname):
+        signal = extract_convergence_h5(h5, opener=h5_opener)
+        if signal.get("usable"):
+            return signal
+    return empty_conv_signal()
+
+
+def apply_convergence_precedence(
+    metrics: dict[str, Any],
+    work_dir: Path | None = None,
+    *,
+    seedname: str | None = None,
+    h5_opener: Callable[[Path], Any] | None = None,
+    signal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Set ``metrics['converged']`` from the documented precedence.
+
+    Mutates *metrics* and returns it.
+
+    1. Operator JSON ``converged`` / ``success`` / ``job_done``
+    2. Live ``conv_imp*.dat`` / h5 ``convergence_obs`` when usable
+    3. Stored native-bridge verdict (resume when live files are gone)
+    4. Last-row / occupancy heuristic (missing conv never hard-fails)
+    5. Otherwise conservative ``False``
+    """
+    if signal is None and work_dir is not None:
+        signal = discover_convergence_signal(
+            work_dir, seedname=seedname, h5_opener=h5_opener
+        )
+    if signal is None:
+        signal = empty_conv_signal()
+
+    explicit = bool(metrics.get("converged_explicit"))
+    stored_source = metrics.get("converged_source")
+    real_stored = stored_source in {"conv_dat", "h5_convergence_obs"}
+    if explicit:
+        source = "json"
+        notes = "explicit JSON converged / success / job_done"
+        decided = bool(metrics.get("converged"))
+    elif signal.get("usable") and signal.get("converged") is not None:
+        source = str(signal.get("source") or "conv_dat")
+        notes = str(signal.get("notes") or "")
+        decided = bool(signal["converged"])
+        metrics["converged"] = decided
+    elif real_stored:
+        # Resume without the live conv files: keep the previous real-signal
+        # verdict instead of flipping it via last-row occupancy.
+        source = str(stored_source)
+        notes = "stored native-bridge verdict (live conv files absent)"
+        decided = bool(metrics.get("converged"))
+    elif metrics_usable(metrics):
+        source = "last_row_heuristic"
+        notes = "no usable conv_imp*.dat / convergence_obs; last-row occupancy fallback"
+        metrics["converged"] = True
+        decided = True
+    else:
+        source = None
+        notes = "no occupancy and no usable convergence signal"
+        metrics["converged"] = False
+        decided = False
+
+    info = {
+        "converged": decided,
+        "source": source,
+        "path": signal.get("path"),
+        "residuals": dict(signal.get("residuals") or {}),
+        "cutoffs": dict(signal.get("cutoffs") or SCREENING_CONV_CUTOFFS),
+        "notes": notes,
+        "usable": bool(signal.get("usable")) if not explicit else True,
+    }
+    metrics["convergence"] = info
+    metrics["converged_source"] = source
+    return metrics
+
+
+# ---------------------------------------------------------------------------
 # Discovery + optional JSON materialization
 # ---------------------------------------------------------------------------
 
@@ -813,6 +1391,7 @@ def metrics_to_json_payload(metrics: dict[str, Any], *, source: str) -> dict[str
             metrics.get("mass_enhancement_by_orbital") or {}
         ),
         "converged": bool(metrics.get("converged")),
+        "converged_source": metrics.get("converged_source"),
         "source": source,
         "siscforge_bridge": "native_solid_dmft",
     }
@@ -820,6 +1399,13 @@ def metrics_to_json_payload(metrics: dict[str, Any], *, source: str) -> dict[str
         payload["leading_pairing_eigenvalue"] = metrics["leading_pairing_eigenvalue"]
     if metrics.get("pairing_symmetry"):
         payload["pairing_symmetry"] = metrics["pairing_symmetry"]
+    conv = metrics.get("convergence")
+    if isinstance(conv, dict) and (conv.get("residuals") or conv.get("source")):
+        payload["convergence"] = {
+            "source": conv.get("source"),
+            "residuals": dict(conv.get("residuals") or {}),
+            "notes": conv.get("notes"),
+        }
     z_orb = metrics.get("mass_enhancement_by_orbital") or {}
     if isinstance(z_orb, dict) and z_orb:
         inv: dict[str, float] = {}
@@ -901,6 +1487,16 @@ def discover_dmft_metrics(
 
         parse_json = parse_dmft_observables
 
+    def _finish(
+        metrics: dict[str, Any], kind: str, path: Path
+    ) -> tuple[dict[str, Any], str, Path]:
+        apply_convergence_precedence(
+            metrics, work_dir, seedname=seedname, h5_opener=h5_opener
+        )
+        if write_json and kind != "json":
+            materialize_observables_json(work_dir, metrics, source=str(path.name))
+        return metrics, kind, path
+
     # 1. JSON drop-ins (preferred; unchanged).
     for name in JSON_CANDIDATES:
         cand = work_dir / name
@@ -911,7 +1507,7 @@ def discover_dmft_metrics(
         except Exception:  # noqa: BLE001
             metrics = empty_metrics()
         if metrics_usable(metrics):
-            return metrics, "json", cand
+            return _finish(metrics, "json", cand)
 
     # 2. Native .dat tables.
     dats = find_dat_observables(work_dir)
@@ -920,19 +1516,12 @@ def discover_dmft_metrics(
         for group in _group_dat_by_imp(dats):
             metrics = parse_dat_group(group)
             if metrics_usable(metrics):
-                src = group[0]
-                if write_json:
-                    materialize_observables_json(
-                        work_dir, metrics, source=str(src.name)
-                    )
-                return metrics, "dat", src
+                return _finish(metrics, "dat", group[0])
 
     # 3. HDF5 — soft.
     for h5 in find_h5_archives(work_dir, seedname=seedname):
         metrics = extract_dmft_h5(h5, opener=h5_opener)
         if metrics_usable(metrics):
-            if write_json:
-                materialize_observables_json(work_dir, metrics, source=str(h5.name))
-            return metrics, "h5", h5
+            return _finish(metrics, "h5", h5)
 
     return empty_metrics(), None, None

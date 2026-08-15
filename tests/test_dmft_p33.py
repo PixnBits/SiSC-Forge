@@ -492,6 +492,8 @@ def test_docs_honest_about_scaffold_and_mock_physics() -> None:
     phase = (root / "docs" / "phase3-p33-dmft.md").read_text()
     assert "observables.json" in phase
     assert "observables_imp" in phase
+    assert "conv_imp" in phase or "convergence_obs" in phase
+    assert "last-row" in phase.lower() or "last row" in phase.lower()
     assert "DMFT_results" in phase or "native" in phase.lower()
     assert "residual" in phase.lower()
     assert "illustrative" in phase.lower()

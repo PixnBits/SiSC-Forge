@@ -17,8 +17,9 @@ Provides:
 
 **Honest residual:** production U/J/β calibration, solid_dmft version
 matrix, Wannier90 → h5 when DFTTools is missing, NdNiO₂ literature
-golden. Screening knobs stay screening knobs. Native h5/dat bridge is
-shipped; exotic archive layouts may still need a JSON drop-in.
+golden. Screening knobs stay screening knobs. Native h5/dat bridge and
+conv-signal preference are shipped; exotic archive layouts may still
+need a JSON drop-in.
 
 Conventional nitride / MgB₂ / EPW paths are unchanged when DMFT is off.
 """
@@ -45,6 +46,7 @@ from siscforge.calculators.qe.dmft_launch import (
 )
 from siscforge.calculators.qe.dmft_observables import (
     discover_dmft_metrics,
+    empty_metrics,
     metrics_usable,
     parse_dmft_dat,
     parse_dmft_dat_text,
@@ -82,8 +84,10 @@ _EXTENSION_HOOKS: dict[str, str] = {
         "run_solid_dmft.sh + LAUNCH.md; invokes when auto_launch and the "
         "stack (or SISCFORGE_SOLID_DMFT) is present; JSON drop-in still "
         "preferred, then native observables_imp*.dat / DMFT_results h5 "
-        "(soft h5py). Residual: production U/J/β, solid_dmft version "
-        "matrix, h5 convert without DFTTools, exotic archive layouts."
+        "(soft h5py). DMFTResult.converged prefers conv_imp*.dat / "
+        "convergence_obs when present; last-row occupancy is fallback. "
+        "Residual: production U/J/β, solid_dmft version matrix, "
+        "h5 convert without DFTTools, exotic archive layouts."
     ),
     "limits": (
         "screening defaults (U, J, beta, n_cycles) are thin workstation knobs; "
@@ -520,15 +524,7 @@ def parse_dmft_observables(source: str | Path | dict[str, Any]) -> dict[str, Any
             except json.JSONDecodeError:
                 data = None
 
-    out: dict[str, Any] = {
-        "occupancy_summary": {},
-        "filling": None,
-        "mass_enhancement": None,
-        "mass_enhancement_by_orbital": {},
-        "converged": False,
-        "leading_pairing_eigenvalue": None,
-        "pairing_symmetry": None,
-    }
+    out = empty_metrics()
     if data is None:
         blob = text.lower()
         out["converged"] = "converged" in blob and "not converge" not in blob
@@ -580,10 +576,23 @@ def parse_dmft_observables(source: str | Path | dict[str, Any]) -> dict[str, Any
             out["mass_enhancement"] = float(sum(orb.values()) / len(orb))
 
     conv = data.get("converged")
+    # Bridged JSON from a previous native parse is *not* an operator
+    # drop-in: live conv_imp*.dat / convergence_obs may override it.
+    bridged = data.get("siscforge_bridge") == "native_solid_dmft"
     if isinstance(conv, bool):
         out["converged"] = conv
-    else:
+        out["converged_explicit"] = not bridged
+    elif "success" in data or "job_done" in data:
         out["converged"] = bool(data.get("success") or data.get("job_done"))
+        out["converged_explicit"] = not bridged
+    else:
+        out["converged"] = False
+        out["converged_explicit"] = False
+    if data.get("converged_source"):
+        out["converged_source"] = data.get("converged_source")
+    stored_conv = data.get("convergence")
+    if isinstance(stored_conv, dict):
+        out["convergence"] = dict(stored_conv)
 
     # P3.4 homes — parse if a solver already wrote them, but do not rank.
     eig = data.get("leading_pairing_eigenvalue") or data.get("lambda_pair")
@@ -952,8 +961,26 @@ def _result_from_metrics(
     converged = bool(metrics.get("converged"))
     raw.setdefault(
         "metrics",
-        {k: metrics.get(k) for k in ("filling", "mass_enhancement", "converged")},
+        {
+            k: metrics.get(k)
+            for k in ("filling", "mass_enhancement", "converged", "converged_source")
+        },
     )
+    conv = metrics.get("convergence")
+    if isinstance(conv, dict):
+        raw.setdefault(
+            "convergence",
+            {
+                "source": conv.get("source"),
+                "residuals": dict(conv.get("residuals") or {}),
+                "notes": conv.get("notes"),
+                "path": conv.get("path"),
+            },
+        )
+    src = metrics.get("converged_source")
+    if src and src not in {"last_row_heuristic"}:
+        extra = f"convergence via {src}"
+        notes = f"{notes}; {extra}" if notes else extra
     return DMFTResult(
         status="ok" if converged else "failed",
         quality_tag=qtag,  # type: ignore[arg-type]
