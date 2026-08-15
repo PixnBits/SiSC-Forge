@@ -87,11 +87,18 @@ PIPELINE_EPW: tuple[StepName, ...] = (
 )
 
 # Hard evidence that QE restart state is corrupt — prefer full restart.
+# d_matrix / phq_setup / MPI_ABORT are fatal setup aborts: recover=.true.
+# cannot continue a star that already failed a symmetry representation.
 _RECOVER_UNSAFE_MARKERS: tuple[str, ...] = (
     "cannot recover",
     "error reading recover",
     "error in routine  read_file_ph",
     "problems reading recover",
+    "d_matrix",
+    "not orthogonal",
+    "error in routine phq_setup",
+    "fft grid incompatible with symmetry",
+    "mpi_abort",
 )
 
 # Sidecar written when NSCF-for-EPW completes (requested mesh fingerprint).
@@ -200,6 +207,55 @@ def _read_text(path: Path) -> str | None:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+
+
+def read_qe_crash_text(
+    work_dir: Path | str | None = None,
+    stdout_path: Path | str | None = None,
+) -> str:
+    """Read QE ``CRASH`` sidecars next to a step log.
+
+    ``ph.x`` often writes the real abort (``d_matrix``, ``phq_setup``) to
+    ``CRASH`` in the launch cwd and only ``MPI_ABORT`` into ``ph.out``.
+    """
+    candidates: list[Path] = []
+    if stdout_path is not None:
+        candidates.append(Path(stdout_path).parent / "CRASH")
+    if work_dir is not None:
+        wd = Path(work_dir)
+        candidates.append(wd / "CRASH")
+        candidates.append(wd / "02_scf" / "CRASH")
+        candidates.append(wd / "out" / "CRASH")
+    seen: set[Path] = set()
+    parts: list[str] = []
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved in seen or not path.is_file():
+            continue
+        seen.add(resolved)
+        text = _read_text(path)
+        if text and text.strip():
+            parts.append(text.strip())
+    return "\n".join(parts)
+
+
+def phonon_diagnostic_text(
+    work_dir: Path | str | None = None,
+    stdout_path: Path | str | None = None,
+) -> str:
+    """Concatenate ``CRASH`` + ``ph.out`` for classification / retry."""
+    parts: list[str] = []
+    crash = read_qe_crash_text(work_dir, stdout_path)
+    if crash:
+        parts.append(crash)
+    if stdout_path is not None:
+        body = _read_text(Path(stdout_path))
+        if body:
+            parts.append(body)
+    return "\n".join(parts)
 
 
 def _nonempty_files(paths: list[Path]) -> list[Path]:
@@ -595,7 +651,7 @@ def assess_phonon_recoverability(
         )
 
     out_path = scf_dir / "ph.out"
-    text = _read_text(out_path)
+    text = phonon_diagnostic_text(work_dir, out_path) or None
 
     if text is not None and _job_done(text):
         return PhononRecoverability(
@@ -606,7 +662,7 @@ def assess_phonon_recoverability(
     if text is not None and _ph_out_has_unsafe_recover_markers(text):
         return PhononRecoverability(
             recoverable=False,
-            reason="ph.out has recover-unsafe markers — full phonon restart",
+            reason="ph.out/CRASH has recover-unsafe markers — full phonon restart",
         )
 
     dyn_files = _nonempty_files(sorted(scf_dir.glob(f"{prefix}.dyn*")))
@@ -1116,7 +1172,9 @@ def ph_recover_hard_failure(stdout_path: Path | None, *, returncode: int) -> boo
     Incomplete-but-interrupted (no JOB DONE, no hard error) is **not** a hard
     failure — leave artifacts so the next re-run can try recover again.
     """
-    text = _read_text(stdout_path) if stdout_path is not None else None
+    text = None
+    if stdout_path is not None:
+        text = phonon_diagnostic_text(Path(stdout_path).parent, stdout_path) or None
     if text is not None and _ph_out_has_unsafe_recover_markers(text):
         return True
     if text is not None and _job_done(text):
@@ -1157,6 +1215,8 @@ def clean_step_outputs(
     elif step == "phonon":
         scf_dir = work_dir / "02_scf"
         _rm(scf_dir / "ph.out")
+        _rm(scf_dir / "CRASH")
+        _rm(work_dir / "CRASH")
         for dyn in scf_dir.glob(f"{prefix}.dyn*"):
             _rm(dyn)
         # Partial multi-q DFPT for EPW: remove _ph0 and dvscf leftovers

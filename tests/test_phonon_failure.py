@@ -346,3 +346,157 @@ def test_errno36_exception_string_classified() -> None:
     assert is_d_matrix_failure(exc_str)
     primary = extract_primary_failure_reason(exc_str, step_name="calc")
     assert "d_matrix" in primary.lower()
+
+
+_MPI_ABORT_ONLY = """
+     Calculation of q =    0.0000000   0.4082486   0.0000000
+--------------------------------------------------------------------------
+MPI_ABORT was invoked on rank 15 in communicator MPI_COMM_WORLD
+  Proc: [[47524,1],15]
+  Errorcode: 1
+--------------------------------------------------------------------------
+"""
+
+_CRASH_D_MATRIX = """
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     task #        15
+     from d_matrix : error #         2
+     D_S (l=3) for this symmetry operation is not orthogonal
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+"""
+
+
+def test_mpi_abort_ph_out_alone_is_not_d_matrix() -> None:
+    """ph.out often only records MPI_ABORT; that must not hide a CRASH sidecar."""
+    assert is_d_matrix_failure(_MPI_ABORT_ONLY) is False
+    primary = extract_primary_failure_reason(_MPI_ABORT_ONLY, step_name="phonon")
+    assert "d_matrix" not in primary.lower()
+
+
+def test_crash_sidecar_classifies_d_matrix_over_mpi_abort() -> None:
+    combined = _CRASH_D_MATRIX + "\n" + _MPI_ABORT_ONLY
+    assert is_d_matrix_failure(combined) is True
+    primary = extract_primary_failure_reason(combined, step_name="phonon")
+    assert "d_matrix" in primary.lower()
+
+
+def test_d_matrix_only_in_crash_triggers_nosym_retry(tmp_path: Path) -> None:
+    """Regression: CRASH has d_matrix, ph.out only MPI_ABORT → retry must fire."""
+    from siscforge.calculators.qe.recipes import (
+        QEStepResult,
+        QEWorkflowResult,
+        _maybe_retry_phonon_setup,
+    )
+    from siscforge.structure.nitrides import build_binary_nitride
+
+    s = build_binary_nitride("Nb")
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    scf.mkdir(parents=True)
+    (scf / "ph.out").write_text(_MPI_ABORT_ONLY, encoding="utf-8")
+    (scf / "CRASH").write_text(_CRASH_D_MATRIX, encoding="utf-8")
+    (scf / "scf.out").write_text(
+        "     the Fermi energy is    20.0000 ev\n"
+        "!\n     total energy              =     -100.0 Ry\n"
+        "     JOB DONE.\n",
+        encoding="utf-8",
+    )
+
+    cfg = DFTConfig(
+        nproc=1,
+        do_phonon=True,
+        do_epw=False,
+        phonon_retry_on_d_matrix=True,
+        pseudo_dir=str(tmp_path),
+    )
+    fail_step = QEStepResult(
+        name="ph",
+        work_dir=scf,
+        returncode=1,
+        stdout_path=scf / "ph.out",
+        input_path=scf / "ph.in",
+        success=False,
+        message="ph.x rc=1; phonon: MPI_ABORT was invoked on rank 15",
+    )
+    log: list[str] = []
+    pw_calls: list[dict] = []
+
+    def fake_run_pw(structure, config, work_dir, **kwargs):
+        pw_calls.append(dict(kwargs.get("extra_system") or {}))
+        out = Path(work_dir) / "scf.out"
+        out.write_text("     JOB DONE.\n", encoding="utf-8")
+        return QEStepResult(
+            name="scf",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=out,
+            input_path=Path(work_dir) / "scf.in",
+            success=True,
+            message="ok",
+        )
+
+    def fake_run_ph(config, work_dir, **kwargs):
+        out = Path(work_dir) / "ph.out"
+        out.write_text("     JOB DONE.\n     freq (    1) = 5.0 [THz] = 166.8 [cm-1]\n")
+        return QEStepResult(
+            name="ph",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=out,
+            input_path=Path(work_dir) / "ph.in",
+            success=True,
+            message="ph.x rc=0",
+        )
+
+    with (
+        patch("siscforge.calculators.qe.recipes.run_pw", side_effect=fake_run_pw),
+        patch("siscforge.calculators.qe.recipes.run_ph", side_effect=fake_run_ph),
+        patch(
+            "siscforge.calculators.qe.qe_checkpoint.clean_step_outputs",
+            return_value=[],
+        ),
+    ):
+        step2, _body2 = _maybe_retry_phonon_setup(
+            cfg,
+            structure=s,
+            work_dir=work,
+            scf_dir=scf,
+            prefix="siscforge",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log,
+            step=fail_step,
+            result=QEWorkflowResult(work_dir=work, structure=s),
+        )
+
+    assert any("d_matrix" in line for line in log)
+    assert pw_calls and pw_calls[0].get("nosym") is True
+    assert step2.success is True
+
+
+def test_prior_crash_skips_recover_and_hands_to_retry(tmp_path: Path) -> None:
+    """Resume must not recover=.true. into a d_matrix CRASH; skip to nosym retry."""
+    from siscforge.calculators.qe.recipes import _run_ph_with_optional_recover
+
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    scf.mkdir(parents=True)
+    (scf / "ph.out").write_text(_MPI_ABORT_ONLY, encoding="utf-8")
+    (scf / "CRASH").write_text(_CRASH_D_MATRIX, encoding="utf-8")
+    (scf / "s.dyn0").write_text("   3   3   3\n  10\n", encoding="utf-8")
+    log: list[str] = []
+    with patch("siscforge.calculators.qe.recipes.run_ph") as mock_ph:
+        step = _run_ph_with_optional_recover(
+            DFTConfig(do_phonon=True),
+            work_dir=work,
+            scf_dir=scf,
+            prefix="s",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log,
+        )
+        mock_ph.assert_not_called()
+    assert step.success is False
+    assert any("remediable setup failure" in line for line in log)

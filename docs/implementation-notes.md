@@ -1,5 +1,41 @@
 # Implementation Notes
 
+## Slice 29.1 (2026-08-14) — Pilot recovery: CRASH-only d_matrix + Provenance
+
+**Provenance (landed):** phonon-only `QECalculator.run()` raised
+`UnboundLocalError` on `Provenance` after `ph.x` rc=0 because Wannier/DMFT
+except blocks re-imported the name locally. Module-level import is used.
+Regression: `tests/test_qe_calculator.py`.
+
+**NbN MPI_ABORT (this slice):** `outputs/nitride_phonon_pilot` NbN ε=0
+(`3386c52d`) died with `MPI_ABORT` rank 15. `02_scf/CRASH` is the real
+reason:
+
+```
+from d_matrix : error # 2
+D_S (l=3) for this symmetry operation is not orthogonal
+```
+
+`ph.out` only had the MPI abort (plus NULs), so
+`phonon_retry_on_d_matrix` never fired and the evaluation was labelled
+`MPI_ABORT` instead of `d_matrix`. nproc=16 is **not** excessive on this
+16-core machine (ZrN ε=0 finished the same 3³ mesh with 16 ranks).
+
+Fix: read QE `CRASH` sidecars with `ph.out` for classification / retry /
+recoverability; treat `d_matrix` / `phq_setup` / `MPI_ABORT` as
+recover-unsafe; skip `recover=.true.` when leftovers are a remediable
+setup failure and hand off to the existing nosym SCF+PH retry. Tests in
+`tests/test_phonon_failure.py` and `tests/test_qe_checkpoint.py`.
+
+Pilot resume (`siscforge run --calculator qe examples/nbti_n_phonon_pilot_q3.yaml`)
+after this fix: ZrN ε=0 artefacts left untouched; NbN goes through nosym
+retry; ZrN ε=-0.04 uses QE recover; ZrN ε=-0.01 is a fresh cell. Outcome
+updated after the run.
+
+**Out of scope:** no ecut/q-mesh/pseudo/nproc YAML change; no EPW.
+
+---
+
 ## Slice 29 (2026-08-15) — Phonon-map recovery (soft-mode report + denser-q pilot)
 
 **Scope**: Workstation-first recovery when a coarse q=2³ phonon map

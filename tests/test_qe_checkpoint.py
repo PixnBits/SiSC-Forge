@@ -449,6 +449,32 @@ def test_assess_phonon_unrecoverable_cannot_recover_marker(tmp_path: Path) -> No
     assert "unsafe" in rec.reason.lower() or "cannot" in rec.reason.lower()
 
 
+def test_assess_phonon_unrecoverable_d_matrix_crash_sidecar(tmp_path: Path) -> None:
+    """CRASH d_matrix + partial dyn must not look recoverable."""
+    from siscforge.calculators.qe.qe_checkpoint import (
+        assess_phonon_recoverability,
+        clean_step_outputs,
+        phonon_diagnostic_text,
+    )
+
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    _write(scf / "s.dyn1", "partial")
+    _write(scf / "ph.out", _PH_PARTIAL + "\nMPI_ABORT was invoked on rank 15\n")
+    _write(
+        scf / "CRASH",
+        "from d_matrix : error # 2\n"
+        "D_S (l=3) for this symmetry operation is not orthogonal\n",
+    )
+    rec = assess_phonon_recoverability(work, prefix="s")
+    assert not rec.recoverable
+    blob = phonon_diagnostic_text(work, scf / "ph.out")
+    assert "d_matrix" in blob.lower()
+    removed = clean_step_outputs(work, "phonon", prefix="s")
+    assert any(p.name == "CRASH" for p in removed)
+    assert not (scf / "CRASH").exists()
+
+
 def test_run_recoverable_partial_ph_uses_recover_flag(tmp_path: Path) -> None:
     """Complete SCF + partial phonon with dyn → recover=.true. path."""
     work = tmp_path / "cand"
