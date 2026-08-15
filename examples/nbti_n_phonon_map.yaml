@@ -17,10 +17,17 @@
 #
 # After the map finishes:
 #   siscforge rank outputs/nbti_n_phonon_map --stable-first
+#   siscforge soft-modes outputs/nbti_n_phonon_map
 #   siscforge shortlist outputs/nbti_n_phonon_map \
 #     -o examples/nbti_n_phonon_map_epw.yaml \
 #     --mode stable_only --max-jobs 6 --nproc 8 \
 #     --pseudo-dir /usr/share/espresso/pseudo
+#   # If none stable (expected on a coarse mesh that also softens NbN/TiN/ZrN):
+#   siscforge pilot outputs/nbti_n_phonon_map \
+#     -o examples/nbti_n_phonon_pilot_q3.yaml \
+#     --mode binaries --qpoints 3,3,3
+#   siscforge run --calculator qe examples/nbti_n_phonon_pilot_q3.yaml
+#   # Do not launch EPW on imaginary-mode cells.
 #   siscforge run --calculator qe-epw examples/nbti_n_phonon_map_epw.yaml
 #
 # See docs/examples/nbti_n_phonon_map.md

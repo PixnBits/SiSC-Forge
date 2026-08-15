@@ -1,10 +1,19 @@
 # SiSC-Forge
 ## Product Requirements Document
 
-**Version 0.4.3 – Phase 2 complete + Phase 3 software path (P3.1–P3.6) + Phase 4 Tier-1 (P4.1 + P4.2)**  
-*(Extends v0.4.2 with fabrication-compatibility heuristics and an optional
-Josephson shortlist presentation sort. Module remains inert unless enabled.
-Tier-1 analytic path is complete; Usadel/BdG remain later.)*
+**Version 0.4.4 – Phase 2 complete + Phase 3 software path (P3.1–P3.6) + Phase 4 Tier-1 (P4.1 + P4.2) + phonon-map recovery**  
+*(Extends v0.4.3 with workstation-first guided recovery when a coarse
+phonon map returns no dynamically_stable survivors. Additive desktop
+operability on the conventional phonon-first path; Phase 3/4 status
+unchanged.)*
+
+### Changelog (v0.4.3 → v0.4.4)
+
+| Theme | What was added / corrected |
+|-------|----------------------------|
+| Phonon-map recovery | Campaign-level soft-mode report after phonon-containing runs; CLI helper that emits a ready-to-run denser-q pilot from an existing map store (binaries-first / least-soft / configurable q, `do_epw: false`, `candidate_specs` reuse); empty `stable_only` surfaces the report and the pilot command instead of a bare “none stable” dead-end. |
+| Incident | A real Nb–Ti–N q=2³ map finished with zero `dynamically_stable` survivors (`stable_only` correctly empty). Known-stable binaries (NbN, TiN, ZrN) were also soft on that mesh → mesh artefact is the primary suspect, not automatic abandonment of the family. |
+| Status | Additive to the conventional desktop path. Phase 2 complete; Phase 3 P3.1–P3.6 software path landed; Phase 4 Tier-1 shipped. Does not change unconventional / Josephson status. |
 
 ### Changelog (v0.4.2 → v0.4.3)
 
@@ -81,6 +90,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Run productively on a single high-end workstation for development and validation; scale transparently to institutional clusters and cloud HPC with the same codebase and campaign YAML.
 - Maintain a fully functional open-source primary path (Quantum ESPRESSO + EPW + TRIQS + pymatgen + jobflow + ALIGNN/MatGL-style models). VASP is optional and feature-flagged.
 - **Workstation production path (must):** support multi-day DFPT and multi-candidate maps with resume, mid-step checkpoints, honest failure classification, EPW-only remediation after finished DFPT, phonon-first stability gating, and result-quality trust so pathological screening numbers do not dominate ranking.
+- **Phonon-map post-processing (must for desktop maps):** after a phonon-only (or phonon-containing) campaign, emit a campaign-level soft-mode summary (per-candidate class + campaign signal). When `shortlist --mode stable_only` finds zero survivors, surface that report and a guided denser-q pilot helper instead of a bare “none stable” dead-end. Scientific go/no-go remains with the human. **Never** silently promote imaginary-mode cells into EPW.
 - **Active-learning operator experience (must for the flywheel):** observable surrogate provenance, explicit promotion into the training set, bootstrap-mode messaging, and the failure-mode behaviours described in `docs/design/active-learning-flywheel.md`.
 
 **Non-Goals**
@@ -94,6 +104,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - **Guaranteed EPW success** on every strained supercell; auto-raised coarse k and `search_shells` do **not** guarantee physical λ/Tc.
 - **Automated material-specific Wannier projections** (production hand-tuning remains later).
 - **Treating coarse q=2³ phonon maps as production dynamical-stability proof** (maps are a gate only).
+- **Auto-deciding physical stability from a denser-q pilot**, or auto-launching EPW on soft / imaginary-mode cells. The pilot is a ready-to-run phonon-only campaign YAML; the operator chooses whether to expand or abandon.
 
 ## 3. Target Users
 - Computational materials scientists specializing in superconductivity or epitaxial thin films.
@@ -123,6 +134,9 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - Multi-candidate and multi-day QE jobs **resume** on re-launch of the same campaign command for the common cases (finished candidates skipped; mid-step DFPT/EPW recoverable per Technical Specs).
 - Remediable EPW failures after finished DFPT (`kmesh_get_bvector`, stale NSCF after nkc raise) are **classified correctly**, retried **EPW-only** (phonon/dyn sacred), and do not require full DFPT redo.
 - Remediable phonon **setup** failures (`phq_setup` / FFT–symmetry, d_matrix) are classified as phonon (never as EPW), retried once with nosym/noinv when enabled, and are **not** reported as dynamical instability.
+- After a finished phonon map, a **soft-mode report** (per-candidate class + campaign summary) is present in the store, or is explicitly skipped with a clear reason.
+- `shortlist --mode stable_only` with zero survivors prints the soft-mode report location and the denser-q **pilot** command; it **must not** fall back to unstable top-k for EPW.
+- An operator can emit a loadable denser-q pilot YAML from an existing map store (binaries-first / least-soft / specified ids) that reuses `candidate_specs` and does not re-enumerate the full grid.
 - ML pre-filter reduces the number of expensive DFPT/EPW calculations by ≥10× while retaining known high-Tc examples in the top decile (when surrogates are trained).
 - A new Calculator plugin can be added and exercised in a campaign with <1–2 days of developer effort.
 - 100 % of v0.1 features pass unit + integration tests; a golden-system regression suite exists.
@@ -135,6 +149,7 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - CLI primary failure reasons **match the failing step** (phonon vs EPW vs SCF) for known fingerprints.
 - Progress heartbeats and walltime expectation bands are available for long QE steps so multi-hour DFPT is not silent.
 - Surrogate provenance (model version, training-set size, acquisition weights) is visible in status and synthesis cards.
+- Phonon-map post-processing is operator-complete: soft-mode summary written (or explicitly skipped), empty `stable_only` names the next command, and a denser-q pilot YAML can be emitted without file archaeology or hand-written `candidate_specs`.
 
 ## 5. High-Level Features (Prioritized)
 
@@ -151,6 +166,9 @@ Conventional superconducting electronics remain locked to deep cryogenic tempera
 - **EPW parallel topology** validation (nproc / npool).
 - **EPW coarse-k Wannier safety** (tier minima, preflight), **EPW-only remediation** (nkc 6→8→12; Phase B `search_shells`; NSCF invalidation when nkc changes; phonon sacred).
 - **Phonon-first maps** (`do_epw: false`) + **`shortlist --mode stable_only` / `stable_or_soft`** + **`rank --stable-first`**.
+- **Campaign-level soft-mode report** after phonon-only (or phonon-containing) runs (JSON + short Markdown in the campaign store). Non-blocking; missing frequencies → conservative class.
+- **Denser-q pilot helper** (`siscforge pilot`) from an existing phonon-map store: binaries-first / least-soft / user-specified ids; configurable q (default 3³); same `pseudo_dir` / `nproc`; new `output_dir`; `do_epw: false`; `candidate_specs` for exact reuse; resume-safe.
+- **Empty `stable_only` next-action messaging** — surface the soft-mode report and the pilot command; **never** fall back to unstable top-k for EPW.
 - **Phonon-specific diagnose** (never mislabel as EPW k-grid) + **FFT/symmetry and d_matrix nosym retries**.
 - **Refine-from-store** denser EPW path; heartbeats; walltime UX.
 - **Docker image** bundling QE ≥ 7.2 + EPW + SSSP + package.
@@ -211,6 +229,9 @@ As a user of 40+ candidate maps, I want CLI one-liners and evaluation notes to n
 **US9 – Active-learning operator**  
 As a desktop operator running the surrogate flywheel, I want every shortlist and ranking to record which model version produced it, how many labels it was trained on, and whether the system is still in bootstrap mode, so that I never treat an under-trained model as authoritative. I also want explicit promotion of clean EPW results into the training set and clear refusal when a retrain would pollute the model.
 
+**US10 – Phonon map returned no stable cells**  
+As a desktop operator whose coarse q=2³ map finished with zero `dynamically_stable` survivors (including known-stable binaries such as NbN / TiN / ZrN), I want a campaign-level soft-mode characterisation and a one-command denser-q pilot YAML (binaries-first or least-soft), so that I can decide whether the family is a mesh artefact or genuinely unstable — without file archaeology, hand-written pilot YAMLs, or silently sending imaginary-mode cells to EPW. See `docs/examples/nbti_n_phonon_map.md`.
+
 **Key v0.1 / desktop workflows**
 
 *A. Conventional shortlist → EPW (screening or refine)*  
@@ -221,9 +242,11 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 
 *B. Phonon-first → stable_only EPW (recommended for broad maps)*  
 1. `siscforge run --calculator qe examples/nbti_n_phonon_map.yaml` (`do_epw: false`).  
-2. `siscforge shortlist … --mode stable_only` (or `stable_or_soft`).  
-3. Optional denser `siscforge refine` from store winners.  
-4. Real EPW only on gated cells; rank with `--stable-first` as needed.
+2. Inspect the campaign **soft-mode report** (`soft_mode_report.json` / `.md`).  
+3. `siscforge shortlist … --mode stable_only` (or `stable_or_soft`).  
+4. If **none** stable: do **not** fall back to unstable top-k. Use `siscforge pilot` (binaries-first / least-soft, denser q, still `do_epw: false`) and decide expand vs abandon. See US10 and `docs/examples/nbti_n_phonon_map.md`.  
+5. Optional denser `siscforge refine` from store winners after a later EPW shortlist.  
+6. Real EPW only on gated cells; rank with `--stable-first` as needed.
 
 *C. Post-DFPT EPW remediation (automatic)*  
 1. DFPT completes (JOB DONE, dyn mesh).  
@@ -267,7 +290,7 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 - ML domain shift on highly strained or doped films → Continuous active learning with strain-augmented data; uncertainty quantification; human review of high-uncertainty high-ranking candidates.
 - Over-optimistic Si-feasibility scores → Transparent component breakdown; conservative defaults; versioned scoring rules; experimental collaborator re-weighting.
 - Josephson estimates are highly approximate → Clearly labeled as order-of-magnitude / ranking aids only; never presented as quantitative device design values in early versions.
-- Coarse q=2³ phonon maps mis-label stability → Document as **gate only**, not production dynamical-stability proof; denser DFPT for shortlisted cells.
+- Coarse q=2³ phonon maps mis-label stability → Document as **gate only**, not production dynamical-stability proof; denser DFPT for shortlisted cells. **Mitigation (v0.4.4):** the product now guides denser-q pilots from the existing map store (`siscforge pilot`, binaries-first / least-soft / specified ids) rather than forcing hand-written YAML. The pilot does **not** auto-decide physical stability and does **not** auto-launch EPW.
 - Premature trust in under-trained surrogates → Bootstrap-mode messaging, higher exploration weight early, explicit provenance on every ranking.
 
 **Software / Engineering Risks**
@@ -288,11 +311,13 @@ As a desktop operator running the surrogate flywheel, I want every shortlist and
 path** is landed (DFT+U → Wannier gate → DMFT scaffold → pairing score →
 O-vacancy enum → mixed AL). Real CTHYB / production GNN λ/Tc heads remain
 residual. Phase 4 **Tier-1** (P4.1–P4.2) is shipped; Usadel/BdG remain later.
-See [`docs/ROADMAP.md`](../ROADMAP.md) for the operational table — this
-section is the original version narrative, not the live status board.
+v0.4.4 is an **additive desktop-operability** improvement on the conventional
+phonon-first path (soft-mode report + denser-q pilot); it does not change
+Phase 3/4 status. See [`docs/ROADMAP.md`](../ROADMAP.md) for the operational
+table — this section is the original version narrative, not the live status board.
 
 - **v0.1 (Workstation Foundation)** — Structure gen (nitrides + B:Si), formation-energy surrogate, QE phonon, heuristic Si-score, ranking, store, CLI, dry-run. Exit: validated NbN phonon + small nitride campaign on workstation.
-- **v0.1+ / desktop production path (shipped alongside Phase 1)** — EPW + isotropic Tc, trust layer, resume/checkpoint, shortlist/refine, phonon-first + stable_only, EPW coarse-k + Phase B shells, phonon FFT/symmetry retry, Docker QE≥7.2, Si 45°/buffers.
+- **v0.1+ / desktop production path (shipped alongside Phase 1)** — EPW + isotropic Tc, trust layer, resume/checkpoint, shortlist/refine, phonon-first + stable_only, EPW coarse-k + Phase B shells, phonon FFT/symmetry retry, Docker QE≥7.2, Si 45°/buffers. **v0.4.4 additive:** soft-mode report + denser-q pilot after none-stable coarse maps.
 - **v0.5 (Conventional Production polish + AL bootstrap)** — Seed-set management, first trained λ/Tc surrogates, interleaved retrain cycles, bootstrap observability, hand-tuned Wannier for production shortlists, denser automated grid policies with stronger validation.
 - **v1.0 (Dual Pathway + Advanced Si)** — DMFT + pairing for nickelates, full interface/membrane modeling, multi-objective ranking, synthesis cards.
 - **v1.x+** — Usadel/BdG Josephson backends, anisotropic/SCDFT, proximity refinements, generative models, web UI, community contributions.
@@ -309,4 +334,4 @@ section is the original version narrative, not the live status board.
 
 ---
 
-*This PRD (v0.4.3) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document, the companion Technical Specifications, and the design note `docs/design/active-learning-flywheel.md`. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1–P4.2); this PRD states the requirements those slices satisfy. Phase 4 Tier-1 exit: `docs/phase4-exit.md`.*
+*This PRD (v0.4.4) is the authoritative source of product requirements for SiSC-Forge. All implementation work should be driven by and consistent with this document, the companion Technical Specifications, and the design note `docs/design/active-learning-flywheel.md`. Incident-level detail lives in `docs/implementation-notes.md` (Slices 13–28 + Slice 29 phonon-map recovery + P3.1–P3.6 + P4.1–P4.2); this PRD states the requirements those slices satisfy. Phase 4 Tier-1 exit: `docs/phase4-exit.md`. Phonon-map walkthrough: `docs/examples/nbti_n_phonon_map.md`.*

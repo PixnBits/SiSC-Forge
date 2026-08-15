@@ -71,7 +71,7 @@ docker run --rm siscforge:latest siscforge-verify
 | Image tag | `siscforge:latest` (~2.7 GB) |
 | QE | **7.3.1** at `/opt/qe/bin` (`Program PWSCF v.7.3.1`) |
 | Wannier90 | **3.1.0** at `/opt/qe/bin/wannier90.x` |
-| SiSC-Forge | `0.4.3` (`pip install -e ".[dev,qe,phonopy]"`) |
+| SiSC-Forge | `0.4.4` (`pip install -e ".[dev,qe,phonopy]"`) |
 | pytest | **202 passed**, 3 skipped (mock path; no real DFT) |
 | Dry-run | `dummy_campaign` + `nbn_epw` OK |
 | SSSP | Nb/N UPFs under `/usr/share/espresso/pseudo` |

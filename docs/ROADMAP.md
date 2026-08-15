@@ -1,12 +1,15 @@
 # SiSC-Forge Development Roadmap
 
-**Version 0.4.3 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 Tier-1 (P4.1–P4.2)**  
-Aligned with [PRD v0.4.3](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.5.3](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
+**Version 0.4.4 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 Tier-1 (P4.1–P4.2) + phonon-map recovery**  
+Aligned with [PRD v0.4.4](PRD/SiSC-Forge-PRD.md), [Technical Specifications v0.5.4](specs/SiSC-Forge-Technical-Specifications.md), and [design note](design/active-learning-flywheel.md).
 
 Workstation production-path features (resume, trust layer, EPW coarse-k + Phase B,
-phonon-first stable_only, phonon FFT/symmetry retry, Docker QE≥7.2) are **required
-for desktop EPW/maps** and are documented as shipped/must-have in PRD §5 and Specs
-§2.3–2.3b / §9; they sit alongside Phase 1 EPW rather than deferring to Phase 2.
+phonon-first stable_only, phonon FFT/symmetry retry, Docker QE≥7.2, **v0.4.4
+soft-mode report + denser-q pilot**) are **required for desktop EPW/maps**
+and are documented as shipped/must-have in PRD §5 and Specs
+§2.3–2.3c / §9; they sit alongside Phase 1 EPW rather than deferring to Phase 2.
+v0.4.4 is additive to the conventional desktop path and does not change
+Phase 3/4 status.
 
 This roadmap turns the specifications into an ordered, workstation-first sequence of work. Every phase ends with concrete, locally-validatable deliverables so that progress is possible before any large HPC allocation arrives.
 
