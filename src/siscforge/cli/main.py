@@ -1640,6 +1640,28 @@ def run_cmd(
         console.print(
             f"[bold]Calculator[/bold] {calc_name}  ({', '.join(mode_bits)})"
         )
+        try:
+            from siscforge.calculators.qe.env import detect_qe_environment
+
+            qe_env = detect_qe_environment()
+            console.print(
+                f"[dim]QE binaries:[/dim] pw={qe_env.pw or '—'}  "
+                f"ph={qe_env.ph or '—'}"
+            )
+            ph_path = (qe_env.ph or "").lower()
+            if (
+                dft.do_phonon
+                and int(dft.ph_niter) > 100
+                and ("/usr/bin/" in ph_path or "/bin/ph.x" in ph_path)
+            ):
+                console.print(
+                    "[yellow]Warning:[/yellow] ph.x looks like a distro binary "
+                    f"and dft.ph_niter={dft.ph_niter}. Ubuntu QE 6.7 rejects "
+                    "niter_ph>100 (Wrong niter_ph). Set QE_BIN to a ≥7.2 build "
+                    "(maxter=150 on 7.3.1) before DFPT."
+                )
+        except Exception:  # noqa: BLE001 — banner only
+            pass
     else:
         # Pass campaign DFT so mock can honor do_dftu / do_wannier / do_dmft.
         # Inert when those features are disabled (default).

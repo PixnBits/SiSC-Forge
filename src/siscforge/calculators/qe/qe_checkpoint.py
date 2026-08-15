@@ -98,7 +98,6 @@ _RECOVER_UNSAFE_MARKERS: tuple[str, ...] = (
     "not orthogonal",
     "error in routine phq_setup",
     "fft grid incompatible with symmetry",
-    "mpi_abort",
 )
 
 # Sidecar written when NSCF-for-EPW completes (requested mesh fingerprint).
@@ -1175,6 +1174,12 @@ def ph_recover_hard_failure(stdout_path: Path | None, *, returncode: int) -> boo
     text = None
     if stdout_path is not None:
         text = phonon_diagnostic_text(Path(stdout_path).parent, stdout_path) or None
+    if text is not None:
+        from siscforge.calculators.qe.epw_recipes import is_phq_readin_failure
+
+        # Input rejected before DFPT — previous dyn/_ph0 are still valid.
+        if is_phq_readin_failure(text):
+            return False
     if text is not None and _ph_out_has_unsafe_recover_markers(text):
         return True
     if text is not None and _job_done(text):

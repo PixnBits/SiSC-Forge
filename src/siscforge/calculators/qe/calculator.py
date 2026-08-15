@@ -527,6 +527,8 @@ class QECalculator(BaseCalculator):
                 "fft" in primary.lower()
                 or "phq_setup" in primary.lower()
                 or "d_matrix" in primary.lower()
+                or "phq_readin" in primary.lower()
+                or "niter_ph" in primary.lower()
             ):
                 notes_parts.append(
                     "phonon setup failure — not a dynamical-stability conclusion "

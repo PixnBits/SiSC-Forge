@@ -13,7 +13,9 @@ from siscforge.calculators.qe.epw_recipes import (
     extract_primary_failure_reason,
     is_d_matrix_failure,
     is_kgrid_inconsistency,
+    is_phq_readin_failure,
     is_phq_setup_fft_symmetry_failure,
+    is_wrong_niter_ph,
     truncate_for_notes,
 )
 from siscforge.calculators.qe.parser import parse_ph_output, resolve_text_or_path
@@ -500,3 +502,77 @@ def test_prior_crash_skips_recover_and_hands_to_retry(tmp_path: Path) -> None:
         mock_ph.assert_not_called()
     assert step.success is False
     assert any("remediable setup failure" in line for line in log)
+
+
+_PHQ_READIN_NITER = """
+     Program PHONON v.6.7MaX
+     Reading input from ph.in
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     Error in routine phq_readin (1):
+      Wrong niter_ph
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     stopping ...
+MPI_ABORT was invoked on rank 11 in communicator MPI_COMM_WORLD
+"""
+
+
+def test_wrong_niter_ph_is_classified_not_d_matrix() -> None:
+    assert is_wrong_niter_ph(_PHQ_READIN_NITER) is True
+    assert is_phq_readin_failure(_PHQ_READIN_NITER) is True
+    assert is_d_matrix_failure(_PHQ_READIN_NITER) is False
+    primary = extract_primary_failure_reason(_PHQ_READIN_NITER, step_name="phonon")
+    assert "niter_ph" in primary.lower()
+    assert "QE" in primary or "7.2" in primary
+
+
+def test_phq_readin_recover_does_not_wipe_dyn(tmp_path: Path) -> None:
+    """recover=.true. + Wrong niter_ph must not delete existing dyn files."""
+    from siscforge.calculators.qe.recipes import (
+        QEStepResult,
+        _run_ph_with_optional_recover,
+    )
+
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    scf.mkdir(parents=True)
+    (scf / "ph.out").write_text(
+        "     Program PHONON\n     Representation #   1\n", encoding="utf-8"
+    )
+    dyn = scf / "s.dyn1"
+    dyn.write_text("partial dyn — keep me\n", encoding="utf-8")
+    (scf / "_ph0").mkdir()
+    (scf / "_ph0" / "keep").write_text("x", encoding="utf-8")
+    log: list[str] = []
+
+    def fake_run_ph(config, work_dir, **kwargs):
+        assert kwargs.get("recover") is True
+        out = Path(work_dir) / "ph.out"
+        out.write_text(_PHQ_READIN_NITER, encoding="utf-8")
+        (Path(work_dir) / "CRASH").write_text(
+            "from phq_readin : error # 1\n Wrong niter_ph \n", encoding="utf-8"
+        )
+        return QEStepResult(
+            name="ph",
+            work_dir=Path(work_dir),
+            returncode=1,
+            stdout_path=out,
+            input_path=Path(work_dir) / "ph.in",
+            success=False,
+            message="ph.x rc=1",
+        )
+
+    with patch("siscforge.calculators.qe.recipes.run_ph", side_effect=fake_run_ph):
+        step = _run_ph_with_optional_recover(
+            DFTConfig(do_phonon=True),
+            work_dir=work,
+            scf_dir=scf,
+            prefix="s",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log,
+        )
+    assert step.success is False
+    assert dyn.is_file()
+    assert dyn.read_text() == "partial dyn — keep me\n"
+    assert any("leaving DFPT artefacts" in line for line in log)

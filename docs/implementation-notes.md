@@ -27,10 +27,16 @@ recover-unsafe; skip `recover=.true.` when leftovers are a remediable
 setup failure and hand off to the existing nosym SCF+PH retry. Tests in
 `tests/test_phonon_failure.py` and `tests/test_qe_checkpoint.py`.
 
-Pilot resume (`siscforge run --calculator qe examples/nbti_n_phonon_pilot_q3.yaml`)
-after this fix: ZrN ε=0 artefacts left untouched; NbN goes through nosym
-retry; ZrN ε=-0.04 uses QE recover; ZrN ε=-0.01 is a fresh cell. Outcome
-updated after the run.
+Pilot resume without `QE_BIN` picked up Ubuntu `ph.x` 6.7MaX
+(`/usr/bin/ph.x`). QE 6.7 `maxter=100` rejected campaign
+`niter_ph=150` (`Wrong niter_ph` / `phq_readin`) in ~1 s. The same
+setting is valid on QE 7.3.1 (`maxter=150`) used for the original ZrN
+ε=0 DFPT. A recover-then-hard-fail wipe also deleted the nearly-complete
+ZrN ε=-0.04 dyn set (SCF kept). Software follow-up: classify
+`Wrong niter_ph`; **do not wipe** DFPT artefacts on namelist
+`phq_readin`; print resolved `pw.x`/`ph.x` and warn when a distro
+binary is paired with `ph_niter>100`. Next resume must set
+`QE_BIN=$HOME/src/q-e-qe-7.3.1/bin`.
 
 **Out of scope:** no ecut/q-mesh/pseudo/nproc YAML change; no EPW.
 

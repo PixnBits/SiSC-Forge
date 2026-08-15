@@ -613,7 +613,10 @@ def _run_ph_with_optional_recover(
     - remediable ``d_matrix`` / FFT setup leftovers skip recover and
       hand off to the nosym SCF+PH retry
     """
-    from siscforge.calculators.qe.epw_recipes import is_phonon_nosym_retryable
+    from siscforge.calculators.qe.epw_recipes import (
+        is_phonon_nosym_retryable,
+        is_phq_readin_failure,
+    )
     from siscforge.calculators.qe.qe_checkpoint import (
         assess_phonon_recoverability,
         clean_step_outputs,
@@ -652,6 +655,12 @@ def _run_ph_with_optional_recover(
         hard_fail = ph_recover_hard_failure(
             step.stdout_path, returncode=step.returncode
         )
+        recover_blob = phonon_diagnostic_text(work_dir, step.stdout_path)
+        if not step.success and is_phq_readin_failure(recover_blob):
+            log.append(
+                "ph.x rejected input (phq_readin) — leaving DFPT artefacts in place"
+            )
+            return step
         # Also fall back when recover left no useful state and failed.
         if hard_fail or (
             not step.success
