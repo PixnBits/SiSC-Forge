@@ -1,5 +1,34 @@
 # Implementation Notes
 
+## Slice 29 (2026-08-15) — Phonon-map recovery (soft-mode report + denser-q pilot)
+
+**Scope**: Workstation-first recovery when a coarse q=2³ phonon map
+returns zero `dynamically_stable` survivors. Additive to the conventional
+desktop path (Slice 23). Does **not** change Phase 3/4 status. Does
+**not** auto-decide physical stability. Does **not** auto-launch EPW on
+soft cells.
+
+Incident: a real Nb–Ti–N map finished with `stable_only` correctly empty;
+known-stable binaries (NbN, TiN, ZrN) were also large-imaginary on that
+mesh → mesh artefact is the primary suspect.
+
+| Item | Location |
+|------|----------|
+| Soft-mode report | `siscforge.soft_modes` (`classify_soft_mode`, `write_soft_mode_report`) |
+| Store files | `soft_mode_report.json`, `soft_mode_report.md` |
+| Pilot helper | `siscforge.pilot` (`build_pilot_campaign`, `do_epw` forced false) |
+| CLI | `siscforge soft-modes`, `siscforge pilot`; empty `stable_only` next-action text |
+| Auto-write | phonon-containing `siscforge run` (non-blocking) |
+| Walkthrough | `docs/examples/nbti_n_phonon_map.md` |
+| Contracts | PRD v0.4.4 US10; Specs v0.5.4 §2.3c / AC19–AC22 |
+| Tests | `tests/test_soft_modes.py`, `tests/test_pilot.py` |
+
+**Out of scope / TODO later:** feed `soft_mode_class` and pilot
+provenance into AL acquisition; automatic q-convergence beyond a single
+denser pilot; production dynamical-stability certification.
+
+---
+
 ## Slice P3.x real launch (2026-08-14) — controlled solid_dmft launcher
 
 Closes the P3.3 residual `p3_x_real_launch` (issue #18). Thin,
@@ -660,6 +689,8 @@ siscforge run --calculator qe-epw examples/nbti_n_phonon_map_epw.yaml
 - Coarse phonon grids can still mis-label stability
 - Does not replace denser-grid refine for production claims
 - Mock dry-run invents ~15% imaginary modes for realism
+- **Follow-on (Slice 29):** none-stable maps now get a soft-mode report and
+  a guided denser-q pilot instead of a dead-end CLI error. Still a gate.
 
 ---
 

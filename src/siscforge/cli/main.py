@@ -4,7 +4,9 @@ Subcommands:
   - ``enumerate`` — generate structure candidates (+ optional filters)
   - ``rank``      — rank evaluations from JSON or a campaign store
   - ``run``       — load campaign, filter, evaluate (mock/QE/EPW), rank, export
-  - ``shortlist`` — build a focused EPW campaign from an AL dry-run store
+  - ``shortlist`` — build a focused EPW campaign from an AL / phonon store
+  - ``pilot``     — denser-q phonon-only recovery campaign from a map store
+  - ``soft-modes``— campaign-level soft-mode report from a phonon store
   - ``refine``    — promote store winners to denser-grid / production-tier EPW
   - ``al-status`` / ``al-seed`` / ``al-promote`` / ``al-train`` / ``al-audit`` / ``al-rollback`` — Phase 1.5 flywheel
 
@@ -442,7 +444,40 @@ def shortlist_cmd(
             calculator=calculator,
         )
     except ValueError as exc:
+        msg = str(exc)
         console.print(f"[red]{exc}[/red]")
+        if mode_norm == "stable_only" and "No dynamically stable" in msg:
+            try:
+                from siscforge.soft_modes import (
+                    REPORT_JSON,
+                    REPORT_MD,
+                    ensure_soft_mode_report,
+                )
+
+                report, json_path, md_path = ensure_soft_mode_report(
+                    store_dir, campaign_name=name
+                )
+                signal = report.get("campaign_signal") or "—"
+                n_stable = report.get("n_stable", 0)
+                console.print(
+                    f"[yellow]Soft-mode report[/yellow] signal={signal} "
+                    f"stable={n_stable} → {json_path}"
+                )
+                console.print(f"[dim]Markdown:[/dim] {md_path}")
+                console.print(
+                    "[bold]Next (do not EPW soft cells):[/bold]\n"
+                    f"  siscforge soft-modes {store_dir}\n"
+                    f"  siscforge pilot {store_dir} -o {store_dir}_pilot_q3.yaml "
+                    f"--mode binaries --qpoints 3,3,3\n"
+                    f"  # or: --mode least_soft -n 4\n"
+                    "  # then: siscforge run --calculator qe <pilot.yaml>\n"
+                    f"  # report files: {REPORT_JSON}, {REPORT_MD}"
+                )
+            except Exception as report_exc:  # noqa: BLE001 — never block the refuse
+                console.print(
+                    f"[dim]soft-mode report unavailable ({report_exc}) — "
+                    f"still refusing unstable top-k fallback[/dim]"
+                )
         raise typer.Exit(code=1) from exc
 
     path = write_campaign_yaml(cfg, output)
@@ -676,6 +711,258 @@ def refine_cmd(
         f"  siscforge run --dry-run {path}\n"
         f"  siscforge run --calculator qe-epw {path}\n"
         "  # after runs: rank/export — check result_quality before citing Tc"
+    )
+
+
+# ---------------------------------------------------------------------------
+# soft-modes (phonon-map post-processing)
+# ---------------------------------------------------------------------------
+
+
+@app.command("soft-modes")
+def soft_modes_cmd(
+    store_dir: Path = typer.Argument(
+        ...,
+        help="Phonon-map (or phonon-containing) campaign store.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Rewrite the report even if soft_mode_report.json already exists.",
+    ),
+) -> None:
+    """Write / print the campaign-level soft-mode report.
+
+    Heuristic characterisation only. Coarse q=2³ is a gate, not production
+    dynamical-stability proof. Never a go-ahead to launch EPW on soft cells.
+    """
+    from siscforge.shortlist import load_evaluations_from_store
+    from siscforge.soft_modes import (
+        ensure_soft_mode_report,
+        write_soft_mode_report,
+    )
+
+    evals = load_evaluations_from_store(store_dir)
+    if refresh or not evals:
+        report, json_path, md_path = write_soft_mode_report(
+            evals, store_dir
+        )
+    else:
+        report, json_path, md_path = ensure_soft_mode_report(
+            store_dir, evaluations=evals
+        )
+
+    if report.get("skipped"):
+        console.print(
+            f"[yellow]Soft-mode report skipped:[/yellow] "
+            f"{report.get('skip_reason')}"
+        )
+        console.print(f"[dim]Wrote[/dim] {json_path}")
+        raise typer.Exit(code=0)
+
+    console.print(
+        f"[bold]Soft-mode report[/bold] → [green]{json_path}[/green]"
+    )
+    console.print(f"[dim]Markdown:[/dim] {md_path}")
+    console.print(
+        f"[dim]signal=[/dim]{report.get('campaign_signal')}  "
+        f"stable={report.get('n_stable', 0)}  "
+        f"artefact={report.get('n_likely_mesh_artefact', 0)}  "
+        f"optical={report.get('n_optical_soft', 0)}  "
+        f"soft={report.get('n_genuinely_soft', 0)}  "
+        f"setup={report.get('n_setup_failed', 0)}"
+    )
+    known = report.get("known_stable_binaries_soft") or []
+    if known:
+        console.print(
+            "[yellow]Known-stable binaries also soft on this mesh:[/yellow] "
+            + ", ".join(str(x) for x in known)
+            + " — mesh artefact is the primary suspect, not automatic "
+            "abandonment of the family."
+        )
+    if int(report.get("n_stable") or 0) == 0:
+        console.print(
+            "[bold]None stable.[/bold] Do not fall back to unstable EPW.\n"
+            f"  siscforge pilot {store_dir} -o {store_dir}_pilot_q3.yaml "
+            f"--mode binaries --qpoints 3,3,3"
+        )
+
+
+# ---------------------------------------------------------------------------
+# pilot (denser-q phonon recovery)
+# ---------------------------------------------------------------------------
+
+
+@app.command("pilot")
+def pilot_cmd(
+    store_dir: Path = typer.Argument(
+        ...,
+        help="Existing phonon-map store (evaluations.json).",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Path for the generated denser-q pilot campaign YAML.",
+    ),
+    max_jobs: int = typer.Option(
+        4,
+        "--max-jobs",
+        "-n",
+        help="Maximum cells in the pilot (binaries-first / least-soft).",
+        min=1,
+        max=16,
+    ),
+    mode: str = typer.Option(
+        "binaries",
+        "--mode",
+        "-m",
+        help="Selection: binaries | least_soft | ids",
+    ),
+    qpoints: str = typer.Option(
+        "3,3,3",
+        "--qpoints",
+        "-q",
+        help="Denser DFPT mesh (default 3,3,3). Still a gate, not production proof.",
+    ),
+    candidate_id: list[str] | None = typer.Option(
+        None,
+        "--id",
+        help="Candidate ID (or prefix) for mode=ids; repeatable.",
+    ),
+    name: str = typer.Option(
+        "nitride_phonon_pilot",
+        "--name",
+        help="Campaign name (also used in default output_dir).",
+    ),
+    campaign_output_dir: Path | None = typer.Option(
+        None,
+        "--campaign-output-dir",
+        help="output_dir written into the pilot YAML "
+        "(default: outputs/<name>). Must differ from the source store.",
+    ),
+    pseudo_dir: Path | None = typer.Option(
+        None,
+        "--pseudo-dir",
+        help="UPF directory (default: copy from source campaign if present).",
+    ),
+    nproc: int | None = typer.Option(
+        None,
+        "--nproc",
+        help="MPI ranks (default: copy from source campaign if present).",
+        min=1,
+    ),
+) -> None:
+    """Emit a ready-to-run denser-q phonon-only pilot from a map store.
+
+    Reuses exact ``candidate_specs``. Forces ``do_epw: false``. Does not
+    decide physical stability and does not launch EPW on soft cells.
+    """
+    from siscforge.pilot import (
+        build_pilot_campaign,
+        load_source_campaign,
+        parse_qpoints,
+        pilot_summary_table,
+        write_pilot_yaml,
+    )
+    from siscforge.shortlist import load_evaluations_from_store
+    from siscforge.soft_modes import ensure_soft_mode_report
+
+    mode_norm = mode.strip().lower().replace("-", "_")
+    if mode_norm not in {"binaries", "least_soft", "ids"}:
+        raise typer.BadParameter("mode must be binaries | least_soft | ids")
+    if mode_norm == "ids" and not candidate_id:
+        raise typer.BadParameter("mode=ids requires at least one --id")
+    try:
+        qpts = parse_qpoints(qpoints)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    evals = load_evaluations_from_store(store_dir)
+    if not evals:
+        console.print(f"[red]No evaluations found in[/red] {store_dir}")
+        raise typer.Exit(code=1)
+
+    # Report is non-blocking; a missing write must not prevent the YAML.
+    try:
+        ensure_soft_mode_report(store_dir, evaluations=evals)
+    except Exception as report_exc:  # noqa: BLE001
+        console.print(f"[dim]soft-mode report skipped ({report_exc})[/dim]")
+
+    src_cfg = load_source_campaign(store_dir)
+    try:
+        cfg, chosen = build_pilot_campaign(
+            evals,
+            name=name,
+            source_store=str(store_dir.resolve()),
+            source_campaign=src_cfg,
+            max_jobs=max_jobs,
+            mode=mode_norm,  # type: ignore[arg-type]
+            candidate_ids=list(candidate_id) if candidate_id else None,
+            qpoints=qpts,
+            output_dir=(
+                str(campaign_output_dir)
+                if campaign_output_dir is not None
+                else f"outputs/{name}"
+            ),
+            pseudo_dir=str(pseudo_dir) if pseudo_dir else None,
+            nproc=nproc,
+            dry_run=False,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    if cfg.dft.do_epw or cfg.dft.epw.enabled:
+        console.print(
+            "[red]Refusing to write a pilot with do_epw enabled.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    path = write_pilot_yaml(cfg, output)
+    console.print(
+        f"[bold]Pilot[/bold] {len(chosen)} cells  q={cfg.dft.qpoints}  "
+        f"do_epw=false → [green]{path}[/green]"
+    )
+    console.print(f"[dim]Campaign output_dir:[/dim] {cfg.output_dir}")
+    console.print(
+        f"[dim]dft.pseudo_dir:[/dim] {cfg.dft.pseudo_dir}  nproc={cfg.dft.nproc}"
+    )
+    console.print(
+        "[yellow]Denser q is still a gate — not production dynamical-stability "
+        "proof. Human decides expand vs abandon. No automatic EPW.[/yellow]"
+    )
+
+    table = Table(title="Denser-q phonon pilot")
+    table.add_column("#", justify="right")
+    table.add_column("Formula")
+    table.add_column("Strain", justify="right")
+    table.add_column("min ω", justify="right")
+    table.add_column("class")
+    table.add_column("binary", justify="center")
+    for row in pilot_summary_table(chosen):
+        min_f = row.get("min_freq")
+        table.add_row(
+            str(row["#"]),
+            str(row["formula"]),
+            f"{row['strain']:+.3f}" if row["strain"] is not None else "—",
+            f"{min_f:.1f}" if min_f is not None else "—",
+            str(row["class"]),
+            "yes" if row["binary"] else "no",
+        )
+    console.print(table)
+    console.print(
+        "[bold]Next:[/bold]\n"
+        f"  siscforge run --dry-run {path}\n"
+        f"  siscforge run --calculator qe {path}   # phonon-only, resume-safe"
     )
 
 
@@ -1822,6 +2109,31 @@ def run_cmd(
     for label, path in written.items():
         console.print(f"[green]Wrote[/green] {label}: {path}")
     console.print(f"[dim]Store root: {store.root.resolve()}[/dim]")
+    # Slice 29: campaign-level soft-mode report after phonon-containing runs.
+    # Non-blocking — a write failure must not fail an otherwise good campaign.
+    if any(ev.phonon is not None for ev in ranked):
+        try:
+            from siscforge.soft_modes import write_soft_mode_report
+
+            _sm_report, sm_json, sm_md = write_soft_mode_report(
+                ranked, out, campaign_name=config.name
+            )
+            written["soft_mode_report"] = sm_json
+            console.print(f"[green]Wrote[/green] soft-mode report: {sm_json}")
+            console.print(f"[dim]Markdown:[/dim] {sm_md}")
+            if int(_sm_report.get("n_stable") or 0) == 0 and not _sm_report.get(
+                "skipped"
+            ):
+                console.print(
+                    "[yellow]None dynamically stable on this mesh.[/yellow] "
+                    "Do not fall back to unstable EPW. "
+                    f"siscforge pilot {out} -o {out}_pilot_q3.yaml "
+                    "--mode binaries --qpoints 3,3,3"
+                )
+        except Exception as sm_exc:  # noqa: BLE001
+            console.print(
+                f"[dim]soft-mode report skipped ({sm_exc})[/dim]"
+            )
     # Operator hint: promote eligible clean results into the *shared* AL root
     console.print(
         f"[dim]AL: siscforge al-promote {out} --al-root {tstore.root.parent} "

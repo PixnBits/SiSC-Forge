@@ -1,10 +1,20 @@
 # SiSC-Forge
 ## Technical Specifications
 
-**Version 0.5.3 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 Tier-1 (P4.1–P4.2)**  
-*(Extends v0.5.2 with P4.2 fabrication-compatibility heuristics and the
-Tier-1 exit checklist. Module remains inert unless `josephson.enabled`.
-Usadel/BdG remain later.)*
+**Version 0.5.4 – Phase 2 complete + Phase 3 P3.1–P3.6 + Phase 4 Tier-1 (P4.1–P4.2) + phonon-map recovery**  
+*(Extends v0.5.3 with the conventional-path soft-mode report, denser-q
+pilot helper, and empty-`stable_only` messaging. Additive desktop
+operability; Phase 3/4 status unchanged. Usadel/BdG remain later.)*
+
+### Changelog (v0.5.3 → v0.5.4)
+
+| Area | Added / tightened |
+|------|-------------------|
+| §2.3c | Soft-mode report contract (per-candidate + campaign JSON/Markdown); denser-q pilot helper from a phonon-map store |
+| §2.6 / §2.7 | Empty `stable_only` must surface the report + `siscforge pilot`; never fall back to unstable top-k for EPW. Soft-mode class / pilot provenance may later feed AL (not required this slice) |
+| Acceptance | AC19–AC22 for report, pilot YAML, empty-shortlist messaging, `do_epw: false` |
+| Limitations | Classification is heuristic; denser pilot ≠ production dynamical-stability proof |
+| Docs | `docs/examples/nbti_n_phonon_map.md`; implementation-notes Slice 29 |
 
 ### Changelog (v0.5.2 → v0.5.3)
 
@@ -113,7 +123,7 @@ Provenance Store + Active-Learning Feedback (promotion → training set → retr
 Structure generation → formation-energy filter → QE-SCF + DFPT phonon → heuristic Si-score → store + ranking + dry-run.
 
 **Workstation production path (required alongside Phase 1 EPW)**  
-Resume / mid-step checkpoint · EPW topology + coarse-k safety · EPW-only remediation · trust layer · phonon-first + stable_only · phonon diagnose/retry · Docker QE≥7.2.
+Resume / mid-step checkpoint · EPW topology + coarse-k safety · EPW-only remediation · trust layer · phonon-first + stable_only · phonon diagnose/retry · soft-mode report + denser-q pilot (v0.5.4) · Docker QE≥7.2.
 
 **Active-learning bootstrap (Phase 1 residual / 1.5)**  
 Seed-set management · explicit promotion · first trained surrogate with uncertainty · acquisition provenance · bootstrap-mode observability · full mock cycle.
@@ -231,8 +241,98 @@ Triggered after **successful DFPT** when EPW fails with remediable classes.
 - Setup failure / failed `PhononResult.status` → `dynamically_stable=false`; no modes → not stable.
 - Completed phonon with imaginary modes → stability conclusion (`has_imaginary_modes`).
 - `stable_only` shortlist **must ignore** setup-failed and non-ok evaluations.
+- `stable_only` with **zero** survivors **must not** fall back to unstable top-k for EPW. See §2.3c.
 
-### 2.4 Unconventional (DFT+U / DMFT) Pathway — Phase 3 software path (P3.1–P3.6)
+### 2.3c Soft-mode report & denser-q pilot (phonon-map recovery)
+
+Incident-driven (Nb–Ti–N q=2³ map, zero `dynamically_stable` survivors;
+known-stable binaries NbN / TiN / ZrN also large-imaginary on that mesh).
+Coarse maps remain a **discovery gate** (AC12). This subsection specifies
+the operator surface that replaces file archaeology and hand-written
+pilot YAML. It does **not** decide physical stability and does **not**
+launch EPW.
+
+Walkthrough: `docs/examples/nbti_n_phonon_map.md`.  
+Implementation notes: Slice 29 in `docs/implementation-notes.md`.
+
+#### Soft-mode report contract
+
+After a finished **phonon-only** or **phonon-containing** campaign the
+store **must** contain a campaign-level report, or an explicit skip
+record with a clear reason (e.g. no phonon results in the store).
+
+The write is **non-blocking**: missing frequency lists, missing `raw`
+spectra, or a write failure **must not** fail the campaign. Missing
+frequencies → **conservative** classification (never “stable”, never a
+go-ahead for EPW).
+
+**Per-candidate fields (must):**
+
+| Field | Semantics |
+|-------|-----------|
+| `min_frequency_cm1` | Lowest ω (cm⁻¹); imaginary as negative when applicable |
+| `has_imaginary_modes` / `dynamically_stable` | Copied from `PhononResult` |
+| `soft_mode_class` | One of `stable` \| `likely_mesh_artefact` \| `optical_soft` \| `setup_failed` \| `genuinely_soft` \| `unknown` |
+| `reasons` | Short machine-readable tokens (e.g. `known_stable_binary_nitride_on_coarse_or_screening_mesh`, `missing_frequency_list_conservative`) |
+| `acoustic_vs_optical` | `optical_imaginary` \| `acoustic_only_imaginary` \| `none_below_threshold` \| `undetermined` |
+| `asr_signal` | Optional; only when a single-q / Γ acoustic triplet is **detectable**. Otherwise `null` |
+
+**Classification rules (heuristic — must stay conservative):**
+
+- `setup_failed` — phonon `status` not `ok`/`mock`, or no modes and no `min_frequency_cm1`.
+- `stable` — completed phonon, no imaginary modes under the campaign threshold.
+- `optical_soft` — **only** when a single-q / Γ list is detectable (list length = 3 N_at) **and** imaginary weight sits on optical branches. A flat mesh dump (n_modes ≫ 3 N_at) is `undetermined`.
+- `likely_mesh_artefact` — known-stable rock-salt binaries (NbN, TiN, ZrN, HfN) with imaginary modes on a screening / coarse mesh; **or** imaginary weight confined to the lowest three branches when a single-q list is detectable.
+- `genuinely_soft` — imaginary modes present and not classified above. **Default when the frequency list is missing** (conservative).
+- `unknown` — no `PhononResult` at all.
+
+Labels such as `likely_mesh_artefact` are **suspects, not proof**. The
+report **must** state that coarse q is a gate only.
+
+**Campaign-level summary (must):** counts by class; `campaign_signal`
+(`has_stable_survivors` \| `none_stable` \| `none_stable_known_binaries_also_soft` \| `no_phonon_results` \| `skipped`); list of known-stable binaries that are also soft; `next_actions` (report path + `siscforge pilot` command). Written as `soft_mode_report.json` plus a short Markdown section (`soft_mode_report.md`) in the campaign store.
+
+`siscforge soft-modes <store>` must be able to (re)write the report from
+an existing store without re-running QE.
+
+#### Denser-q pilot helper
+
+`siscforge pilot <store> -o <yaml>` **must** emit a loadable
+`CampaignConfig` / YAML from an existing phonon-map store.
+
+| Contract | Rule |
+|----------|------|
+| Selection | `binaries` (binary nitrides only, least-soft first) \| `least_soft` (highest `min_frequency_cm1`, N cells) \| `ids` (user-specified). Small set; default N ≤ 4 |
+| `candidate_specs` | Exact reuse of store cells (formula × strain × CIF). **Must not** re-enumerate the full composition × strain grid |
+| `qpoints` | Denser than the source map; default **3³**, configurable |
+| `do_epw` | **false** (and `epw.enabled: false`). **Must not** auto-launch EPW on soft cells |
+| Copied knobs | `pseudo_dir`, `nproc`, phonon retry flags from `campaign_resolved.yaml` when present |
+| `output_dir` | **New** directory; **must** differ from the source store (resume-safe) |
+| Provenance | `extras.pilot` records source store, mode, qpoints, selected ids, and the limitation string |
+
+The pilot **must not** claim that denser q equals production
+dynamical-stability proof. The human still chooses expand vs abandon.
+
+#### Empty `stable_only` behaviour
+
+When `shortlist --mode stable_only` finds zero survivors the CLI **must**:
+
+1. Exit non-zero and **write no EPW YAML**.
+2. Refuse any fallback to unstable top-k (existing Slice 23 contract).
+3. Surface the soft-mode report (write it if missing) and print the
+   `siscforge pilot` command as the next action.
+
+`stable_or_soft` remains available for numeric-noise floors only; it is
+**not** a silent path to EPW of hard-imaginary cells.
+
+#### AL (this slice)
+
+Soft-mode class and pilot provenance **may later** feed AL acquisition
+(§2.7). **This slice only requires** the report, the pilot scaffolding,
+and the empty-shortlist messaging. Do not change default acquisition
+scores.
+
+---### 2.4 Unconventional (DFT+U / DMFT) Pathway — Phase 3 software path (P3.1–P3.6)
 Produces `leading_pairing_eigenvalue` that feeds the common `performance_score` via documented mapping (see `docs/phase3-p34-pairing-score.md`). **Default off.**
 
 **Implemented contracts:**
@@ -267,6 +367,7 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 - **Phonon-aware ranking:**
   - `rank --stable-first` prefers dynamically stable phonons.
   - Setup failures are not “stable.”
+  - Soft-mode class is **diagnostic / provenance**, not a ranking override in this slice. Pathological imag-mode EPW remains blocked by the trust layer.
 - Surrogate provenance (model version, training-set size, acquisition weights, bootstrap flag) appears in status and synthesis cards.
 - JosephsonMetrics optional secondary ranking when module enabled (Phase 4).
 
@@ -279,7 +380,9 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 | `run.resume` / skip finished | Multi-candidate checkpoint |
 | `resume_qe_steps` | Mid-step workdir reuse |
 | Heartbeats | Long QE progress |
-| `siscforge shortlist` | From store → focused EPW YAML; `--mode stable_only` \| `stable_or_soft` \| performance modes |
+| `siscforge shortlist` | From store → focused EPW YAML; `--mode stable_only` \| `stable_or_soft` \| performance modes. Empty `stable_only` **must** print the soft-mode report path and the `siscforge pilot` command; **must not** fall back to unstable top-k |
+| `siscforge soft-modes` | (Re)write `soft_mode_report.json` + `.md` from a phonon-containing store; skip with a clear reason if no phonon data |
+| `siscforge pilot` | From a phonon-map store → denser-q phonon-only YAML (`do_epw: false`); `--mode binaries` \| `least_soft` \| `ids`; `--qpoints` default 3,3,3; new `output_dir`; `candidate_specs` reuse |
 | `siscforge refine` | Denser EPW from store winners; separate `output_dir`; `quality_tag` production / workstation_dense grids |
 | `siscforge rank` | Table export; `--stable-first` |
 
@@ -289,6 +392,7 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 - Explicit promotion of clean results into the training set.
 - Training-set audit command.
 - Failure modes (retrain NaNs, over-confidence, empty shortlist, mode collapse, mock-data refusal) must be classified and reported with the same honesty as phonon vs EPW failures.
+- Empty phonon-map `stable_only` is an **operator-recovery** failure mode (report + pilot), not an AL acquisition change. Soft-mode class / pilot provenance **may later** feed AL; this slice does not require it.
 - Full prioritize → shortlist → (mock) calculate → promote → retrain cycle must be exercisable in dry-run / mock mode.
 - **P3.6:** `active_learning.pool_mode` (`off` default / `joint` / `separate`) with documented pool derivation and optional per-pool quotas. Conventional campaigns with `off` must not change acquisition scores or order. See `docs/phase3-p36-mixed-al.md`.
 
@@ -483,9 +587,10 @@ dft:
     mu_star: 0.10
 ```
 
-### 5.3 Shortlist / refine (CLI-driven YAML generation)
+### 5.3 Shortlist / refine / pilot (CLI-driven YAML generation)
 - `siscforge shortlist --mode stable_only|stable_or_soft|… -n N -o campaign.yaml`
 - `siscforge refine` denser grids / `workstation_dense` tier; **separate `output_dir`** from screening store.
+- `siscforge pilot --mode binaries|least_soft|ids --qpoints 3,3,3 -o pilot.yaml` — denser-q **phonon-only** recovery from a map store; `do_epw` stays false; `candidate_specs` reuse; **separate `output_dir`**.
 
 ### 5.4 Josephson (Phase 4; ignored until enabled)
 
@@ -512,6 +617,7 @@ josephson:
 
 - CandidateEvaluation JSON, CSV summary, Markdown synthesis cards, optional CIF/POSCAR.
 - Quality flags and primary failure reasons appear in notes/errors.
+- Soft-mode report (`soft_mode_report.json` / `soft_mode_report.md`) appears in the store after phonon-containing runs, or an explicit skip reason is written.
 - Surrogate provenance appears in status and cards.
 - Josephson section only when module enabled (labeled approximate).
 - File-based store is first-class on workstation; MongoDB optional.
@@ -537,6 +643,8 @@ josephson:
 - Phonon-only path extractors skip EPW-only needles.
 - FFT/symmetry retry: one nosym SCF+PH; disabled flag skips; second failure does not loop.
 - Failed/empty phonon → not dynamically stable; `stable_only` filter empty.
+- Empty `stable_only` message names the soft-mode report and `siscforge pilot`; no EPW YAML is written.
+- `siscforge pilot` YAML loads as `CampaignConfig`, reuses `candidate_specs`, has `do_epw: false`, and does not re-enumerate the source grid.
 - Trust layer penalties for high-λ + imag modes (existing tests).
 - Mock dry-run campaigns green; Docker verify script for image builds.
 - Full mock AL cycle (prioritize → shortlist → promote → retrain) is green.
@@ -569,6 +677,10 @@ josephson:
 | AC16 | Full prioritize → shortlist → mock-calculate → promote → retrain cycle succeeds in dry-run / mock mode | Yes |
 | AC17 | Retrain that produces NaNs or absurd metrics keeps the previous model and surfaces diagnostics | Yes |
 | AC18 | Attempt to train on mock data is hard-refused | Yes |
+| AC19 | A finished phonon-only (or phonon-containing) store produces `soft_mode_report.json` + Markdown, **or** an explicit skip record with a clear reason | Yes |
+| AC20 | `siscforge pilot` emits a loadable campaign YAML that reuses `candidate_specs` and does **not** re-enumerate the full source grid | Yes |
+| AC21 | `shortlist --mode stable_only` with zero survivors prints actionable next-step text (soft-mode report + `siscforge pilot`) and writes **no** EPW YAML | Yes |
+| AC22 | Pilot campaigns have `do_epw: false` (and `epw.enabled: false`) by default; no automatic EPW of soft cells | Yes |
 
 ### Phase 3 contracts (P3.1–P3.6)
 
@@ -594,6 +706,7 @@ These sit beside AC1–AC18 rather than rewriting them. Verify against
 - Material-specific Wannier projections, anisotropic Eliashberg, SCDFT, production CTHYB calibration, Josephson Usadel/BdG: **later**. Tier-1 Josephson analytics (P4.1) and fabrication heuristics (P4.2) are shipped (inert unless enabled). See `docs/phase4-exit.md`.
 - After Phase A+B exhaustion, further EPW success may require human projections or different cells; DFPT remains valuable for stability gating.
 - Screening q=2³ phonon stability can false-positive/false-negative; denser DFPT required before citing dynamical stability.
+- Soft-mode classification is **heuristic**. `likely_mesh_artefact` does not certify that a cell is physically stable. A denser-q pilot is still a gate, not production dynamical-stability proof. The human still chooses whether to expand or abandon.
 - Resume covers common cases; exotic partial files or external manual edits may still need operator intervention (documented in implementation-notes).
 - Room-temperature superconductor discovery is **not** promised.
 - Early surrogates are prioritization aids, not quantitative predictors; bootstrap messaging exists precisely for this reason.
@@ -605,7 +718,7 @@ These sit beside AC1–AC18 rather than rewriting them. Verify against
 **Phase 0 (v0.1 foundation)** — Structure gen, formation filter, QE phonon, Si-score, ranking, store, CLI, dry-run.  
 **Exit**: NbN phonon; small nitride campaign on workstation.
 
-**Phase 1 (conventional EPW + desktop operability)** — EPW + isotropic Tc, quality tags, shortlist/refine, trust layer, resume/checkpoint, EPW parallel + coarse-k + Phase B, phonon-first + stable_only, phonon diagnose/retry, Docker.  
+**Phase 1 (conventional EPW + desktop operability)** — EPW + isotropic Tc, quality tags, shortlist/refine, trust layer, resume/checkpoint, EPW parallel + coarse-k + Phase B, phonon-first + stable_only, phonon diagnose/retry, Docker. **Additive (v0.5.4):** soft-mode report + denser-q pilot after none-stable coarse maps.  
 **Exit**: golden NbN/MgB₂ path (mock always; real optional); desktop remediation ACs green; see `docs/phase1-exit.md`.
 
 **Phase 1 residual / 1.5 (AL bootstrap)** — Seed-set management, explicit promotion, first trained surrogate, acquisition provenance, bootstrap observability, full mock cycle.  
@@ -619,4 +732,4 @@ These sit beside AC1–AC18 rather than rewriting them. Verify against
 
 ---
 
-*This document (v0.5.3) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + P3.1–P3.6 + P4.1–P4.2). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson is inert unless `josephson.enabled`. PRD v0.4.3 is the product authority; this file is the engineering contract.*
+*This document (v0.5.4) is implementation-ready. Workstation production-path contracts above match shipped behavior in `docs/implementation-notes.md` (Slices 13–28 + Slice 29 phonon-map recovery + P3.1–P3.6 + P4.1–P4.2). Active-learning bootstrap and mixed-pool contracts are specified here and detailed in `docs/design/active-learning-flywheel.md` and `docs/phase3-p36-mixed-al.md`. Josephson is inert unless `josephson.enabled`. PRD v0.4.4 is the product authority; this file is the engineering contract.*

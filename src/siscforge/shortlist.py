@@ -220,7 +220,12 @@ def select_shortlist_evaluations(
                     f"{n_with_ph} with phonon data, {n_imag} with imaginary/"
                     f"unstable modes. Expand the phonon map, relax strain, or "
                     f"try --mode stable_or_soft (soft_min_cm1={soft_min_cm1:g}). "
-                    f"Refusing to fall back to unstable top-k."
+                    f"Refusing to fall back to unstable top-k. "
+                    f"Next: inspect the campaign soft-mode report "
+                    f"(soft_mode_report.json / soft_mode_report.md) and emit a "
+                    f"denser-q phonon pilot with `siscforge pilot <store> -o "
+                    f"<pilot.yaml> --mode binaries` (or --mode least_soft). "
+                    f"Do not launch EPW on imaginary-mode cells."
                 )
             raise ValueError(
                 f"No stable/soft evaluations for shortlist "

@@ -34,7 +34,11 @@ In short: the search is for the missing manufacturing link that would let an alr
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Setup | [`docs/SETUP.md`](docs/SETUP.md) |
 
-## Current status — **Phase 2 complete; Phase 3 software path complete; Phase 4 Tier-1 complete** (`v0.4.3`)
+## Current status — **Phase 2 complete; Phase 3 software path complete; Phase 4 Tier-1 complete** (`v0.4.4`)
+
+v0.4.4 adds guided recovery on the conventional phonon-first desktop path
+(soft-mode report + denser-q pilot) when a coarse map returns no stable cells.
+Phase 3/4 status is unchanged.
 
 | Phase | Focus | Status |
 |-------|-------|--------|
@@ -137,7 +141,8 @@ siscforge run --dry-run examples/mgb2_epw.yaml
 ```
 
 Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).  
-**Desktop shortlist → real EPW:** [docs/examples/desktop_shortlist_epw.md](docs/examples/desktop_shortlist_epw.md).
+**Desktop shortlist → real EPW:** [docs/examples/desktop_shortlist_epw.md](docs/examples/desktop_shortlist_epw.md).  
+**Phonon-first map (incl. none-stable recovery):** [docs/examples/nbti_n_phonon_map.md](docs/examples/nbti_n_phonon_map.md).
 
 ## Example campaigns
 
@@ -149,6 +154,7 @@ Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).
 | `examples/nbti_n_al_broad.yaml` | Broader AL + 45°/buffer Si |
 | `examples/nbti_n_al_broad_shortlist.yaml` | Top-k EPW shortlist (from AL; resume-safe) |
 | `examples/nbti_n_al_refine.yaml` | Refine-tier denser EPW (from shortlist store) |
+| `examples/nbti_n_phonon_map.yaml` | Phonon-first stability map (`do_epw: false`; none-stable → `siscforge pilot`) |
 | `examples/nbn_si_45deg.yaml` | Si-feasibility v0.2 (45° / buffers) |
 | `examples/nbn_epw.yaml` | NbN EPW golden |
 | `examples/nbn_phonon_qe.yaml` | NbN phonon (real QE) |

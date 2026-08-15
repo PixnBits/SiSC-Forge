@@ -69,7 +69,7 @@ siscforge shortlist outputs/nbti_n_phonon_map \
 
 - **Only** `status=ok|mock` rows with `phonon.dynamically_stable` (no imag modes)
 - Sorted by **highest Si-feasibility** among survivors (`--stable-sort si`)
-- If **none** stable: CLI exits with a clear error — **no** silent fall-back to unstable top-k
+- If **none** stable: CLI exits with a clear error — **no** silent fall-back to unstable top-k — and prints the **soft-mode report** plus the `siscforge pilot` command (see [When none are stable](#when-none-are-stable-coarse-q-recovery) below)
 
 Nearly stable (soft but non-imaginary, or tiny numeric imag):
 
@@ -89,6 +89,44 @@ siscforge run --calculator qe-epw examples/nbti_n_phonon_map_epw.yaml
 
 Then rank/export and check `result_quality` before citing Tc. Unreliable
 screening λ on *stable* cells may still need `siscforge refine` (denser grids).
+
+## When none are stable (coarse-q recovery)
+
+A real Nb–Ti–N q=2³ map can finish with **zero** `dynamically_stable`
+survivors. Known-stable binaries (NbN, TiN, ZrN) going large-imaginary on
+that mesh is a **mesh-artefact suspect**, not automatic abandonment of the
+family. `stable_only` staying empty is correct. The product must not send
+those cells to EPW.
+
+```bash
+# Campaign-level characterisation (also written at the end of a phonon run)
+siscforge soft-modes outputs/nbti_n_phonon_map
+# → outputs/nbti_n_phonon_map/soft_mode_report.json
+# → outputs/nbti_n_phonon_map/soft_mode_report.md
+
+# Ready-to-run denser-q pilot (binaries first, still do_epw: false)
+siscforge pilot outputs/nbti_n_phonon_map \
+  -o examples/nbti_n_phonon_pilot_q3.yaml \
+  --mode binaries --qpoints 3,3,3 --nproc 16
+
+# Or the least-soft N cells (ternaries included)
+siscforge pilot outputs/nbti_n_phonon_map \
+  -o examples/nbti_n_phonon_pilot_q3.yaml \
+  --mode least_soft -n 4 --qpoints 3,3,3
+
+siscforge run --dry-run examples/nbti_n_phonon_pilot_q3.yaml
+siscforge run --calculator qe examples/nbti_n_phonon_pilot_q3.yaml
+```
+
+The pilot **reuses** `candidate_specs` from the map store (no full-grid
+re-enumeration), copies `pseudo_dir` / `nproc`, writes a **new**
+`output_dir`, and keeps `do_epw: false`. Resume-safe.
+
+This is still a **gate**. The operator decides expand vs abandon. Do not
+cite dynamical stability from q=3³ either; production proof needs a
+denser, analysed DFPT on the cells you keep.
+
+PRD US10 / Specs §2.3c / implementation-notes Slice 29.
 
 ## Why not AL → EPW first?
 
@@ -181,12 +219,17 @@ DFPT (including the ~1–3 min binary successes).
 ## Limitations
 
 - Coarse 2³ DFPT can **mis-label** stability (false stable / false imag)
+- Soft-mode classes are **heuristic**; `likely_mesh_artefact` is not a
+  stability certificate
+- A denser-q pilot is still a gate, not production dynamical-stability proof
 - No SQS disorder, no DMFT, no JJ metrics in this path
 - Mock dry-run still invents phonon stability (~15% imag) — real QE is the map
 - Production dynamical stability still needs denser q and careful analysis
+- The pilot **must not** auto-launch EPW on soft cells
 
 ## Related
 
 - [desktop_shortlist_epw.md](desktop_shortlist_epw.md) — AL shortlist → EPW → refine
 - [nbti_n_al_broad.md](nbti_n_al_broad.md) — broader AL dry-run (EPW-oriented)
 - Example YAML: `examples/nbti_n_phonon_map.yaml`
+- Specs §2.3c; PRD US10; implementation-notes Slice 29
