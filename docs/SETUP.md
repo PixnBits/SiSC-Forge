@@ -461,7 +461,9 @@ What the real path actually does (`p3_x_real_launch`):
    `siscforge_dmft_observables.json`) → native
    `observables_imp*.dat` (including `out/`) → HDF5 `DMFT_results`
    when `h5py` is importable (still soft). A successful native parse
-   materializes `observables.json` for later resume.
+   materializes `observables.json` for later resume. `DMFTResult.converged`
+   prefers `conv_imp*.dat` / h5 `convergence_obs` when present; last-row
+   occupancy is the fallback (missing conv files do not invent a failure).
 4. If TRIQS / solid_dmft is **not** importable (and
    `SISCFORGE_SOLID_DMFT` is unset), stores `status=skipped`,
    `failure_class=solver_missing` and leaves upstream DFT+U / Wannier

@@ -737,7 +737,9 @@ class DMFTConfig(BaseModel):
     True and the stack is present, invoke it. Drop-in ``observables.json``
     is still preferred; native ``observables_imp*.dat`` and
     ``DMFT_results`` h5 are parsed when JSON is absent (h5py is soft).
-    TRIQS is never a hard dependency of siscforge.
+    ``DMFTResult.converged`` prefers ``conv_imp*.dat`` /
+    ``convergence_obs`` when present. TRIQS is never a hard dependency
+    of siscforge.
     """
 
     U_eV: float = Field(

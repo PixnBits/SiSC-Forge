@@ -1,9 +1,11 @@
 # P3.3 — DMFTResult model + gate + mock + controlled launcher
 
 **Status**: scaffold + **controlled launcher** (`p3_x_real_launch`,
-issue #18) + **native h5/dat bridge** (issue #35) — typed model, Wannier
-gate, mock path, JSON drop-in, solid_dmft `observables_imp*.dat` / 
-`DMFT_results` h5 extractors, and a workstation-first run package that
+issue #18) + **native h5/dat bridge** (issue #35) + **conv-signal
+preference** (issue #37) — typed model, Wannier gate, mock path, JSON
+drop-in, solid_dmft `observables_imp*.dat` / `DMFT_results` h5
+extractors, `conv_imp*.dat` / `convergence_obs` for
+`DMFTResult.converged`, and a workstation-first run package that
 invokes when the stack is present.  
 **Prerequisite**: P3.2 Wannier prep + `ready_for_dmft` (`docs/phase3-p32-wannier.md`)  
 **Next residuals**: production U/J/β calibration, solid_dmft version
@@ -44,7 +46,7 @@ Provide a **first-class, optional DMFT step** that:
 | Sequential recipe | `run_dmft_after_wannier` in `qe/recipes.py` | sequential glue, not jobflow |
 | Calculator | `qe-dmft` / `dmft` alias; additive when `do_dmft` on `qe` | shipped |
 | Mock path | `MockCalculator` fills success/failure `DMFTResult` | shipped |
-| Real path | Run package + optional invoke + JSON / native `.dat` / h5 parser; **skips** if TRIQS missing | **controlled launcher + native bridge** — not production QMC |
+| Real path | Run package + optional invoke + JSON / native `.dat` / h5 parser + conv-signal preference; **skips** if TRIQS missing | **controlled launcher + native bridge** — not production QMC |
 | Export | CSV columns `dmft_*` + synthesis-card launch notes | shipped |
 | Dry-run example | `examples/ndnio2_dmft_mock.yaml` | shipped |
 | Tests | `tests/test_dmft_p33.py`, `tests/test_dmft_real_launch.py` | shipped |
@@ -149,12 +151,29 @@ Defaults are conservative for real solvers and convenient for dry-run.
    A successful native `.dat` / h5 parse materializes a compatible
    `observables.json` in `dmft/` so later resume does not need TRIQS
    or h5py again.
-4. If `auto_launch: true` (default) and the stack is importable — or
+4. Set `DMFTResult.converged` from documented precedence (issue #37):
+   1. Explicit JSON `converged` / `success` / `job_done` on an
+      **operator** drop-in. Bridged `observables.json`
+      (`siscforge_bridge=native_solid_dmft`) is *not* treated as
+      explicit, so a live conv table can override it.
+   2. Real solid_dmft signals when usable: `conv_imp*.dat` (also
+      `out/`) then h5 `DMFT_results/convergence_obs` (soft `h5py`).
+      Screening residual cutoffs (documented, **not** production
+      CTHYB): `d_imp_occ=0.02`, `d_Gimp=d_G0=d_Sigma=0.05`. `d_mu`
+      is recorded but informational. Present residuals above cutoff
+      → `converged=False` (`status=failed`) is intended.
+   3. Stored native-bridge verdict if those files are gone on resume.
+   4. Last-row / occupancy heuristic — occupancy-only parses stay
+      **non-failed** when conv diagnostics are missing. Do not
+      invent a hard failure solely because `conv_imp*.dat` is absent.
+   5. Otherwise conservative `false`.
+   Residuals / source land in `DMFTResult.raw["convergence"]`.
+5. If `auto_launch: true` (default) and the stack is importable — or
    `SISCFORGE_SOLID_DMFT` points at a wrapper — invoke, capture
    `solid_dmft.log` + exit code, then re-run the discovery above.
    Pairing keys, if present, land in the reserved P3.4
    fields and flow through the existing map.
-5. Copy (never move / delete) an existing `{seed}.h5` into `dmft/` when
+6. Copy (never move / delete) an existing `{seed}.h5` into `dmft/` when
    found; best-effort DFTTools Wannier90 convert when that extra is
    importable.
 
@@ -243,5 +262,6 @@ Mock eigenvalues are illustrative.
 - Fake/stub launcher writes the run package, classifies failures, keeps
   upstream sacred
 - Language in this doc / README / ROADMAP matches the controlled launcher
-  + native h5/dat bridge (JSON still preferred; no longer “must drop
-  observables.json” for a non-failed `DMFTResult`)
+  + native h5/dat bridge + conv-signal preference (JSON still
+  preferred; last-row occupancy fallback when `conv_imp*.dat` /
+  `convergence_obs` are missing)

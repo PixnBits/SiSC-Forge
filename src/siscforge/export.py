@@ -1267,6 +1267,16 @@ def _card_markdown(ev: CandidateEvaluation) -> list[str]:
                 f"- summary: {dmft.summary_line()}",
             ]
         )
+        conv_blob = (
+            (dmft.raw or {}).get("convergence") if isinstance(dmft.raw, dict) else None
+        )
+        conv_src = None
+        if isinstance(conv_blob, dict):
+            conv_src = conv_blob.get("source")
+        if not conv_src and isinstance(dmft.raw, dict):
+            conv_src = (dmft.raw.get("metrics") or {}).get("converged_source")
+        if conv_src and conv_src not in {"last_row_heuristic"}:
+            lines.append(f"- convergence source: {conv_src}")
         if mapped:
             lines.append(
                 f"- pairing → performance (P3.4): {_fmt_num(ev.performance_score)} K "
