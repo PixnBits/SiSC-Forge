@@ -22,21 +22,36 @@ D_S (l=3) for this symmetry operation is not orthogonal
 16-core machine (ZrN ε=0 finished the same 3³ mesh with 16 ranks).
 
 Fix: read QE `CRASH` sidecars with `ph.out` for classification / retry /
-recoverability; treat `d_matrix` / `phq_setup` / `MPI_ABORT` as
-recover-unsafe; skip `recover=.true.` when leftovers are a remediable
-setup failure and hand off to the existing nosym SCF+PH retry. Tests in
+recoverability; treat `d_matrix` / `phq_setup` as recover-unsafe; skip
+`recover=.true.` when leftovers are a remediable setup failure and hand
+off to the existing nosym SCF+PH retry. Tests in
 `tests/test_phonon_failure.py` and `tests/test_qe_checkpoint.py`.
 
-Pilot resume without `QE_BIN` picked up Ubuntu `ph.x` 6.7MaX
+A resume without `QE_BIN` picked up Ubuntu `ph.x` 6.7MaX
 (`/usr/bin/ph.x`). QE 6.7 `maxter=100` rejected campaign
 `niter_ph=150` (`Wrong niter_ph` / `phq_readin`) in ~1 s. The same
-setting is valid on QE 7.3.1 (`maxter=150`) used for the original ZrN
-ε=0 DFPT. A recover-then-hard-fail wipe also deleted the nearly-complete
-ZrN ε=-0.04 dyn set (SCF kept). Software follow-up: classify
-`Wrong niter_ph`; **do not wipe** DFPT artefacts on namelist
-`phq_readin`; print resolved `pw.x`/`ph.x` and warn when a distro
-binary is paired with `ph_niter>100`. Next resume must set
-`QE_BIN=$HOME/src/q-e-qe-7.3.1/bin`.
+setting is valid on QE 7.3.1 (`maxter=150`). A recover-then-hard-fail
+wipe deleted the nearly-complete ZrN ε=-0.04 dyn set (SCF kept).
+Follow-up: classify `Wrong niter_ph`; **do not wipe** DFPT artefacts
+on namelist `phq_readin`; print resolved `pw.x`/`ph.x` and warn only
+for `/usr/bin/ph.x` when `ph_niter>100`.
+
+**Pilot outcome** (QE 7.3.1, `QE_BIN=$HOME/src/q-e-qe-7.3.1/bin`,
+resume, `do_epw=false`, nproc=16): all four cells have honest `qe`
+evaluations, `status=ok`, no mock rows. ZrN ε=0 DFPT left untouched.
+NbN finished on the nosym SCF from the d_matrix retry. ZrN ε=-0.04
+and ε=-0.01 re-ran DFPT from intact SCF after the 6.7 wipe.
+
+| cell | min ω (cm⁻¹) | stable | class |
+|------|-------------:|:------:|-------|
+| ZrN ε=0 | −210.3 | no | likely_mesh_artefact |
+| NbN ε=0 | −297.7 | no | likely_mesh_artefact |
+| ZrN ε=-0.01 | −212.8 | no | likely_mesh_artefact |
+| ZrN ε=-0.04 | −212.2 | no | likely_mesh_artefact |
+
+`n_stable=0`. q=3³ screening does **not** clear the denser-q gate.
+Do not launch EPW. Human decides whether to try a still-denser mesh
+or abandon. Not a production stability certificate; not a Tc claim.
 
 **Out of scope:** no ecut/q-mesh/pseudo/nproc YAML change; no EPW.
 
