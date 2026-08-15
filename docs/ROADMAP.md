@@ -170,7 +170,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 ### Key Deliverables
 - **P3.1 Done:** DFT+U workflow + `DFTUResult` (see [phase3-p31-dftu.md](phase3-p31-dftu.md)).
 - **P3.2 Done:** Wannier prep + quality metrics + `ready_for_dmft` gate + **P3.2.1** automated nscf + pw2wannier90 (see [phase3-p32-wannier.md](phase3-p32-wannier.md)). Real-QE golden optional.
-- **P3.3 Scaffold:** `DMFTResult` model + Wannier gate + mock path + optional drop-in `observables.json` parser; **full automated solid_dmft / CTHYB launch is residual** (see [phase3-p33-dmft.md](phase3-p33-dmft.md)).
+- **P3.3 Scaffold + launcher:** `DMFTResult` model + Wannier gate + mock path + drop-in `observables.json` parser + **controlled solid_dmft launcher** (`p3_x_real_launch`: toml/run package + optional invoke). Production U/J/β and version matrix remain residual (see [phase3-p33-dmft.md](phase3-p33-dmft.md)).
 - **P3.4 Done:** Pairing eigenvalue → common `performance_score` with documented `epw_then_dmft` precedence (see [phase3-p34-pairing-score.md](phase3-p34-pairing-score.md)).
 - **P3.5 Done:** Oxygen-vacancy / infinite-layer enumeration for nickelates (see [phase3-p35-oxygen-vacancy.md](phase3-p35-oxygen-vacancy.md)).
 - **P3.6 Done:** Mixed conventional/unconventional AL acquisition (`off` / `joint` / `separate` pools; see [phase3-p36-mixed-al.md](phase3-p36-mixed-al.md)).
@@ -183,7 +183,7 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 ### Suggested Order of Module Implementation
 1. DFT+U workflow and DFTUResult model. **(P3.1 — Done; see docs/phase3-p31-dftu.md)**
 2. Wannierization pipeline with quality metrics. **(P3.2 + P3.2.1 — Done: metrics + mock + gate + prep + automated nscf/pw2wannier90; see docs/phase3-p32-wannier.md)**
-3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — Scaffold: model + Wannier gate + mock + drop-in parser; full automated solid_dmft launch residual; see docs/phase3-p33-dmft.md)**
+3. TRIQS/solid_dmft jobflow recipe + DMFTResult parser. **(P3.3 — Scaffold + controlled launcher: model + Wannier gate + mock + drop-in parser + toml/run package + optional invoke; production U/J/β residual; see docs/phase3-p33-dmft.md)**
 4. Pairing-eigenvalue extraction and mapping onto performance_score. **(P3.4 — Done; see docs/phase3-p34-pairing-score.md)**
 5. Oxygen-vacancy structure generation for nickelates. **(P3.5 — Done; see docs/phase3-p35-oxygen-vacancy.md)**
 6. AL acquisition updates for mixed or separate pools. **(P3.6 — Done; see docs/phase3-p36-mixed-al.md)**
@@ -195,11 +195,11 @@ provenance; bootstrap banner on synthesis cards; `al-promote --dry-run`;
 - A small set of strained infinite-layer candidates produces complete DMFTResult objects and is correctly ranked against nitride references.
 - AL loop can be demonstrated with synthetic or small real data mixes of conventional and unconventional results.
 
-**Exit criteria (partial)**: Nickelate candidates appear in ranked lists with both a pairing-based performance score (from mock or drop-in) and a realistic Si-feasibility score; the same ranking code handles both families without forks. Mixed AL acquisition (`joint` / `separate`) is shipped. Full automated solid_dmft/CTHYB and production GNN heads remain open.
+**Exit criteria (partial)**: Nickelate candidates appear in ranked lists with both a pairing-based performance score (from mock or drop-in) and a realistic Si-feasibility score; the same ranking code handles both families without forks. Mixed AL acquisition (`joint` / `separate`) is shipped. The controlled solid_dmft launcher is shipped; production CTHYB calibration and production GNN heads remain open.
 
 Mixed-family ranking (EPW Tc next to a pairing proxy) is for **prioritization only**. Absolute comparability of the two origins is not claimed. Source-aware / family-normalized acquisition is **P3.6** (`docs/phase3-p36-mixed-al.md`).
 
-**Phase 3 software path** is complete aside from residuals: real CTHYB launch, production ALIGNN/MatGL λ/Tc GNN heads, and the golden NdNiO₂ science campaign.
+**Phase 3 software path** is complete aside from residuals: production CTHYB calibration / version matrix, production ALIGNN/MatGL λ/Tc GNN heads, and the golden NdNiO₂ science campaign.
 
 ---
 

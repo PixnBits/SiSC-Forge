@@ -1,20 +1,23 @@
-"""TRIQS / solid_dmft scaffold + mock path — Phase 3.3.
+"""TRIQS / solid_dmft path — Phase 3.3 + ``p3_x_real_launch``.
 
 Provides:
 - enablement helper from :class:`~siscforge.models.config.DMFTConfig`
 - Wannier ``ready_for_dmft`` gate (honoured outside explicit mock bypass)
 - mock :class:`~siscforge.models.results.DMFTResult` (success + failure)
-- thin optional wrapper: writes a config sidecar and parses a drop-in
-  ``observables.json``. **Does not launch** solid_dmft / CTHYB. Skips
-  cleanly when TRIQS is not installed (never a hard dependency)
+- controlled real launcher: writes a sibling ``dmft/`` run package
+  (``dmft_config.toml`` + invoke script + ``LAUNCH.md``), optionally
+  shells out when TRIQS / solid_dmft is importable (or
+  ``SISCFORGE_SOLID_DMFT`` is set), and parses drop-in
+  ``observables.json``. Skips cleanly when the stack is absent (never a
+  hard dependency)
 - sequential recipe glue after Wannier (sacred upstream artifacts)
 
 **P3.4** maps ``leading_pairing_eigenvalue`` onto the common
-``performance_score`` (see ``siscforge.scoring.pairing``). This module
-still does not launch CTHYB.
+``performance_score`` (see ``siscforge.scoring.pairing``).
 
-**Out of scope (later packages):** oxygen-vacancy enumeration (P3.5), mixed
-AL pools (P3.6), automated solid_dmft launch (residual ``p3_x_real_launch``).
+**Honest residual:** production U/J/β calibration, solid_dmft version
+matrix, Wannier90 → h5 when DFTTools is missing, NdNiO₂ literature
+golden. Screening knobs stay screening knobs.
 
 Conventional nitride / MgB₂ / EPW paths are unchanged when DMFT is off.
 """
@@ -24,10 +27,21 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from siscforge import __version__
+from siscforge.calculators.qe.dmft_launch import (
+    AUTOMATED_STEPS,
+    OPERATOR_OWNED_STEPS,
+    LaunchOutcome,
+    discover_solid_dmft_command,
+    find_observables_file,
+    invoke_solid_dmft,
+    stage_h5_archive,
+    write_solid_dmft_run_package,
+)
 from siscforge.models.config import DFTConfig, DFTUConfig, DMFTConfig
 from siscforge.models.provenance import Provenance
 from siscforge.models.results import DMFTResult, WannierResult
@@ -57,24 +71,24 @@ _EXTENSION_HOOKS: dict[str, str] = {
     "p3_5_ovac": "oxygen-vacancy enumeration (structure generation, not DMFT)",
     "p3_6_al": "mixed conventional/unconventional AL acquisition",
     "p3_x_real_launch": (
-        "Minimal launcher that shells out or writes a ready-to-run "
-        "solid_dmft config from WannierResult + DMFTConfig remains residual. "
-        "P3.3 only writes a sidecar and parses a drop-in observables.json."
+        "Controlled launcher shipped: writes dmft_config.toml + "
+        "run_solid_dmft.sh + LAUNCH.md; invokes when auto_launch and the "
+        "stack (or SISCFORGE_SOLID_DMFT) is present; drop-in "
+        "observables.json still parsed without TRIQS. Residual: "
+        "production U/J/β, solid_dmft version matrix, h5 convert without "
+        "DFTTools."
     ),
     "limits": (
         "screening defaults (U, J, beta, n_cycles) are thin workstation knobs; "
         "not production CTHYB settings. TRIQS is optional and never a hard dep. "
-        "n_loops/n_cycles/n_warmup_cycles are stored for a future launcher."
+        "n_loops is written to dmft_config.toml as n_iter_dmft."
     ),
 }
 
-_MOCK_PHYSICS_LABEL = (
-    "illustrative / deterministic placeholder, not literature-validated"
-)
+_MOCK_PHYSICS_LABEL = "illustrative / deterministic placeholder, not literature-validated"
 
 _SACRED_NOTE = (
-    "DMFT failure must not delete finished DFT+U or Wannier artifacts "
-    "(sibling dmft/ workdir only)"
+    "DMFT failure must not delete finished DFT+U or Wannier artifacts (sibling dmft/ workdir only)"
 )
 
 _VALID_QUALITY = frozenset({"screening", "production", "mock", "unknown"})
@@ -137,9 +151,7 @@ def classify_dmft_failure(text: str | None) -> str:
         return "import_error"
     if "triqs" in blob and ("not" in blob or "missing" in blob):
         return "solver_missing"
-    if "solid_dmft" in blob and (
-        "not" in blob or "missing" in blob or "no module" in blob
-    ):
+    if "solid_dmft" in blob and ("not" in blob or "missing" in blob or "no module" in blob):
         return "solver_missing"
     if "not found" in blob or "cannot execute" in blob or "no such file" in blob:
         return "binary_missing"
@@ -307,9 +319,7 @@ def mock_dmft_result(
     without touching upstream DFT+U / Wannier artifacts.
     """
     cfg = dmft or DMFTConfig(enabled=True, solver="mock")
-    allowed, gate_notes, used_bypass = evaluate_wannier_gate(
-        wannier, cfg, solver="mock"
-    )
+    allowed, gate_notes, used_bypass = evaluate_wannier_gate(wannier, cfg, solver="mock")
     wd = str(work_dir) if work_dir is not None else f"mock://dmft/{seed[:12]}"
     u, j, u_map, j_map = resolve_interaction(cfg, dftu)
 
@@ -325,11 +335,7 @@ def mock_dmft_result(
             j=j,
         )
 
-    fail = (
-        bool(force_failure)
-        if force_failure is not None
-        else bool(cfg.mock_force_failure)
-    )
+    fail = bool(force_failure) if force_failure is not None else bool(cfg.mock_force_failure)
     fcls = failure_class or cfg.mock_failure_class or "not_converged"
     if fcls not in DMFT_FAILURE_CLASSES:
         fcls = "other"
@@ -433,9 +439,7 @@ def mock_dmft_result(
             "pathway": "dmft",
             "used_bypass": used_bypass,
             "physics_label": _MOCK_PHYSICS_LABEL,
-            "pairing_label": (
-                "illustrative mock pairing eigenvalue, not literature-validated"
-            ),
+            "pairing_label": ("illustrative mock pairing eigenvalue, not literature-validated"),
             "extension_hooks": dict(_EXTENSION_HOOKS),
             "formula": formula,
             "material_family": material_family,
@@ -594,16 +598,16 @@ def _write_dmft_config_sidecar(
         "n_warmup_cycles": cfg.n_warmup_cycles,
         "n_loops": cfg.n_loops,
         "n_loops_note": (
-            "stored for a future solid_dmft launcher; unused by the thin "
-            "P3.3 sidecar + observables parser"
+            "written to dmft_config.toml as n_iter_dmft by p3_x_real_launch "
+            "(screening default; not production CTHYB)"
         ),
+        "auto_launch": bool(cfg.auto_launch),
+        "launch_timeout_s": cfg.launch_timeout_s,
         "allow_without_wannier_gate": cfg.allow_without_wannier_gate,
         "mock_bypass_gate": cfg.mock_bypass_gate,
         "wannier_work_dir": wannier.work_dir if wannier is not None else None,
         "wannier_chk_path": wannier.chk_path if wannier is not None else None,
-        "wannier_ready_for_dmft": (
-            bool(wannier.ready_for_dmft) if wannier is not None else None
-        ),
+        "wannier_ready_for_dmft": (bool(wannier.ready_for_dmft) if wannier is not None else None),
         "extension_hooks": dict(_EXTENSION_HOOKS),
         "version": cfg.version,
     }
@@ -614,6 +618,26 @@ def _write_dmft_config_sidecar(
     return path
 
 
+def _metrics_usable(metrics: dict[str, Any]) -> bool:
+    occ = metrics.get("occupancy_summary") or {}
+    return bool(occ) or metrics.get("filling") is not None
+
+
+def _stack_or_override_available(
+    launcher: Callable[..., LaunchOutcome] | None,
+) -> tuple[bool, list[str] | None, str]:
+    """True when we may invoke (import, env override, or injected launcher)."""
+    if launcher is not None:
+        cmd, src = discover_solid_dmft_command()
+        return True, cmd, src if cmd else "injected_launcher"
+    cmd, src = discover_solid_dmft_command()
+    if cmd is not None:
+        return True, cmd, src
+    if triqs_available() or solid_dmft_available():
+        return True, None, "importable_no_cli"
+    return False, None, "not_found"
+
+
 def run_solid_dmft(
     *,
     cfg: DMFTConfig,
@@ -622,31 +646,91 @@ def run_solid_dmft(
     quality_tag: str,
     dftu: DFTUConfig | None = None,
     formula: str = "",
+    launcher: Callable[..., LaunchOutcome] | None = None,
 ) -> DMFTResult:
-    """Thin optional wrapper around solid_dmft / TRIQS (scaffold, not a launcher).
+    """Controlled solid_dmft / CTHYB launcher (``p3_x_real_launch``).
 
-    Writes ``siscforge_dmft_config.json`` and, if present, parses a drop-in
-    ``observables.json``. Does **not** start CTHYB / solid_dmft.
+    Always writes a sibling run package (``siscforge_dmft_config.json``,
+    ``dmft_config.toml``, ``run_solid_dmft.sh``, ``LAUNCH.md``). Then:
 
-    Operator workflow: produce Wannier artifacts → run solid_dmft
-    externally → drop ``observables.json`` into *work_dir* → re-invoke
-    this function. Residual ``p3_x_real_launch`` would automate the
-    middle step.
+    1. Parse drop-in ``observables.json`` if present (no TRIQS required).
+    2. If the stack is missing and nothing was parsed: ``status=skipped``,
+       ``failure_class=solver_missing``.
+    3. If ``auto_launch`` and an entrypoint is available: invoke, capture
+       logs, parse observables into :class:`DMFTResult`.
+    4. If ``auto_launch`` is False: leave the package for the operator.
 
-    Skips cleanly with ``failure_class=solver_missing`` when the stack is
-    not importable. Never deletes files outside *work_dir*.
+    Never deletes files outside *work_dir*. Pairing fields, when present,
+    flow through the existing P3.4 map — this function does not rank.
     """
     u, j, u_map, j_map = resolve_interaction(cfg, dftu)
     refs = _wannier_refs(wannier)
+    work_dir = Path(work_dir)
     sidecar = _write_dmft_config_sidecar(
         work_dir,
         cfg,
         wannier=wannier,
         extra={"U_resolved": u, "J_resolved": j, "formula": formula},
     )
+    package = write_solid_dmft_run_package(work_dir, cfg, wannier=wannier, u=u, j=j)
     qtag = _quality_tag(quality_tag)
 
-    if not triqs_available() and not solid_dmft_available():
+    launch_meta: dict[str, Any] = {
+        "status": None,
+        "auto_launch": bool(cfg.auto_launch),
+        "timeout_s": cfg.launch_timeout_s,
+        "entrypoint": None,
+        "command": None,
+        "returncode": None,
+        "log": None,
+        "h5": None,
+        "package": package,
+        "sidecar": str(sidecar),
+        "automated": list(AUTOMATED_STEPS),
+        "operator_owned": list(OPERATOR_OWNED_STEPS),
+        "operator_next": None,
+    }
+
+    def _base_raw(**more: Any) -> dict[str, Any]:
+        raw: dict[str, Any] = {
+            "pathway": "dmft",
+            "sidecar": str(sidecar),
+            "extension_hooks": dict(_EXTENSION_HOOKS),
+            "upstream_sacred": _SACRED_NOTE,
+            "launch": dict(launch_meta),
+        }
+        raw.update(more)
+        return raw
+
+    obs_path = find_observables_file(work_dir)
+    metrics: dict[str, Any] = parse_dmft_observables(obs_path) if obs_path is not None else {}
+    if _metrics_usable(metrics):
+        launch_meta["status"] = "drop_in"
+        launch_meta["operator_next"] = None
+        return _result_from_metrics(
+            cfg=cfg,
+            u=u,
+            j=j,
+            u_map=u_map,
+            j_map=j_map,
+            metrics=metrics,
+            qtag=qtag,
+            work_dir=work_dir,
+            refs=refs,
+            raw=_base_raw(observables=str(obs_path)),
+            notes="solid_dmft observables parse (drop-in / resume)",
+        )
+
+    stack_ok, command, source = _stack_or_override_available(launcher)
+    launch_meta["entrypoint"] = source
+    launch_meta["command"] = list(command) if command else None
+
+    if not stack_ok:
+        launch_meta["status"] = "skipped_solver_missing"
+        launch_meta["operator_next"] = (
+            "install TRIQS / solid_dmft (or set SISCFORGE_SOLID_DMFT) "
+            "and re-invoke, or drop observables.json into this dmft/ workdir"
+        )
         return DMFTResult(
             status="skipped",
             quality_tag=qtag,  # type: ignore[arg-type]
@@ -662,13 +746,7 @@ def run_solid_dmft(
             gate_notes="",
             failure_class="solver_missing",
             work_dir=str(work_dir),
-            raw={
-                "pathway": "dmft",
-                "reason": "TRIQS / solid_dmft not importable — skipped cleanly",
-                "sidecar": str(sidecar),
-                "extension_hooks": dict(_EXTENSION_HOOKS),
-                "upstream_sacred": _SACRED_NOTE,
-            },
+            raw=_base_raw(reason="TRIQS / solid_dmft not importable — skipped cleanly"),
             provenance=Provenance(
                 source="qe_dmft",
                 software={"siscforge": __version__},
@@ -677,45 +755,13 @@ def run_solid_dmft(
             **refs,
         )
 
-    # Stack is present: attempt a documented thin invoke. Any exception is
-    # captured so upstream Wannier / DFT+U artifacts stay sacred.
-    metrics: dict[str, Any] = {}
-    err: str | None = None
-    try:
-        # Look for a previously written observ. JSON (resume / operator drop-in)
-        for name in (
-            "observables.json",
-            "observables_imp0.json",
-            "siscforge_dmft_observables.json",
-        ):
-            cand = work_dir / name
-            if cand.is_file():
-                metrics = parse_dmft_observables(cand)
-                break
-        if not metrics:
-            # Import is enough to prove the extra is wired; running a full
-            # CTHYB job is operator-driven (workstation time + license).
-            # TODO(p3_x_real_launch): generate a ready-to-run solid_dmft
-            # config from WannierResult + DMFTConfig and optionally shell
-            # out. P3.3 stops at sidecar + drop-in parse.
-            try:
-                import solid_dmft  # noqa: F401
-            except ImportError:
-                import triqs  # noqa: F401
-            err = (
-                "TRIQS/solid_dmft importable but no observables JSON in work_dir; "
-                "P3.3 does not launch a full CTHYB job automatically "
-                "(operator drop-in: write observables.json)"
-            )
-    except Exception as exc:  # noqa: BLE001 — never destroy upstream
-        _LOG.exception(
-            "solid_dmft wrapper failed (upstream preserved) work_dir=%s", work_dir
+    if not bool(cfg.auto_launch):
+        launch_meta["status"] = "deferred"
+        launch_meta["operator_next"] = (
+            f"sh {package['script']}  (or drop observables.json and re-invoke)"
         )
-        err = str(exc)
-
-    if err and not metrics.get("occupancy_summary") and metrics.get("filling") is None:
         return DMFTResult(
-            status="failed",
+            status="skipped",
             quality_tag=qtag,  # type: ignore[arg-type]
             converged=False,
             U_eV=u,
@@ -727,24 +773,137 @@ def run_solid_dmft(
             n_cycles=int(cfg.n_cycles),
             n_warmup_cycles=int(cfg.n_warmup_cycles),
             gate_notes="",
-            failure_class=classify_dmft_failure(err),
+            failure_class=None,
             work_dir=str(work_dir),
-            raw={
-                "pathway": "dmft",
-                "error": err,
-                "sidecar": str(sidecar),
-                "extension_hooks": dict(_EXTENSION_HOOKS),
-                "upstream_sacred": _SACRED_NOTE,
-            },
+            raw=_base_raw(reason="auto_launch=false; run package written for operator invoke"),
             provenance=Provenance(
                 source="qe_dmft",
                 software={"siscforge": __version__},
-                notes=err,
+                notes="DMFT run package written; auto_launch disabled",
             ),
             **refs,
         )
 
+    # Stage h5 when possible (copy only). Injected launchers may not need it.
+    h5_info = stage_h5_archive(work_dir, cfg, wannier, convert=launcher is None)
+    launch_meta["h5"] = h5_info
+
+    outcome: LaunchOutcome | None = None
+    err: str | None = None
+    try:
+        invoke_cmd = command or ["solid_dmft", "dmft_config.toml"]
+        if launcher is not None:
+            outcome = launcher(invoke_cmd, work_dir, cfg.launch_timeout_s)
+        elif command is not None:
+            if not h5_info.get("found"):
+                err = h5_info.get("notes") or "missing seed.h5; run package written (see LAUNCH.md)"
+                launch_meta["status"] = "failed"
+                launch_meta["operator_next"] = (
+                    f"convert Wannier90 → seed.h5 (LAUNCH.md) then sh {package['script']}"
+                )
+            else:
+                outcome = invoke_solid_dmft(
+                    command,
+                    work_dir,
+                    timeout_s=cfg.launch_timeout_s,
+                    source=source,
+                )
+        else:
+            err = (
+                "TRIQS/solid_dmft importable but no solid_dmft CLI; "
+                "run package written — see LAUNCH.md"
+            )
+            launch_meta["status"] = "failed"
+            launch_meta["operator_next"] = f"sh {package['script']} or drop observables.json"
+    except Exception as exc:  # noqa: BLE001 — never destroy upstream
+        _LOG.exception("solid_dmft wrapper failed (upstream preserved) work_dir=%s", work_dir)
+        err = str(exc)
+
+    if outcome is not None:
+        launch_meta["command"] = list(outcome.command)
+        launch_meta["returncode"] = outcome.returncode
+        launch_meta["log"] = outcome.log_path
+        launch_meta["entrypoint"] = outcome.source or source
+        if outcome.timed_out:
+            err = outcome.error or err
+        elif not outcome.ok:
+            err = outcome.error or outcome.stdout_tail or err
+        obs_path = find_observables_file(work_dir)
+        if obs_path is not None:
+            metrics = parse_dmft_observables(obs_path)
+
+    if _metrics_usable(metrics):
+        launch_meta["status"] = "invoked" if outcome is not None else "parsed"
+        launch_meta["operator_next"] = None
+        notes = "solid_dmft observables parse (p3_x_real_launch)"
+        return _result_from_metrics(
+            cfg=cfg,
+            u=u,
+            j=j,
+            u_map=u_map,
+            j_map=j_map,
+            metrics=metrics,
+            qtag=qtag,
+            work_dir=work_dir,
+            refs=refs,
+            raw=_base_raw(),
+            notes=notes,
+        )
+
+    if err is None:
+        err = (
+            "launch finished but no occupancy/filling in observables.json; "
+            "drop-in resume: write observables.json and re-invoke"
+        )
+    launch_meta["status"] = "failed"
+    if not launch_meta.get("operator_next"):
+        launch_meta["operator_next"] = (
+            "inspect solid_dmft.log / LAUNCH.md; drop observables.json to resume"
+        )
+    return DMFTResult(
+        status="failed",
+        quality_tag=qtag,  # type: ignore[arg-type]
+        converged=False,
+        U_eV=u,
+        J_eV=j,
+        U_by_species=u_map,
+        J_by_species=j_map,
+        solver=cfg.solver,
+        beta=float(cfg.beta),
+        n_cycles=int(cfg.n_cycles),
+        n_warmup_cycles=int(cfg.n_warmup_cycles),
+        gate_notes="",
+        failure_class=classify_dmft_failure(err),
+        work_dir=str(work_dir),
+        raw=_base_raw(error=err),
+        provenance=Provenance(
+            source="qe_dmft",
+            software={"siscforge": __version__},
+            notes=err,
+        ),
+        **refs,
+    )
+
+
+def _result_from_metrics(
+    *,
+    cfg: DMFTConfig,
+    u: float,
+    j: float,
+    u_map: dict[str, float],
+    j_map: dict[str, float],
+    metrics: dict[str, Any],
+    qtag: str,
+    work_dir: Path,
+    refs: dict[str, Any],
+    raw: dict[str, Any],
+    notes: str,
+) -> DMFTResult:
     converged = bool(metrics.get("converged"))
+    raw.setdefault(
+        "metrics",
+        {k: metrics.get(k) for k in ("filling", "mass_enhancement", "converged")},
+    )
     return DMFTResult(
         status="ok" if converged else "failed",
         quality_tag=qtag,  # type: ignore[arg-type]
@@ -756,9 +915,7 @@ def run_solid_dmft(
         occupancy_summary=dict(metrics.get("occupancy_summary") or {}),
         filling=metrics.get("filling"),
         mass_enhancement=metrics.get("mass_enhancement"),
-        mass_enhancement_by_orbital=dict(
-            metrics.get("mass_enhancement_by_orbital") or {}
-        ),
+        mass_enhancement_by_orbital=dict(metrics.get("mass_enhancement_by_orbital") or {}),
         leading_pairing_eigenvalue=metrics.get("leading_pairing_eigenvalue"),
         pairing_symmetry=metrics.get("pairing_symmetry"),
         solver=cfg.solver,
@@ -768,18 +925,11 @@ def run_solid_dmft(
         gate_notes="",
         failure_class=None if converged else "not_converged",
         work_dir=str(work_dir),
-        raw={
-            "pathway": "dmft",
-            "sidecar": str(sidecar),
-            "extension_hooks": dict(_EXTENSION_HOOKS),
-            "metrics": {
-                k: metrics.get(k) for k in ("filling", "mass_enhancement", "converged")
-            },
-        },
+        raw=raw,
         provenance=Provenance(
             source="qe_dmft",
             software={"siscforge": __version__},
-            notes="solid_dmft observables parse (P3.3)",
+            notes=notes,
         ),
         **refs,
     )
@@ -807,9 +957,7 @@ def run_dmft_workflow(
     cfg = dft.dmft
     solver = (cfg.solver or "mock").lower()
     qtag = quality_tag or dft.quality_tag
-    allowed, gate_notes, used_bypass = evaluate_wannier_gate(
-        wannier, cfg, solver=solver
-    )
+    allowed, gate_notes, used_bypass = evaluate_wannier_gate(wannier, cfg, solver=solver)
     log.append(f"dmft gate: allowed={allowed} solver={solver} {gate_notes}".strip())
 
     if not allowed:

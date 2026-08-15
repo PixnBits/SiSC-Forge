@@ -427,7 +427,7 @@ def parse_dftu_output(
             "p3_2_wannier": "CandidateEvaluation.wannier (WannierResult) — P3.2 shipped",
             "p3_3_dmft": (
                 "CandidateEvaluation.dmft (DMFTResult) — P3.3 scaffold "
-                "(model + gate + mock + parser; full launch residual)"
+                "(model + gate + mock + parser + controlled launcher)"
             ),
             "p3_4_pairing": "map leading eigenvalue → performance_score",
         },
@@ -526,7 +526,7 @@ def mock_dftu_result(
                 "p3_2_wannier": "CandidateEvaluation.wannier (WannierResult) — P3.2 shipped",
                 "p3_3_dmft": (
                 "CandidateEvaluation.dmft (DMFTResult) — P3.3 scaffold "
-                "(model + gate + mock + parser; full launch residual)"
+                "(model + gate + mock + parser + controlled launcher)"
             ),
                 "p3_4_pairing": "map leading eigenvalue → performance_score",
             },

@@ -151,14 +151,14 @@ remediation.
 
 | Package | Work | Hook |
 |---------|------|------|
-| **P3.3** | TRIQS / solid_dmft → `DMFTResult` | **Scaffold** — model + gate + mock + drop-in parser; full launch residual; `docs/phase3-p33-dmft.md` |
+| **P3.3** | TRIQS / solid_dmft → `DMFTResult` | **Scaffold + controlled launcher** — model + gate + mock + drop-in parser + toml/run package + optional invoke; production U/J/β residual; `docs/phase3-p33-dmft.md` |
 | **P3.4** | Pairing eigenvalue → `performance_score` | Map leading eigenvalue |
 | **P3.5** | Oxygen-vacancy enumeration | Structure generation |
 | **P3.6** | Mixed conventional/unconventional AL | Acquisition updates |
 
 ## Hard out of scope (this PR)
 
-- Full DMFT / CTHYB / solid_dmft launch (`p3_x_real_launch`, issue #18)
+- Production CTHYB calibration / solid_dmft version matrix (issue #18 residual after `p3_x_real_launch`)
 - Pairing eigenvalue scoring (already P3.4)
 - Oxygen-vacancy structure generation
 - Mixed AL acquisition
