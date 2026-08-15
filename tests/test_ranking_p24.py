@@ -219,7 +219,7 @@ def test_zero_uncertainty_weight_ignores_surrogate_u() -> None:
 
 def test_trust_penalties_still_apply() -> None:
     clean = _ev(formula="Clean", cid="c", tc=16.0, si=50.0, lam=1.1)
-    suspect = _ev(formula="Sus", cid="s", tc=45.0, si=50.0, lam=6.5)
+    suspect = _ev(formula="Sus", cid="s", tc=45.0, si=50.0, lam=4.0)
     ranked = rank_evaluations([suspect, clean], RankingConfig())
     assert ranked[0].candidate.formula == "Clean"
     assert ranked[1].result_quality == "screening_suspect"
