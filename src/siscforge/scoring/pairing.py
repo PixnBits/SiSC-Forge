@@ -170,9 +170,26 @@ def _quality_factor(dmft: DMFTResult, scoring: DMFTScoringConfig) -> tuple[float
     return max(0.70, min(1.0, factor)), bits
 
 
+def _family_override(mapping: dict[str, float] | None, family: str | None) -> float | None:
+    if not mapping or not family:
+        return None
+    raw = mapping.get(family)
+    if raw is None:
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(val):
+        return None
+    return val
+
+
 def performance_score_from_pairing(
     dmft: DMFTResult | None,
     scoring: DMFTScoringConfig | None = None,
+    *,
+    material_family: str | None = None,
 ) -> PairingMapResult:
     """Map a ``DMFTResult`` onto a Tc-like kelvin ``performance_score``.
 
@@ -301,8 +318,18 @@ def performance_score_from_pairing(
 
     q, qbits = _quality_factor(dmft, scoring)
     scale = float(scoring.kelvin_per_unit)
+    fam_scale = _family_override(
+        getattr(scoring, "kelvin_per_unit_by_family", None), material_family
+    )
+    if fam_scale is not None and fam_scale >= 0.0:
+        scale = fam_scale
     thresh = float(scoring.eigenvalue_threshold)
     ceiling = float(scoring.score_ceiling_K)
+    fam_ceil = _family_override(
+        getattr(scoring, "score_ceiling_K_by_family", None), material_family
+    )
+    if fam_ceil is not None and fam_ceil > 0.0:
+        ceiling = fam_ceil
     if not math.isfinite(scale) or scale < 0.0:
         scale = DEFAULT_KELVIN_PER_UNIT
     if not math.isfinite(thresh):
@@ -388,8 +415,16 @@ def resolve_performance_score(
     scoring = scoring or DMFTScoringConfig()
     ranking = ranking or RankingConfig()
     precedence = getattr(ranking, "performance_precedence", None) or "epw_then_dmft"
+    family = None
+    cand = getattr(evaluation, "candidate", None)
+    if cand is not None:
+        family = getattr(cand, "material_family", None)
 
-    pairing = performance_score_from_pairing(getattr(evaluation, "dmft", None), scoring)
+    pairing = performance_score_from_pairing(
+        getattr(evaluation, "dmft", None),
+        scoring,
+        material_family=family,
+    )
     epw_tc = trusted_epw_tc_K(evaluation)
     existing_score = evaluation.performance_score
     existing_source = evaluation.performance_score_source

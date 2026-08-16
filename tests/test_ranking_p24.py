@@ -18,6 +18,7 @@ from siscforge.ranking import (
     compute_composite_breakdown,
     compute_composite_score,
     identify_pareto_front,
+    normalize_performance,
     pareto_objectives,
     rank_evaluations,
 )
@@ -425,3 +426,93 @@ def test_rank_cli_config_and_pareto_override(tmp_path: Path) -> None:
     assert data3[0]["on_pareto_front"] is True
     # default weights → HighTc first
     assert data3[0]["candidate"]["formula"] == "HighTc"
+
+
+def test_missing_performance_default_is_pessimistic() -> None:
+    """#46: missing Tc uses ≤15, not a mid-scale 50."""
+    assert normalize_performance(None) == pytest.approx(15.0)
+    assert RankingConfig().missing_performance_default == 15.0
+    from siscforge.quality import apply_quality_assessment
+
+    complete = apply_quality_assessment(_ev(formula="Done", cid="d", tc=16.0, si=50.0, lam=1.0))
+    incomplete = apply_quality_assessment(
+        _ev(formula="Gap", cid="g", tc=16.0, si=50.0, lam=1.0).model_copy(
+            update={"performance_score": None}
+        )
+    )
+    cfg = RankingConfig()
+    bd_ok = compute_composite_breakdown(complete, cfg)
+    bd_gap = compute_composite_breakdown(incomplete, cfg)
+    assert bd_gap["performance_missing"] is True
+    assert bd_ok["performance_missing"] is False
+    assert bd_gap["performance_norm"] == pytest.approx(15.0)
+    assert bd_gap["composite"] < bd_ok["composite"]
+    ranked = rank_evaluations([incomplete, complete], cfg)
+    assert ranked[0].candidate.formula == "Done"
+
+
+def test_missing_si_default_is_pessimistic() -> None:
+    from siscforge.quality import apply_quality_assessment
+
+    complete = apply_quality_assessment(_ev(formula="HasSi", cid="h", tc=16.0, si=50.0, lam=1.0))
+    missing = apply_quality_assessment(
+        complete.model_copy(
+            update={
+                "si_feasibility": None,
+                "candidate": complete.candidate.model_copy(
+                    update={"candidate_id": "m", "formula": "NoSi"}
+                ),
+            }
+        )
+    )
+    cfg = RankingConfig()
+    bd = compute_composite_breakdown(missing, cfg)
+    assert bd["si_feasibility_missing"] is True
+    assert bd["si_feasibility"] == pytest.approx(15.0)
+    assert compute_composite_score(missing, cfg) < compute_composite_score(complete, cfg)
+
+
+def test_legacy_missing_default_restorable() -> None:
+    """Set missing_performance_default=50 to restore pre-#46 neutrality."""
+    cfg = RankingConfig(missing_performance_default=50.0)
+    from siscforge.quality import apply_quality_assessment
+
+    ev = apply_quality_assessment(
+        _ev(formula="X", cid="x", tc=20.0, si=50.0, lam=1.0).model_copy(
+            update={"performance_score": None}
+        )
+    )
+    bd = compute_composite_breakdown(ev, cfg)
+    assert bd["performance_norm"] == pytest.approx(50.0)
+
+
+def test_source_aware_ceiling_opt_in() -> None:
+    """Per-source ceilings change mixed-origin ranking; default 40 K is unchanged."""
+    from siscforge.quality import apply_quality_assessment
+
+    epw = apply_quality_assessment(
+        _ev(formula="EPW", cid="e", tc=20.0, si=50.0, lam=1.0)
+    )
+    pairing = apply_quality_assessment(
+        _ev(formula="Pair", cid="p", tc=20.0, si=50.0, lam=1.0).model_copy(
+            update={"performance_score_source": "dmft_pairing"}
+        )
+    )
+    default = RankingConfig()
+    bd_epw = compute_composite_breakdown(epw, default)
+    bd_pair = compute_composite_breakdown(pairing, default)
+    assert bd_epw["performance_ceiling_K_used"] == 40.0
+    assert bd_pair["performance_ceiling_K_used"] == 40.0
+    assert bd_epw["performance_norm"] == pytest.approx(bd_pair["performance_norm"])
+
+    tight_pairing = RankingConfig(
+        performance_ceiling_by_source={"dmft_pairing": 20.0}
+    )
+    bd_pair_tight = compute_composite_breakdown(pairing, tight_pairing)
+    bd_epw_tight = compute_composite_breakdown(epw, tight_pairing)
+    assert bd_pair_tight["performance_ceiling_K_used"] == 20.0
+    assert bd_epw_tight["performance_ceiling_K_used"] == 40.0
+    # Same 20 K: pairing now saturates (100) while EPW is 50.
+    assert bd_pair_tight["performance_norm"] == pytest.approx(100.0)
+    assert bd_epw_tight["performance_norm"] == pytest.approx(50.0)
+    assert bd_pair_tight["performance_source"] == "dmft_pairing"

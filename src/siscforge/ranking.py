@@ -59,9 +59,13 @@ def normalize_performance(
     performance_score: float | None,
     *,
     ceiling_K: float = 40.0,
-    missing_default: float = 50.0,
+    missing_default: float = 15.0,
 ) -> float:
-    """Map Tc-like performance (K) to 0–100 using *ceiling_K*."""
+    """Map Tc-like performance (K) to 0–100 using *ceiling_K*.
+
+    Missing scores use *missing_default* (pessimistic 15, not a neutral 50)
+    so incomplete evaluations cannot look mid-to-good (#46).
+    """
     if performance_score is None:
         return float(missing_default)
     ceil = float(ceiling_K) if ceiling_K > 0 else 40.0
@@ -81,6 +85,8 @@ def ranking_axis_values(
     tier = evaluation.result_quality or "unknown"
     qcfg = config.quality or QualityConfig()
     flags = list(evaluation.quality_flags or [])
+    src = evaluation.performance_score_source or None
+    ceiling = config.ceiling_K_for_source(src)
 
     if (
         (tier == "unreliable" and qcfg.unreliable_zero_performance)
@@ -90,13 +96,14 @@ def ranking_axis_values(
     else:
         perf_norm = normalize_performance(
             evaluation.performance_score,
-            ceiling_K=config.performance_ceiling_K,
+            ceiling_K=ceiling,
+            missing_default=float(config.missing_performance_default),
         )
 
     if evaluation.si_feasibility is not None:
         si = float(evaluation.si_feasibility.total)
     else:
-        si = 50.0
+        si = float(config.missing_si_feasibility_default)
 
     u = extract_uncertainty(evaluation)
     certainty: float | None
@@ -129,11 +136,19 @@ def compute_composite_breakdown(
     hard_zero = screening_high_lambda_hard_zero(flags, config=qcfg)
     axes = ranking_axis_values(evaluation, config)
 
-    # Explicit None checks — valid 0.0 scores must not hit neutral fallbacks
+    # Explicit None checks — valid 0.0 scores must not hit missing fallbacks
     pn = axes["performance_norm"]
     perf_norm = 0.0 if pn is None else float(pn)
     si_raw = axes["si_feasibility"]
-    si = 50.0 if si_raw is None else float(si_raw)
+    si = (
+        float(config.missing_si_feasibility_default)
+        if si_raw is None
+        else float(si_raw)
+    )
+    perf_missing = evaluation.performance_score is None
+    si_missing = evaluation.si_feasibility is None
+    src = evaluation.performance_score_source or None
+    ceiling_used = config.ceiling_K_for_source(src)
     certainty = axes["certainty_norm"]
     u = axes["uncertainty"]
 
@@ -207,6 +222,10 @@ def compute_composite_breakdown(
         "performance_hard_zero_reason": (
             FLAG_SCREENING_HIGH_LAMBDA if hard_zero else None
         ),
+        "performance_missing": bool(perf_missing),
+        "si_feasibility_missing": bool(si_missing),
+        "performance_source": src,
+        "performance_ceiling_K_used": float(ceiling_used),
     }
 
 
@@ -220,8 +239,10 @@ def compute_composite_score(
       normalized against ``RankingConfig.performance_ceiling_K`` (default 40 K).
     * Optional certainty term when ``uncertainty_weight > 0`` and surrogate
       uncertainty is present (see :class:`RankingConfig`).
-    * Missing fields fall back to neutral defaults so ranking never crashes
-      on partial evaluations.
+    * Missing fields fall back to pessimistic defaults
+      (``missing_performance_default`` / ``missing_si_feasibility_default``,
+      both 15) so incomplete evaluations cannot outrank complete ones
+      solely via a mid-scale placeholder (#46).
     * Result-quality tiers apply multiplicative penalties so inflated screening
       λ/Tc cannot dominate (see :class:`QualityConfig`). Random-Wannier or
       coarse-grid results with high/extreme λ have their performance term
@@ -364,6 +385,16 @@ def rank_evaluations(
                         ),
                         "performance_hard_zero_reason": breakdown.get(
                             "performance_hard_zero_reason"
+                        ),
+                        "performance_missing": breakdown.get(
+                            "performance_missing", False
+                        ),
+                        "si_feasibility_missing": breakdown.get(
+                            "si_feasibility_missing", False
+                        ),
+                        "performance_source": breakdown.get("performance_source"),
+                        "performance_ceiling_K_used": breakdown.get(
+                            "performance_ceiling_K_used"
                         ),
                     },
                 }

@@ -129,6 +129,30 @@ def test_linear_scale_and_ceiling() -> None:
     assert hi.score == pytest.approx(40.0)  # clamped
 
 
+def test_family_aware_scale_and_ceiling_opt_in() -> None:
+    """#46: per-family pairing knobs; unset family keeps the global 25 K/unit."""
+    cfg = DMFTScoringConfig(
+        kelvin_per_unit=25.0,
+        score_ceiling_K=40.0,
+        kelvin_per_unit_by_family={"nickelate": 10.0},
+        score_ceiling_K_by_family={"nickelate": 20.0},
+    )
+    default = performance_score_from_pairing(_dmft(eig=1.0), cfg)
+    assert default.score == pytest.approx(25.0)
+    fam = performance_score_from_pairing(
+        _dmft(eig=1.0), cfg, material_family="nickelate"
+    )
+    assert fam.score == pytest.approx(10.0)
+    clamped = performance_score_from_pairing(
+        _dmft(eig=3.0), cfg, material_family="nickelate"
+    )
+    assert clamped.score == pytest.approx(20.0)
+    other = performance_score_from_pairing(
+        _dmft(eig=1.0), cfg, material_family="tm_nitride"
+    )
+    assert other.score == pytest.approx(25.0)
+
+
 def test_zero_eigenvalue_is_finite_zero() -> None:
     got = performance_score_from_pairing(_dmft(eig=0.0))
     assert got.usable is True

@@ -364,6 +364,13 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 ### 2.6 Candidate Ranking & Reporting
 
 - Consumes Eliashberg Tc or pairing eigenvalue via `performance_score`, always includes Silicon Feasibility breakdown.
+- **Missing defaults (#46):** `normalize_performance(None)` and missing
+  `si_feasibility` use pessimistic defaults (15, YAML
+  `ranking.missing_performance_default` / `missing_si_feasibility_default`).
+  Incomplete rows cannot outrank complete ones via a mid-scale placeholder.
+  Optional `ranking.performance_ceiling_by_source` and
+  `dft.dmft.scoring.kelvin_per_unit_by_family` / `score_ceiling_K_by_family`
+  are opt-in; conventional-only campaigns keep the 40 K ceiling.
 - **Result-quality / trust layer (must):**
   - Flags such as imaginary modes, high λ, screening Wannier, EPW failed, etc.
   - Ranking penalties so pathological screening EPW does not dominate.
