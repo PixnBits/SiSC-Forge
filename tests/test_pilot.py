@@ -1,4 +1,4 @@
-"""Slice 29 / 29.3 — denser-q phonon pilot helper + nitride recovery k."""
+"""Slice 29 / 29.4 — denser-q phonon pilot helper + nitride recovery k."""
 
 from __future__ import annotations
 
@@ -11,12 +11,14 @@ from siscforge.models.candidate import CandidateEvaluation
 from siscforge.models.config import CampaignConfig, DFTConfig, EPWConfig
 from siscforge.models.results import PhononResult, SiFeasibilityScore
 from siscforge.pilot import (
+    NITRIDE_PHONON_K_POLICY,
     build_pilot_campaign,
     nitride_phonon_recovery_kpoints,
     parse_qpoints,
     select_pilot_evaluations,
     write_pilot_yaml,
 )
+from siscforge.soft_modes import n_atoms
 from siscforge.store import EvaluationStore
 from siscforge.structure.generator import generate_candidates, structure_to_candidate
 from siscforge.structure.nitrides import build_binary_nitride
@@ -281,3 +283,33 @@ def test_pilot_fallback_k_floor_for_large_ternary(tmp_path: Path) -> None:
     assert list(cfg.dft.kpoints) == [8, 8, 8]
     assert min(cfg.dft.kpoints) >= 8
     assert cfg.dft.do_epw is False
+
+
+def test_pilot_mixed_selection_uses_floor(tmp_path: Path) -> None:
+    binary = _ev(metal="Zr", formula="ZrN", min_freq=-29.3)
+    ternary = _ev(metal="Nb", formula="Nb0.5Ti0.5N", min_freq=-200.0)
+    ternary.candidate.metadata = {
+        **(ternary.candidate.metadata or {}),
+        "n_atoms": 8,
+    }
+    ternary.candidate.structure_cif = None
+    assert nitride_phonon_recovery_kpoints([binary, ternary]) == [8, 8, 8]
+    cfg, _ = build_pilot_campaign(
+        [binary, ternary],
+        source_campaign=None,
+        mode="least_soft",
+        max_jobs=2,
+        output_dir=str(tmp_path / "pout"),
+    )
+    assert list(cfg.dft.kpoints) == [8, 8, 8]
+    assert cfg.dft.do_epw is False
+
+
+def test_n_atoms_is_public_and_policy_is_canonical() -> None:
+    ev = _ev(metal="Zr", formula="ZrN", min_freq=-29.3)
+    assert n_atoms(ev) == 2
+    ev.candidate.metadata = {**(ev.candidate.metadata or {}), "n_atoms": 8}
+    ev.candidate.structure_cif = None
+    assert n_atoms(ev) == 8
+    assert "8" in NITRIDE_PHONON_K_POLICY
+    assert "12" in NITRIDE_PHONON_K_POLICY

@@ -1,4 +1,4 @@
-"""Guided denser-q phonon pilot from an existing map store (Slice 29 / 29.3).
+"""Guided denser-q phonon pilot from an existing map store (Slice 29 / 29.4).
 
 When a coarse q=2³ map returns zero ``dynamically_stable`` survivors, the
 operator should not have to hand-write a pilot YAML or abandon the family
@@ -32,22 +32,26 @@ from siscforge.models.candidate import CandidateEvaluation
 from siscforge.models.config import CampaignConfig, DFTConfig, RunConfig
 from siscforge.shortlist import evaluation_to_spec
 from siscforge.soft_modes import (
-    _n_atoms,
     classify_soft_mode,
     is_binary_nitride,
+    n_atoms,
 )
 
 PilotMode = Literal["binaries", "least_soft", "ids"]
 
 DEFAULT_QPOINTS = (3, 3, 3)
 
-# Nitride phonon recovery electronic k (Slice 29.3). Global DFTConfig.kpoints
+# Nitride phonon recovery electronic k (Slice 29.4). Global DFTConfig.kpoints
 # stays [4,4,4]; this floor is scoped to the pilot / map-recovery path.
 # ZrN: k=4³ invented large finite-q imag; k=8³ healed most; k=12³ collapsed
 # leftover softness to Γ-noise (~−29 cm⁻¹).
 NITRIDE_PHONON_K_MIN = (8, 8, 8)
 NITRIDE_PHONON_K_SMALL_BINARY = (12, 12, 12)
 _SMALL_CELL_N_ATOMS = 4
+NITRIDE_PHONON_K_POLICY = (
+    f"min {NITRIDE_PHONON_K_MIN[0]}³ "
+    f"(prefer {NITRIDE_PHONON_K_SMALL_BINARY[0]}³ for small/binary cells)"
+)
 
 
 def load_source_campaign(store_dir: str | Path) -> CampaignConfig | None:
@@ -152,14 +156,19 @@ def _cell_is_small_or_binary(ev: CandidateEvaluation) -> bool:
     """True for rock-salt binaries or cells with n_atoms ≤ 4."""
     if is_binary_nitride(ev.candidate.formula):
         return True
-    n = _n_atoms(ev)
+    n = n_atoms(ev)
     return n is not None and n <= _SMALL_CELL_N_ATOMS
 
 
 def nitride_phonon_recovery_kpoints(
     selected: list[CandidateEvaluation] | None = None,
 ) -> list[int]:
-    """Nitride-phonon recovery k: min 8³; 12³ when cells are small/binary."""
+    """Nitride-phonon recovery k from ``NITRIDE_PHONON_K_*`` constants.
+
+    12³ only when *every* selected cell is small or a rock-salt binary.
+    A mixed selection (any large non-binary) takes the 8³ floor for the
+    whole campaign. Conservative; per-cell k is out of scope.
+    """
     if selected and all(_cell_is_small_or_binary(ev) for ev in selected):
         return list(NITRIDE_PHONON_K_SMALL_BINARY)
     return list(NITRIDE_PHONON_K_MIN)
@@ -345,7 +354,7 @@ def build_pilot_campaign(
                 "limitation": (
                     "Denser q is still a gate, not production dynamical-stability "
                     "proof. Electronic k under-sampling was the dominant ZrN "
-                    "artefact; pilot k is min 8³ (prefer 12³ for small/binary). "
+                    f"artefact; pilot k is {NITRIDE_PHONON_K_POLICY}. "
                     "do_epw is forced false; do not promote these cells into "
                     "EPW solely because the pilot ran. Soft-mode class is "
                     "heuristic. Mild residual imaginary modes after dense k "
@@ -373,7 +382,7 @@ def write_pilot_yaml(config: CampaignConfig, path: str | Path) -> Path:
             "# Coarse-map recovery: reuse candidate_specs, denser q, new output_dir\n"
             f"# qpoints: {qpts}  kpoints: {config.dft.kpoints}  "
             f"selection={extras.get('mode')}\n"
-            "# Electronic k: min 8³ (prefer 12³ for small/binary). "
+            f"# Electronic k: {NITRIDE_PHONON_K_POLICY}. "
             "Never lower source k.\n"
             "# This is still a discovery gate, not production dynamical-stability proof.\n"
             "# q=3³ is denser than the map, not a stability certificate.\n"

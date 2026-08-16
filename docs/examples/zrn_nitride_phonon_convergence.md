@@ -42,15 +42,22 @@ Keep one lever at a time. Recorded ZrN ε=0 ladder (QE 7.3.1 Docker):
 | 8³ | 60 | 4³ | −72.1 | most soft q healed |
 | 12³ | 60 | 4³ | **−29.3** | finite-q softness collapsed to Γ-noise scale |
 
-Leftover ~−29 cm⁻¹ is mild Γ acoustic numerical noise (acoustic-like).
-k is **no longer** the dominant lever for this cell. Soft-mode class stays
-`likely_mesh_artefact`. Do **not** auto-promote to `stable` or EPW.
+Leftover −29.3 cm⁻¹ is acoustic-like at Γ (ASR not applied). Soft-mode
+locus treats |Γ| below `_GAMMA_MILD_CM1` (50 cm⁻¹) as ordinary acoustic
+numerical noise — the same class as this leftover. k is **no longer** the
+dominant lever for this cell. Soft-mode class stays `likely_mesh_artefact`.
+Do **not** auto-promote to `stable` or EPW.
 
-**Policy (nitride phonon screening / pilot):** electronic k min **8³**,
-prefer **12³** for small / rock-salt binary cells (`n_atoms` ≤ 4). Global
-`DFTConfig.kpoints` default stays `[4,4,4]` for generality. The next
-family-wide default change waits on a cheap cross-check — optional NbN
-ε=0 at the same settings (q=4³, k=12³, ecut=60) — not another ZrN k step.
+The first step also raised ecutwfc 50 → 60 with k. Healing still
+identifies electronic k as the dominant artefact; k=8³ → 12³ was at
+**fixed** ecut=60. Future ladders should change one lever at a time.
+
+**Policy (nitride phonon screening / pilot):** numbers live in
+`siscforge.pilot` (`NITRIDE_PHONON_K_POLICY`: min 8³, prefer 12³ for
+small / rock-salt binaries). Global `DFTConfig.kpoints` stays `[4,4,4]`.
+A mixed selection (any large non-binary) takes the 8³ floor for the whole
+pilot. Family-wide default change waits on a cheap NbN ε=0 cross-check
+at the same settings (issue #72) — not another ZrN k step.
 
 ## 4. Pseudopotentials
 
@@ -79,4 +86,5 @@ step.
 - `examples/zrn_kmesh_diag.yaml`, `examples/zrn_k12_diag.yaml`
 - `outputs/zrn_kmesh_diag/`, `outputs/zrn_k12_diag/`,
   `outputs/nitride_phonon_diag_q4/`
-- implementation-notes Slice 29.3; specs §2.3c
+- implementation-notes Slice 29.4; specs §2.3c
+- NbN ε=0 confirmation: issue #72

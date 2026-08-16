@@ -21,6 +21,16 @@ acoustic-like). Soft-mode class stays `likely_mesh_artefact` (suspect,
 not proof). Residual |ω| ≲ 30–40 cm⁻¹ is **not** auto-promoted to
 `stable` and does **not** clear the EPW gate.
 
+The leftover −29.3 cm⁻¹ is acoustic-like at Γ (ASR not applied). Soft-mode
+locus treats |Γ| below `_GAMMA_MILD_CM1` (50 cm⁻¹) as ordinary acoustic
+numerical noise — consistent with the k=12³ leftover sitting at Γ-noise
+scale after finite-q branches healed.
+
+The first recorded step also raised ecutwfc 50 → 60 with k. Progressive
+healing still identifies electronic k as the dominant artefact; k=8³ →
+12³ was at **fixed** ecut=60. Future ladders should change one lever at
+a time.
+
 Structure: primitive Fm-3m, basis (0,0,0) / (½,½,½); a_cub ≈ 4.59 Å
 matches experiment. Confirm space group / CIF in the store, not just
 the formula.
@@ -37,23 +47,28 @@ only clean Γ.
 
 ### Policy (nitride phonon screening / pilot)
 
-Electronic k under-sampling was the dominant artefact. Nitride phonon
-maps / recovery pilots should use denser electronic k: **min 8³**,
-**prefer 12³** for small / rock-salt binary cells (`n_atoms` ≤ 4 or
-known RS binary formulas). Pilot fallback never uses `kpoints=[4,4,4]`;
-it never lowers a denser source-campaign k. Global `DFTConfig.kpoints`
-default stays `[4,4,4]` for generality.
+Electronic k under-sampling was the dominant artefact. Canonical numbers
+live in `siscforge.pilot` (`NITRIDE_PHONON_K_MIN` / `_SMALL_BINARY` /
+`NITRIDE_PHONON_K_POLICY`): min 8³, prefer 12³ for small / rock-salt
+binary cells (`n_atoms` ≤ 4 or known RS binary formulas). Pilot fallback
+never uses `kpoints=[4,4,4]`; it never lowers a denser source-campaign k.
+Global `DFTConfig.kpoints` default stays `[4,4,4]` for generality.
+
+A mixed selection (any large non-binary cell) takes the 8³ floor for the
+**whole** pilot. Conservative; per-cell k is out of scope.
 
 Soft-mode locus already prefers “densify SCF k / ecut on the same
 q-grid” when the softest mode is finite-q. k is no longer the dominant
 lever for this ZrN cell. Cheapest remaining cross-check before any
-family-wide default change: optional NbN ε=0 at the same settings.
+family-wide default change: optional NbN ε=0 at the same settings
+(issue #72).
 
 ### Tooling (this slice)
 
 - Checklist: `docs/examples/zrn_nitride_phonon_convergence.md`
 - Diagnostic campaign: `examples/zrn_k12_diag.yaml`
 - Pilot recovery k: `siscforge.pilot._pilot_dft` / `_pilot_kpoints`
+- Atom count helper: `siscforge.soft_modes.n_atoms`
 
 ### Out of scope
 

@@ -36,10 +36,10 @@
 # a discovery gate, not a production dynamical-stability proof. Do not densify
 # to refine-tier 4³ on this map — that is multi-day ROI for survivors only.
 #
-# k-policy (Slice 29.3): this YAML keeps historical k=4³ so a finished map
-# is not force-rerun. New nitride phonon screening / recovery should use
-# min 8³ (prefer 12³ for binaries / n_atoms ≤ 4). siscforge pilot now
-# raises fallback k accordingly. See docs/examples/zrn_nitride_phonon_convergence.md.
+# k-policy (Slice 29.4): this YAML keeps historical k=4³ so a finished map
+# is not force-rerun. New nitride phonon screening / recovery uses
+# siscforge.pilot.NITRIDE_PHONON_K_POLICY. See
+# docs/examples/zrn_nitride_phonon_convergence.md.
 
 name: nbti_n_phonon_map
 description: >
@@ -104,9 +104,8 @@ dft:
   pseudo_dir: /usr/share/espresso/pseudo
   ecutwfc: 50.0
   ecutrho: 400.0
-  # Historical coarse-map k. ZrN k-ladder showed 4³ under-samples metals
-  # and invents finite-q imaginary modes. New nitride phonon screening /
-  # recovery: min 8³ (prefer 12³ for binaries). Do not rewrite this
+  # Historical coarse-map k. New nitride phonon screening / recovery
+  # uses siscforge.pilot.NITRIDE_PHONON_K_POLICY. Do not rewrite this
   # finished map's k — that would force-rerun DFPT.
   kpoints: [4, 4, 4]
   # Screening-quality q-mesh (NOT refine 4³ — keep map cheaper than dense EPW)
