@@ -274,8 +274,9 @@ def test_stable_or_soft_respects_soft_min() -> None:
         _ev_with_phonon(
             metal="Nb", formula="NbN", stable=True, min_freq=5.0, si=50.0
         ),
+        # CrN is not on the known-stable list — tiny imag is numeric noise.
         _ev_with_phonon(
-            metal="Ti", formula="TiN", stable=False, min_freq=-2.0, si=60.0
+            metal="Cr", formula="CrN", stable=False, min_freq=-2.0, si=60.0
         ),
     ]
     # soft_min 0: only non-imaginary
@@ -285,11 +286,49 @@ def test_stable_or_soft_respects_soft_min() -> None:
     assert len(chosen) == 1
     assert chosen[0].candidate.formula == "NbN"
 
-    # soft_min -5: allow tiny imag (-2)
+    # soft_min -5: allow tiny imag (-2) on a non-known-stable cell
     chosen2 = select_shortlist_evaluations(
         rows, mode="stable_or_soft", max_jobs=5, soft_min_cm1=-5.0
     )
     assert len(chosen2) == 2
+
+
+def test_known_stable_soft_binary_not_shortlisted_for_epw() -> None:
+    """#45: NbN that looks soft on coarse mesh cannot go to EPW shortlist."""
+    soft_nbn = _ev_with_phonon(
+        metal="Nb", formula="NbN", stable=False, min_freq=-20.0, si=90.0
+    )
+    with pytest.raises(ValueError, match="stable_or_soft"):
+        select_shortlist_evaluations(
+            [soft_nbn], mode="stable_or_soft", max_jobs=3, soft_min_cm1=-50.0
+        )
+    # After denser-q confirmation + now-stable phonon, it may proceed.
+    confirmed = soft_nbn.model_copy(
+        update={
+            "phonon": soft_nbn.phonon.model_copy(
+                update={
+                    "dynamically_stable": True,
+                    "has_imaginary_modes": False,
+                    "min_frequency_cm1": 40.0,
+                }
+            )
+            if soft_nbn.phonon is not None
+            else None,
+            "candidate": soft_nbn.candidate.model_copy(
+                update={
+                    "metadata": {
+                        **(soft_nbn.candidate.metadata or {}),
+                        "denser_q_confirmed": True,
+                        "pilot_target_qpoints": [3, 3, 3],
+                    }
+                }
+            ),
+        }
+    )
+    chosen = select_shortlist_evaluations(
+        [confirmed], mode="stable_only", max_jobs=1
+    )
+    assert chosen[0].candidate.formula == "NbN"
 
 
 def test_cli_shortlist_stable_only(tmp_path: Path) -> None:

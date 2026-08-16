@@ -294,9 +294,9 @@ def build_pilot_campaign(
                     "into EPW solely because the pilot ran. Soft-mode class is "
                     "heuristic."
                 ),
-                # TODO(slice-later): feed pilot provenance + soft_mode_class
-                # into AL acquisition. This slice only scaffolds the report
-                # and the campaign YAML.
+                # soft_mode_class / denser-q confirmation are first-class on
+                # shortlist + AcquisitionRecord (#45). This YAML stays
+                # phonon-only (do_epw forced false).
             }
         },
     )
@@ -316,6 +316,7 @@ def write_pilot_yaml(config: CampaignConfig, path: str | Path) -> Path:
             "# Coarse-map recovery: reuse candidate_specs, denser q, new output_dir\n"
             f"# qpoints: {qpts}  selection={extras.get('mode')}\n"
             "# This is still a discovery gate, not production dynamical-stability proof.\n"
+            "# q=3³ is denser than the map, not a stability certificate.\n"
             "# Do not launch EPW on these cells until a human decides they are stable.\n"
             f"# Run: siscforge run --calculator qe {path.name}\n"
             "# Resume: re-run the same command (skips finished ok)\n"
