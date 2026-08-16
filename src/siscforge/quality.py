@@ -98,14 +98,25 @@ def assess_result_quality(
                 )
 
     # --- Lambda magnitude ---
+    # Historical QualityConfig default was 8.0 (no mock_unreliable field),
+    # which left the documented pathological band (λ≈6) as
+    # screening_suspect. Lift that one legacy default to 5.0. Explicit
+    # YAML / QualityConfig(lambda_unreliable_above=8.0) on the new model
+    # is honoured as-is.
+    unreliable_above = float(config.lambda_unreliable_above)
+    if (
+        unreliable_above == 8.0
+        and "mock_unreliable" not in getattr(type(config), "model_fields", {})
+    ):
+        unreliable_above = 5.0
     lam: float | None = None
     if eph is not None and eph.lambda_total is not None:
         lam = float(eph.lambda_total)
-        if lam >= float(config.lambda_unreliable_above):
+        if lam >= unreliable_above:
             flags.append(FLAG_EXTREME_LAMBDA)
             flags.append(FLAG_HIGH_LAMBDA)
             notes.append(
-                f"λ={lam:.2f} ≥ {config.lambda_unreliable_above:g} "
+                f"λ={lam:.2f} ≥ {unreliable_above:g} "
                 f"(pathological for conventional NbN-like screening)"
             )
         elif lam >= float(config.lambda_suspect_above):
@@ -151,14 +162,14 @@ def assess_result_quality(
     if any(t == "screening" for t in qtags):
         flags.append(FLAG_QUALITY_TAG_SCREENING)
         flags.append(FLAG_COARSE_GRIDS)
-    if any(t == "mock" for t in qtags) or status == "mock":
+    src = evaluation.performance_score_source or ""
+    if any(t == "mock" for t in qtags) or status == "mock" or src == "mock":
         flags.append(FLAG_QUALITY_TAG_MOCK)
 
     if status == "surrogate_only" or evaluation.performance_score_source == "surrogate":
         flags.append(FLAG_SURROGATE_ONLY)
         notes.append("performance from λ/Tc surrogate stub (not EPW)")
 
-    src = evaluation.performance_score_source or ""
     if src == "dmft_pairing_mock":
         flags.append(FLAG_DMFT_PAIRING_MOCK)
         notes.append(
@@ -184,10 +195,21 @@ def assess_result_quality(
     has_eph = eph is not None and eph.lambda_total is not None
     has_phonon = phonon is not None
 
+    mock_unreliable = bool(getattr(config, "mock_unreliable", True)) and (
+        FLAG_QUALITY_TAG_MOCK in uniq_flags
+        or FLAG_DMFT_PAIRING_MOCK in uniq_flags
+        or src == "mock"
+    )
+
     if status in {"failed", "pending"} and not has_eph:
         tier = "unknown"
         if FLAG_EPW_FAILED in uniq_flags or status == "failed":
             notes.append("no successful EPW for quality assessment")
+    elif mock_unreliable:
+        tier = "unreliable"
+        notes.append(
+            "mock / dry-run result — not comparable to screening or production numbers"
+        )
     elif FLAG_EXTREME_LAMBDA in uniq_flags:
         tier = "unreliable"
     elif FLAG_IMAGINARY_MODES in uniq_flags and config.imaginary_modes_unreliable:

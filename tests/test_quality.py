@@ -13,6 +13,7 @@ from siscforge.quality import (
     FLAG_EXTREME_LAMBDA,
     FLAG_HIGH_LAMBDA,
     FLAG_IMAGINARY_MODES,
+    FLAG_QUALITY_TAG_MOCK,
     assess_result_quality,
 )
 from siscforge.ranking import compute_composite_score, rank_evaluations
@@ -74,9 +75,11 @@ def test_clean_lambda_not_suspect() -> None:
 
 
 def test_high_lambda_suspect() -> None:
-    a = assess_result_quality(_ev(lam=6.0, tc=40.0, stable=True))
+    # Mild elevated band: lambda_suspect_above=3.0, below unreliable (5.0).
+    a = assess_result_quality(_ev(lam=4.0, tc=25.0, stable=True))
     assert a.result_quality == "screening_suspect"
     assert FLAG_HIGH_LAMBDA in a.quality_flags
+    assert FLAG_EXTREME_LAMBDA not in a.quality_flags
 
 
 def test_extreme_lambda_unreliable() -> None:
@@ -100,7 +103,7 @@ def test_ranking_suspect_does_not_beat_clean() -> None:
     clean = _ev(formula="NbN", lam=1.1, tc=16.0, si=50.0, stable=True)
     suspect = _ev(
         formula="Nb0.5Ti0.5N",
-        lam=6.5,
+        lam=4.0,
         tc=45.0,  # inflated screening Tc
         si=50.0,
         stable=True,
@@ -113,7 +116,7 @@ def test_ranking_suspect_does_not_beat_clean() -> None:
     # Raw Tc still stored on suspect
     assert ranked[1].performance_score == 45.0
     assert ranked[1].electron_phonon is not None
-    assert ranked[1].electron_phonon.lambda_total == 6.5
+    assert ranked[1].electron_phonon.lambda_total == 4.0
 
 
 def test_ranking_extreme_lambda_si_only() -> None:
@@ -132,7 +135,7 @@ def test_composite_penalty_applied() -> None:
     from siscforge.quality import apply_quality_assessment
 
     clean_ev = apply_quality_assessment(_ev(lam=1.2, tc=20.0, si=50.0))
-    sus_ev = apply_quality_assessment(_ev(lam=5.0, tc=20.0, si=50.0))
+    sus_ev = apply_quality_assessment(_ev(lam=4.0, tc=20.0, si=50.0))
     c_clean = compute_composite_score(clean_ev, cfg)
     c_sus = compute_composite_score(sus_ev, cfg)
     assert c_sus < c_clean
@@ -140,9 +143,40 @@ def test_composite_penalty_applied() -> None:
 
 
 def test_quality_fields_on_ranked_export_shape() -> None:
-    ranked = rank_evaluations([_ev(lam=6.0, tc=30.0)])
+    ranked = rank_evaluations([_ev(lam=4.0, tc=30.0)])
     assert ranked[0].result_quality == "screening_suspect"
     assert ranked[0].quality_flags
     assert ranked[0].quality_notes
     assert ranked[0].electron_phonon is not None
     assert ranked[0].electron_phonon.result_quality == "screening_suspect"
+
+
+def test_mock_results_unreliable() -> None:
+    """quality_tag=mock / FLAG_QUALITY_TAG_MOCK / src=mock must not stay screening."""
+    ev = _ev(lam=1.2, tc=20.0, quality_tag="mock", status="mock")
+    ev = ev.model_copy(update={"performance_score_source": "mock"})
+    a = assess_result_quality(ev)
+    assert a.result_quality == "unreliable"
+    assert FLAG_QUALITY_TAG_MOCK in a.quality_flags
+    assert "mock" in a.quality_notes.lower()
+
+    ranked = rank_evaluations([ev, _ev(lam=1.2, tc=16.0, si=50.0)])
+    assert ranked[0].result_quality in {"screening", "production"}
+    assert ranked[-1].result_quality == "unreliable"
+    # Composite zeros performance for unreliable (Si-only × penalty).
+    mock_ranked = next(r for r in ranked if r.performance_score_source == "mock")
+    assert mock_ranked.composite_score is not None
+    assert mock_ranked.composite_score < 20.0
+
+
+def test_lambda_six_unreliable() -> None:
+    """Documented pathological band λ≈6 is unreliable, not screening_suspect."""
+    a = assess_result_quality(_ev(lam=6.0, tc=40.0, stable=True))
+    assert a.result_quality == "unreliable"
+    assert FLAG_EXTREME_LAMBDA in a.quality_flags
+    assert FLAG_HIGH_LAMBDA in a.quality_flags
+
+    ranked = rank_evaluations([_ev(lam=6.0, tc=40.0, si=50.0)])
+    assert ranked[0].result_quality == "unreliable"
+    assert ranked[0].electron_phonon is not None
+    assert ranked[0].electron_phonon.result_quality == "unreliable"
