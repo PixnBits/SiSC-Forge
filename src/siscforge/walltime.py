@@ -5,10 +5,16 @@ convergence, and I/O dominate real walltime; bands are intentionally wide.
 Exact ETAs are impossible — use these to plan overnight/weekend runs, not to
 schedule HPC allocations.
 
+Dense-k / dense-q jobs that still carry ``quality_tag: screening`` (phonon-only
+maps, k-mesh diagnostics) can still be **multi-hour** on a workstation. The
+printed ``q-mesh=`` is the mesh actually used for DFPT.
+
 Reference anchors (desktop, single-node MPI):
 - Screening shortlist, 8-atom Nb–Ti–N, ~16 cores: full candidate often ~1–6 h
 - workstation_dense refine DFPT on 8-atom cells has been observed >37 h with
   healthy heartbeats; plan multi-day for a 2-candidate refine campaign
+- Phonon-only 2-atom ZrN at q=4³ / k=12³ / 16 cores has been observed ~6 h
+  (do not advertise a ~1 h band for that class)
 
 No Folding@home-style mid-iteration checkpoints here — only messaging.
 """
@@ -29,6 +35,9 @@ TierName = Literal["screening", "workstation_dense", "production"]
 # Reference cell / MPI for base bands
 _REF_N_ATOMS = 8
 _REF_NPROC = 16
+# Typical screening SCF mesh; denser k is a sub-linear extra cost
+_REF_K_PRODUCT = 4 * 4 * 4
+
 
 # Base walltime bands (hours) at ref n_atoms / nproc / grids.
 # dfpt: multi-q ph.x only; full: relax → SCF → DFPT → (EPW when enabled).
@@ -63,6 +72,22 @@ def _grid_product(grid: list[int] | tuple[int, ...] | None, default: int = 8) ->
     return p
 
 
+def _epw_enabled(dft: DFTConfig) -> bool:
+    return bool(dft.do_epw or getattr(dft.epw, "enabled", False))
+
+
+def dfpt_q_grid(dft: DFTConfig) -> list[int]:
+    """q-mesh actually used for DFPT (``ph.x``), not unused EPW defaults.
+
+    When EPW is off, ``dft.qpoints`` is what the calculator runs. Preferring
+    ``epw.nqc`` (default 2×2×2) in that case under-counts a 4³ map by 8×.
+    When EPW is on, coarse ``nqc`` is the DFPT mesh EPW interpolates from.
+    """
+    if _epw_enabled(dft) and dft.epw.nqc:
+        return list(dft.epw.nqc)
+    return list(dft.qpoints) if dft.qpoints else [2, 2, 2]
+
+
 def resolve_walltime_tier(
     dft: DFTConfig,
     *,
@@ -70,24 +95,25 @@ def resolve_walltime_tier(
 ) -> TierName:
     """Map DFTConfig (+ optional explicit tier) to an estimation tier.
 
-    Screening quality_tag → screening. Production-labeled configs are split by
-    q-mesh product into workstation_dense vs production (matches refine presets).
+    Dense q-meshes upgrade the tier even when ``quality_tag`` is still
+    ``screening`` (phonon-only maps often keep that tag while using 4³).
+    Production-labeled configs are split by q-mesh product into
+    workstation_dense vs production (matches refine presets).
     """
     if explicit:
         key = explicit.strip().lower().replace("-", "_")
         if key in _TIER_BASE_H:
             return key  # type: ignore[return-value]
-    # Campaign extras often store refine tier
     qtag = (dft.quality_tag or "screening").lower()
-    nqc = list(dft.epw.nqc) if dft.epw.nqc else list(dft.qpoints)
-    qprod = _grid_product(nqc, default=_grid_product(dft.qpoints, 8))
-    if qtag == "screening":
-        return "screening"
-    # production label from refine: 4³ → workstation_dense, 6³+ → production
+    qprod = _grid_product(dfpt_q_grid(dft), default=_grid_product(dft.qpoints, 8))
+    # Mesh density wins over the quality_tag floor so 4³ DFPT is not priced
+    # as a 2³ screening shortlist.
     if qprod >= 125:  # 5³+
         return "production"
     if qprod >= 27:  # 3³+
         return "workstation_dense"
+    if qtag == "screening":
+        return "screening"
     # production tag but coarse mesh — still treat as denser than screening
     return "workstation_dense"
 
@@ -116,19 +142,32 @@ def n_atoms_from_candidate(candidate: StructureCandidate | None) -> int:
     return _REF_N_ATOMS
 
 
+def _k_factor(k_product: int) -> float:
+    """Sub-linear SCF/DFPT cost vs k-mesh, relative to a 4³ screening mesh.
+
+    k=4³ → 1.0; k=8³ → ~1.7; k=12³ → ~2.3. Floor at 1.0 so a coarse k-mesh
+    does not shrink a dense-q band below the q/atom model.
+    """
+    ratio = max(1, int(k_product)) / _REF_K_PRODUCT
+    return max(1.0, ratio**0.25)
+
+
 def _scale_factor(
     *,
     n_atoms: int,
     nproc: int,
     q_product: int,
     nkf_product: int,
+    k_product: int,
     tier: TierName,
     scale: float,
 ) -> float:
-    """Multiply base band by atoms / q-mesh / MPI / mild EPW-grid factors."""
+    """Multiply base band by atoms / q-mesh / k-mesh / MPI / mild EPW-grid factors."""
     base = _TIER_BASE_H[tier]
     atoms = max(1, int(n_atoms))
-    # DFPT cost grows faster than linear with atoms (modes ~ 3N)
+    # DFPT cost grows faster than linear with atoms (modes ~ 3N).
+    # Floor keeps 2-atom binaries from collapsing ~7× vs the 8-atom ref —
+    # each q-point still does a full metallic DFPT cycle.
     atoms_f = max(0.2, (atoms / _REF_N_ATOMS) ** 1.4)
     q_ref = max(1, int(base["ref_q"]))
     q_f = max(0.25, q_product / q_ref)
@@ -138,7 +177,8 @@ def _scale_factor(
     # Fine grids add mild cost beyond DFPT
     ratio = max(1.0, nkf_product / nkf_ref)
     epw_f = 1.0 + 0.12 * math.log2(ratio)
-    return max(0.05, float(scale) * atoms_f * q_f * nproc_f * epw_f)
+    k_f = _k_factor(k_product)
+    return max(0.05, float(scale) * atoms_f * q_f * nproc_f * epw_f * k_f)
 
 
 def format_duration_band(lo_h: float, hi_h: float) -> str:
@@ -190,6 +230,7 @@ class WalltimeEstimate:
     n_atoms: int
     nproc: int
     q_product: int
+    k_product: int
     nkf_product: int
     do_epw: bool
     dfpt_lo_h: float
@@ -270,17 +311,18 @@ def estimate_candidate_walltime(
     atoms = int(n_atoms) if n_atoms is not None else n_atoms_from_candidate(candidate)
     tier_name = resolve_walltime_tier(dft, explicit=tier)
     base = _TIER_BASE_H[tier_name]
-    nqc = list(dft.epw.nqc) if dft.epw.nqc else list(dft.qpoints)
-    q_prod = _grid_product(nqc, default=_grid_product(dft.qpoints, 8))
+    q_prod = _grid_product(dfpt_q_grid(dft), default=_grid_product(dft.qpoints, 8))
+    k_prod = _grid_product(dft.kpoints, default=_REF_K_PRODUCT)
     nkf_prod = _grid_product(dft.epw.nkf, default=6 * 6 * 6)
     nproc = max(1, int(dft.nproc))
-    do_epw = bool(dft.do_epw or dft.epw.enabled)
+    do_epw = _epw_enabled(dft)
     eff_scale = float(scale) * (float(observed_scale) if observed_scale else 1.0)
     fac = _scale_factor(
         n_atoms=atoms,
         nproc=nproc,
         q_product=q_prod,
         nkf_product=nkf_prod if do_epw else base["ref_nkf"],
+        k_product=k_prod,
         tier=tier_name,
         scale=eff_scale,
     )
@@ -295,6 +337,7 @@ def estimate_candidate_walltime(
         n_atoms=atoms,
         nproc=nproc,
         q_product=q_prod,
+        k_product=k_prod,
         nkf_product=nkf_prod,
         do_epw=do_epw,
         dfpt_lo_h=dfpt_lo * fac,
@@ -358,6 +401,7 @@ def format_campaign_estimate_lines(
             n_atoms=estimate.n_atoms,
             nproc=estimate.nproc,
             q_product=estimate.q_product,
+            k_product=estimate.k_product,
             nkf_product=estimate.nkf_product,
             do_epw=estimate.do_epw,
             dfpt_lo_h=estimate.dfpt_lo_h,
@@ -379,7 +423,7 @@ def format_campaign_estimate_lines(
         "  Tip: safe to interrupt; re-run the same command to resume "
         "finished steps/candidates.",
         f"  tier={est.tier}, n_atoms≈{est.n_atoms}, q-mesh={est.q_product} pts, "
-        f"nproc={est.nproc}"
+        f"k-mesh={est.k_product} pts, nproc={est.nproc}"
         + (f", nkf={est.nkf_product}" if est.do_epw else ""),
     ]
     if est.observed_adjustment is not None:

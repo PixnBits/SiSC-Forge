@@ -6,6 +6,7 @@ from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import DFTConfig, EPWConfig, RunConfig
 from siscforge.walltime import (
     WalltimeTracker,
+    dfpt_q_grid,
     estimate_campaign_walltime,
     estimate_candidate_walltime,
     format_campaign_estimate_lines,
@@ -50,6 +51,20 @@ def _dense_dft(**kwargs) -> DFTConfig:
             nqf=[12, 12, 12],
             npool=16,
         ),
+    )
+    data.update(kwargs)
+    return DFTConfig(**data)
+
+
+def _phonon_only_dense_q(**kwargs) -> DFTConfig:
+    """Phonon-only map: screening tag, unused default epw.nqc=2³, real q=4³."""
+    data = dict(
+        quality_tag="screening",
+        nproc=16,
+        qpoints=[4, 4, 4],
+        kpoints=[4, 4, 4],
+        do_epw=False,
+        epw=EPWConfig(enabled=False, nqc=[2, 2, 2]),
     )
     data.update(kwargs)
     return DFTConfig(**data)
@@ -234,3 +249,52 @@ def test_screening_shortlist_vs_dense_refine_example_lines() -> None:
     # Print-friendly smoke (used when writing acceptance examples)
     assert scr.per_candidate_line()
     assert dense.per_candidate_line()
+
+
+def test_phonon_only_q_product_ignores_epw_nqc() -> None:
+    """Issue #67: do_epw=false must use dft.qpoints, not default epw.nqc=2³."""
+    dft = _phonon_only_dense_q(kpoints=[12, 12, 12])
+    assert dfpt_q_grid(dft) == [4, 4, 4]
+    est = estimate_candidate_walltime(dft, n_atoms=2)
+    assert est.q_product == 64
+    assert est.k_product == 12 * 12 * 12
+    assert not est.do_epw
+    blob = "\n".join(format_campaign_estimate_lines(est))
+    assert "q-mesh=64" in blob
+    assert "q-mesh=8 " not in blob
+    assert "k-mesh=1728" in blob
+
+
+def test_phonon_only_dense_q_upgrades_tier() -> None:
+    """quality_tag=screening + q=4³ must not stay on the cheap screening band."""
+    assert resolve_walltime_tier(_phonon_only_dense_q()) == "workstation_dense"
+    assert resolve_walltime_tier(_screening_dft()) == "screening"
+
+
+def test_phonon_only_dense_q_band_is_multi_hour() -> None:
+    """4³ / 2-atom / 16-core / k=12³ must not advertise a ~1 h campaign."""
+    dft = _phonon_only_dense_q(kpoints=[12, 12, 12])
+    est = estimate_candidate_walltime(dft, n_atoms=2)
+    # Observed ZrN k12 DFPT ~5.8–7 h; band may stay wide but not ~1 h.
+    assert est.tier == "workstation_dense"
+    assert est.full_lo_h >= 2.0
+    assert est.full_hi_h >= 6.0
+    assert est.dfpt_lo_h >= 2.0
+    blob = "\n".join(format_campaign_estimate_lines(est))
+    assert "1.1 h" not in blob
+    assert "7 min" not in blob
+
+
+def test_epw_on_still_uses_nqc() -> None:
+    dft = _screening_dft(qpoints=[4, 4, 4])
+    est = estimate_candidate_walltime(dft, n_atoms=8)
+    assert est.do_epw
+    assert est.q_product == 8
+    assert dfpt_q_grid(dft) == [2, 2, 2]
+
+
+def test_denser_k_increases_estimate() -> None:
+    lo = estimate_candidate_walltime(_phonon_only_dense_q(kpoints=[4, 4, 4]), n_atoms=2)
+    hi = estimate_candidate_walltime(_phonon_only_dense_q(kpoints=[12, 12, 12]), n_atoms=2)
+    assert hi.dfpt_lo_h > lo.dfpt_lo_h
+    assert hi.full_hi_h > lo.full_hi_h

@@ -322,7 +322,10 @@ not guarantee physical λ/Tc.
 
 Before the first long step, real `qe` / `qe-epw` campaigns print a **heuristic
 walltime band** (not a guarantee). Machine load and soft-mode convergence
-dominate; treat bands as planning guidance only.
+dominate; treat bands as planning guidance only. Dense-k / dense-q jobs that
+still carry `quality_tag: screening` (phonon-only maps, k-mesh diagnostics)
+can still be **multi-hour** on a workstation — the printed `q-mesh=` is the
+mesh actually used for DFPT, not an unused EPW default.
 
 ### How to read the bands
 
@@ -331,7 +334,7 @@ Estimated walltime (heuristic, not a guarantee):
   per candidate: DFPT ~47 min – 6.3 h; full candidate (relax→EPW) ~1.6–9.4 h on ~8 cores (order-of-magnitude)
   this campaign (~6 candidates, sequential): ~9.4 h – 2.4 d
   Tip: safe to interrupt; re-run the same command to resume finished steps/candidates.
-  tier=screening, n_atoms≈8, q-mesh=8 pts, nproc=8, nkf=216
+  tier=screening, n_atoms≈8, q-mesh=8 pts, k-mesh=64 pts, nproc=8, nkf=216
 ```
 
 | Phrase | Meaning |
