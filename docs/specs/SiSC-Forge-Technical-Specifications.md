@@ -358,6 +358,13 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 - Critical thickness (Matthews–Blakeslee / People–Bean) + membrane-transfer heuristics (P2.3)
 - Multi-objective ranking + Pareto + ranking provenance (P2.4; ranking lives in §2.6)
 - Process-recommendation synthesis cards + frozen schema `1.0` (`process_recommendations.json`) (P2.5)
+- **Missing lattice (#48):** when no lattice constant is available, the
+  mismatch component is a flagged, YAML-demoted score
+  (`si_feasibility.weights.missing_lattice_score` ×
+  `missing_lattice_demotion`, defaults 20 × 0.5 = 10) — not a silent 5 %
+  assumption. Optional `family_offsets` adjust the composite after the
+  weighted blend. Component breakdown and process-recommendation schema
+  stay valid (`missing_lattice` is an extra flag value).
 
 **Deferred:** interface-slab DFT, FEM membrane mechanics, CALPHAD interlayer thermodynamics.
 

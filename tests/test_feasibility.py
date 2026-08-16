@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from siscforge.models.candidate import StructureCandidate
+from siscforge.models.config import SiFeasibilityConfig, SiFeasibilityWeights
 from siscforge.silicon.critical_thickness import (
     estimate_critical_thickness,
 )
@@ -50,8 +51,8 @@ def _bsi_candidate() -> StructureCandidate:
 
 
 def test_scorer_version() -> None:
-    assert SCORER_VERSION == "0.5"
-    assert score_si_feasibility(_nbn_candidate()).version == "0.5"
+    assert SCORER_VERSION == "0.6"
+    assert score_si_feasibility(_nbn_candidate()).version == "0.6"
 
 
 def test_normalize_weights_defaults() -> None:
@@ -114,7 +115,7 @@ def test_weights_affect_ranking() -> None:
     ranked = rank_by_si_feasibility([nbn, bsi], weights=maturity_heavy)
     assert ranked[0][0].formula == "NbN"
     score = ranked[0][1]
-    assert score.version == "0.5"
+    assert score.version == "0.6"
     assert any("/" in b for b in score.recommended_buffers)
     assert score.chemical_flags is not None
     assert score.process_temp_ceiling_c is not None
@@ -207,7 +208,11 @@ def test_missing_lattice_fallback() -> None:
     )
     score = score_si_feasibility(cand)
     assert score.critical_thickness_method == "heuristic fallback"
-    assert score.version == "0.5"
+    assert score.version == "0.6"
+    assert score.lattice_mismatch_pct is None
+    assert score.components.lattice_mismatch == pytest.approx(10.0)
+    assert "missing_lattice" in score.quality_flags
+    assert "not a 5%" in score.notes.lower() or "not a 5%" in score.notes
     ct = estimate_critical_thickness(None, formula="UnknownZed", material_family="other")
     assert ct.method == "heuristic fallback"
 
@@ -233,7 +238,7 @@ def test_membrane_candidate_on_high_direct_mismatch() -> None:
 def test_debug_info_has_options() -> None:
     info = scorer_debug_info(_nbn_candidate())
     assert "options" in info
-    assert info["scorer_version"] == "0.5"
+    assert info["scorer_version"] == "0.6"
 
 
 def test_recommended_thickness_is_scalar_float() -> None:
@@ -257,7 +262,7 @@ def test_use_buffers_false_excludes_stacks_and_preserves_p22_metadata() -> None:
     # P2.2 fields remain populated (even on direct path).
     assert score.chemical_flags is not None
     assert score.process_temp_ceiling_c is not None
-    assert score.version == "0.5"
+    assert score.version == "0.6"
     assert score.critical_thickness_method
     assert score.membrane_transfer_note
 
@@ -291,12 +296,16 @@ def test_non_si_substrate_zero_strain_uses_conservative_lattice() -> None:
     assert evaluate_mismatch_options(cand) == []
     score = score_si_feasibility(cand)
     assert score.components.lattice_mismatch != 100.0
-    assert score.components.lattice_mismatch == pytest.approx(28.650479686019008)
-    assert score.lattice_mismatch_pct == pytest.approx(5.0)
+    # Default missing-lattice: 20 × 0.5 = 10; not a silent 5 % (~28.65).
+    assert score.components.lattice_mismatch == pytest.approx(10.0)
+    assert score.lattice_mismatch_pct is None
+    assert "missing_lattice" in (score.quality_flags or [])
+    assert "missing_lattice" in (score.chemical_flags or [])
     assert score.total != 66.65
     notes = score.notes.lower()
     assert "unsupported" in notes or "non-si" in notes
-    assert "missing-data" in notes or "missing" in notes
+    assert "missing" in notes
+    assert "not a 5%" in notes or "not a 5 %" in notes
     assert "|in_plane_strain|" in score.notes or "in_plane_strain" in notes
 
     # Recognised Si faces still use the |in_plane_strain| fallback when options are empty.
@@ -310,3 +319,51 @@ def test_non_si_substrate_zero_strain_uses_conservative_lattice() -> None:
     si_score = score_si_feasibility(si_no_lattice)
     assert si_score.components.lattice_mismatch == pytest.approx(100.0)
     assert "mismatch from |in_plane_strain|" in si_score.notes
+
+
+def test_missing_lattice_demotion_yaml_knob() -> None:
+    cand = StructureCandidate(
+        formula="UnknownZed",
+        composition={"Z": 1.0},
+        material_family="other",
+        substrate="Si(001)",
+    )
+    cfg = SiFeasibilityConfig(
+        weights=SiFeasibilityWeights(
+            missing_lattice_score=40.0,
+            missing_lattice_demotion=0.25,
+        )
+    )
+    score = score_si_feasibility(cand, config=cfg)
+    assert score.components.lattice_mismatch == pytest.approx(10.0)
+    assert "missing_lattice" in score.quality_flags
+
+
+def test_family_offset_adjusts_total() -> None:
+    nbn = _nbn_candidate()
+    base = score_si_feasibility(nbn)
+    boosted = score_si_feasibility(
+        nbn,
+        weights=SiFeasibilityWeights(family_offsets={"tm_nitride": 5.0}),
+    )
+    cut = score_si_feasibility(
+        nbn,
+        weights=SiFeasibilityWeights(family_offsets={"tm_nitride": -8.0}),
+    )
+    assert boosted.total == pytest.approx(min(100.0, base.total + 5.0), abs=0.05)
+    assert cut.total == pytest.approx(max(0.0, base.total - 8.0), abs=0.05)
+    assert "family offset" in boosted.notes
+    # Other families are unchanged.
+    other = StructureCandidate(
+        formula="UnknownZed",
+        composition={"Z": 1.0},
+        material_family="other",
+        substrate="Si(001)",
+        in_plane_strain=0.0,
+    )
+    plain = score_si_feasibility(other)
+    offset_other = score_si_feasibility(
+        other,
+        weights=SiFeasibilityWeights(family_offsets={"tm_nitride": 10.0}),
+    )
+    assert offset_other.total == pytest.approx(plain.total)

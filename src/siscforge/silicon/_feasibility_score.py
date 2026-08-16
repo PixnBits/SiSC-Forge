@@ -35,6 +35,22 @@ from siscforge.structure.strain import parse_substrate
 
 WeightsLike = SiFeasibilityConfig | SiFeasibilityWeights | dict | None
 
+FLAG_MISSING_LATTICE = "missing_lattice"
+
+
+def _policy_from_weights(
+    weights: WeightsLike,
+    config: SiFeasibilityConfig | None,
+) -> SiFeasibilityWeights:
+    """Resolve YAML knobs (demotion / family offsets) without touching weights."""
+    if isinstance(weights, SiFeasibilityConfig):
+        return weights.weights
+    if isinstance(weights, SiFeasibilityWeights):
+        return weights
+    if config is not None:
+        return config.weights
+    return SiFeasibilityWeights()
+
 
 def _is_recognised_si_substrate(substrate: str | None) -> bool:
     """True only for parseable Si(001) / Si(111) labels (default Si(001))."""
@@ -177,9 +193,11 @@ def score_si_feasibility(
     if cmos_limit_c is None:
         cmos_limit_c = 450.0
 
+    policy = _policy_from_weights(weights, config)
     family = candidate.material_family
     notes: list[str] = []
     lattice_data_missing = False
+    si_quality_flags: list[str] = []
 
     options = evaluate_mismatch_options(candidate)
     best = options[0] if options else None
@@ -201,22 +219,31 @@ def score_si_feasibility(
         candidate.in_plane_strain is not None
         and _is_recognised_si_substrate(candidate.substrate)
     ):
-        # |\u03b5| is a Si-epitaxy strain, not a match to an unsupported substrate.
+        # |ε| is a Si-epitaxy strain, not a match to an unsupported substrate.
         mismatch_pct = abs(candidate.in_plane_strain) * 100.0
         lattice_score = _mismatch_score_from_percent(mismatch_pct)
         notes.append("mismatch from |in_plane_strain|")
     else:
-        mismatch_pct = 5.0
-        lattice_score = _mismatch_score_from_percent(mismatch_pct)
+        # Do not invent a 5 % measurement (#48). Use a flagged, demoted component.
+        mismatch_pct = None
         lattice_data_missing = True
+        base = float(policy.missing_lattice_score)
+        demotion = float(policy.missing_lattice_demotion)
+        lattice_score = _clamp(base * demotion)
+        si_quality_flags.append(FLAG_MISSING_LATTICE)
         if not _is_recognised_si_substrate(candidate.substrate):
             notes.append(
                 f"unsupported / non-Si substrate {candidate.substrate!r}; "
-                "lattice score uses conservative missing-data default "
-                "(~5% mismatch), not |in_plane_strain|"
+                "lattice score uses missing-lattice demotion "
+                f"(base={base:g} × {demotion:g} = {lattice_score:g}), "
+                "not |in_plane_strain| and not a 5% mismatch assumption"
             )
         else:
-            notes.append("mismatch defaulted (no lattice data)")
+            notes.append(
+                "missing lattice data — mismatch component demoted "
+                f"(base={base:g} × {demotion:g} = {lattice_score:g}); "
+                "not a 5% mismatch assumption"
+            )
 
     thermal, t_proc, thermal_window_note, thermal_notes = _thermal_for_path(
         family, best, cmos_limit_c=cmos_limit_c
@@ -249,12 +276,18 @@ def score_si_feasibility(
         buffer_availability=_clamp(buffer_score),
         process_maturity=_clamp(maturity),
     )
-    total = _clamp(round(
+    total = (
         w["lattice_mismatch"] * components.lattice_mismatch
         + w["thermal_budget"] * components.thermal_budget
         + w["chemical_compatibility"] * components.chemical_compatibility
         + w["buffer_availability"] * components.buffer_availability
-        + w["process_maturity"] * components.process_maturity, 2))
+        + w["process_maturity"] * components.process_maturity
+    )
+    family_offset = float((policy.family_offsets or {}).get(family, 0.0) or 0.0)
+    if family_offset:
+        total += family_offset
+        notes.append(f"family offset {family}={family_offset:+g}")
+    total = _clamp(round(total, 2))
 
     a_film = _film_in_plane_a(candidate)
     if lattice_data_missing:
@@ -288,6 +321,13 @@ def score_si_feasibility(
     if membrane_flag:
         notes.append(membrane_note)
 
+    if si_quality_flags:
+        # Surface on chemical_flags so process-rec cards / CSV see it
+        # without a schema bump; also kept on quality_flags.
+        for flag in si_quality_flags:
+            if flag not in chem_flags:
+                chem_flags.append(flag)
+        notes.append("si quality flags: " + ", ".join(si_quality_flags))
     if chem_flags:
         notes.append("chemical flags: " + ", ".join(chem_flags))
     if thermal_window_note:
@@ -317,6 +357,7 @@ def score_si_feasibility(
         notes=note_str,
         version=SCORER_VERSION,
         chemical_flags=chem_flags,
+        quality_flags=list(si_quality_flags),
         thermal_window_note=thermal_window_note,
         process_temp_ceiling_c=process_ceiling,
         critical_thickness_nm=ct.hc_primary_nm,
