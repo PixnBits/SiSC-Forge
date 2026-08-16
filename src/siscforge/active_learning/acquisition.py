@@ -71,11 +71,17 @@ class AcquisitionRecord(BaseModel):
     score_signal: str = "surrogate_tc"
     """``surrogate_tc`` or ``performance_score`` — which Tc-like input was used."""
 
+    soft_mode_class: str | None = None
+    """Heuristic soft-mode class when a phonon evaluation is available (#45)."""
+
     quality_flags: list[str] = Field(default_factory=list)
     """Trust-layer flags copied from the evaluation when available (#47)."""
 
     result_quality: str | None = None
     """Trust-layer tier copied from the evaluation when available (#47)."""
+
+    block_expensive_epw: bool = False
+    """True when a known-stable binary still needs denser-q before EPW (#45)."""
 
 
 @dataclass
@@ -214,8 +220,11 @@ def _score_one(
         weights=cfg.weights.model_dump(),
         tc_ceiling_K=cfg.tc_ceiling_K,
     )
+    sm_class: str | None = None
     qflags: list[str] = []
     rq: str | None = None
+    extra_notes = notes
+    block_epw = False
     if evaluation is not None:
         qflags = list(getattr(evaluation, "quality_flags", None) or [])
         eph = getattr(evaluation, "electron_phonon", None)
@@ -224,6 +233,19 @@ def _score_one(
                 if flag not in qflags:
                     qflags.append(flag)
         rq = getattr(evaluation, "result_quality", None)
+        ph = getattr(evaluation, "phonon", None)
+        if ph is not None:
+            from siscforge.soft_modes import classify_soft_mode, needs_denser_q_before_epw
+
+            row = classify_soft_mode(evaluation)
+            sm_class = row["soft_mode_class"]
+            if needs_denser_q_before_epw(evaluation):
+                block_epw = True
+                extra_notes = (
+                    (notes + "; " if notes else "")
+                    + "known-stable binary looks soft on coarse mesh — "
+                    "denser-q confirmation required before EPW"
+                )
     rec = AcquisitionRecord(
         candidate_id=cand.candidate_id,
         formula=cand.formula,
@@ -239,13 +261,15 @@ def _score_one(
         model_version=model_version,
         training_set_size=training_set_size,
         bootstrap=bootstrap,
-        notes=notes,
+        notes=extra_notes,
         pool=decision.pool,
         pool_reason=decision.reason,
         acquisition_mode=mode,
         score_signal=score_signal,
+        soft_mode_class=sm_class,
         quality_flags=qflags,
         result_quality=rq,
+        block_expensive_epw=block_epw,
     )
     return rec, decision
 
@@ -354,14 +378,16 @@ def prioritize_candidates(
     )
 
     k = max(1, int(cfg.max_epw_jobs))
+    eligible = [r for r in records if not r.block_expensive_epw]
     if mode == "separate":
         selected_ids = set(
-            select_with_quotas(records, k=k, quotas=_quota_map(cfg))
+            select_with_quotas(eligible, k=k, quotas=_quota_map(cfg))
         )
     else:
         # off and joint: single global top-k (joint only changes provenance
-        # and the optional performance_score signal).
-        selected_ids = {r.candidate_id for r in records[:k]}
+        # and the optional performance_score signal). Known-stable binaries
+        # that still look soft are not queued for EPW (#45 review).
+        selected_ids = {r.candidate_id for r in eligible[:k]}
 
     for i, rec in enumerate(records):
         if rec.candidate_id in selected_ids:
@@ -374,6 +400,12 @@ def prioritize_candidates(
             rec.selected_for_expensive = False
             rec.notes = (
                 f"deferred — surrogate-only evaluation (pool={rec.pool}, mode={mode})"
+            )
+        if rec.soft_mode_class:
+            rec.notes += f"; soft_mode_class={rec.soft_mode_class}"
+        if rec.block_expensive_epw:
+            rec.notes += (
+                "; blocked from expensive EPW until denser-q confirmation"
             )
 
     plan.ranked = records

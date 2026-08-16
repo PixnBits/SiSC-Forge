@@ -394,6 +394,13 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
   - `rank --stable-first` prefers dynamically stable phonons.
   - Setup failures are not “stable.”
   - Soft-mode class is **diagnostic / provenance**, not a ranking override in this slice. Pathological imag-mode EPW remains blocked by the trust layer.
+  - **#45:** `soft_mode_class` is first-class on shortlist specs and
+    `AcquisitionRecord`. Known-stable binaries that look soft on a coarse
+    mesh are not EPW-shortlisted until denser-q confirmation
+    (`metadata.denser_q_confirmed` or a stable q≥3³ pilot). Critical
+    campaign signals auto-emit `denser_q_pilot.yaml` (`do_epw: false`).
+    `KNOWN_STABLE_RS_NITRIDES` is conservative (NbN/TiN/ZrN/HfN/VN);
+    extend the frozenset or set `metadata.known_stable_binary`.
 - Surrogate provenance (model version, training-set size, acquisition weights, bootstrap flag) appears in status and synthesis cards.
 - JosephsonMetrics optional secondary ranking when module enabled (Phase 4).
 

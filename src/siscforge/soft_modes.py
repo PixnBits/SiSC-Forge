@@ -14,8 +14,10 @@ This module is **heuristic and non-blocking**:
 * The report must never be treated as a go-ahead to launch EPW on
   imaginary-mode cells.
 
-AL acquisition may later consume ``soft_mode_class`` / pilot provenance;
-that wiring is intentionally out of scope (TODO).
+``soft_mode_class`` is a first-class input to shortlist / acquisition
+(#45). Critical campaign signals auto-emit a denser-q phonon-only pilot
+(``do_epw`` stays false). Never treat this report as a go-ahead to
+launch EPW on imaginary-mode cells.
 """
 
 from __future__ import annotations
@@ -44,7 +46,27 @@ REPORT_VERSION = 1
 
 # Literature-stable rock-salt binaries that still go soft on coarse q=2³
 # screening meshes in practice. Used only as a *heuristic* flag.
-KNOWN_STABLE_RS_NITRIDES = frozenset({"NbN", "TiN", "ZrN", "HfN"})
+#
+# How to extend: add a reduced formula only when a published RS phase is
+# widely treated as dynamically stable (same bar as NbN/TiN/ZrN/HfN).
+# Do not add ternaries, hexagonal/WC phases, or controversial cubics
+# (e.g. δ-TaN). Operators can also set
+# ``candidate.metadata["known_stable_binary"] = True`` for a one-off.
+# VN: NaCl-type, literature-stable metal (Tc ~8–9 K).
+KNOWN_STABLE_RS_NITRIDES = frozenset({"NbN", "TiN", "ZrN", "HfN", "VN"})
+
+# Classes that must not go to EPW for a known-stable binary until a
+# denser-q phonon (still do_epw=false) has confirmed stability.
+SOFT_CLASSES_NEED_DENSER_Q = frozenset(
+    {
+        "likely_mesh_artefact",
+        "optical_soft",
+        "genuinely_soft",
+        "setup_failed",
+        "unknown",
+    }
+)
+AUTO_PILOT_YAML = "denser_q_pilot.yaml"
 
 # Same threshold as the DFPT parser: ignore tiny numeric acoustic noise.
 _IMAG_THRESHOLD_CM1 = 5.0
@@ -59,6 +81,9 @@ SIGNAL_NONE_STABLE_BINARIES_SOFT = "none_stable_known_binaries_also_soft"
 SIGNAL_HAS_STABLE = "has_stable_survivors"
 SIGNAL_NO_PHONON = "no_phonon_results"
 SIGNAL_SKIPPED = "skipped"
+AUTO_PILOT_SIGNALS = frozenset(
+    {SIGNAL_NONE_STABLE, SIGNAL_NONE_STABLE_BINARIES_SOFT}
+)
 
 
 class SoftModeRow(TypedDict):
@@ -114,8 +139,47 @@ def is_binary_nitride(formula: str) -> bool:
         )
 
 
-def is_known_stable_binary(formula: str) -> bool:
+def is_known_stable_binary(formula: str, metadata: dict[str, Any] | None = None) -> bool:
+    if metadata and metadata.get("known_stable_binary") is True:
+        return True
     return reduced_formula(formula) in KNOWN_STABLE_RS_NITRIDES
+
+
+def denser_q_confirmed(ev: CandidateEvaluation) -> bool:
+    """True when metadata records a denser-q phonon confirmation.
+
+    Used so a known-stable binary that was soft on q=2³ can enter an
+    EPW shortlist *after* a do_epw=false denser-q pilot came back stable.
+    """
+    meta = ev.candidate.metadata or {}
+    if meta.get("denser_q_confirmed") is True:
+        return True
+    qpts = meta.get("pilot_target_qpoints") or meta.get("qpoints")
+    if isinstance(qpts, (list, tuple)) and len(qpts) >= 3:
+        try:
+            if min(int(x) for x in qpts[:3]) >= 3:
+                ph = ev.phonon
+                if (
+                    ph is not None
+                    and ph.dynamically_stable
+                    and not ph.has_imaginary_modes
+                ):
+                    return True
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def needs_denser_q_before_epw(ev: CandidateEvaluation) -> bool:
+    """Known-stable binary that looks soft on a coarse mesh, unconfirmed."""
+    row = classify_soft_mode(ev)
+    if not row["is_known_stable_binary"]:
+        return False
+    if row["soft_mode_class"] == "stable":
+        return False
+    if denser_q_confirmed(ev):
+        return False
+    return row["soft_mode_class"] in SOFT_CLASSES_NEED_DENSER_Q
 
 
 def _frequency_list(ph: PhononResult) -> list[float]:
@@ -375,7 +439,7 @@ def classify_soft_mode(
     formula = c.formula
     ph = ev.phonon
     binary = is_binary_nitride(formula)
-    known = is_known_stable_binary(formula)
+    known = is_known_stable_binary(formula, c.metadata)
     reasons: list[str] = []
 
     if ph is None:
@@ -661,6 +725,11 @@ def render_soft_mode_markdown(report: dict[str, Any]) -> str:
     known = report.get("known_stable_binaries_soft") or []
     if known:
         lines.append(f"- known-stable binaries also soft: {', '.join(known)}")
+    if report.get("auto_pilot_yaml"):
+        lines.append(
+            f"- auto denser-q pilot: `{report['auto_pilot_yaml']}` "
+            f"(mode={report.get('auto_pilot_mode')}, do_epw=false)"
+        )
     if report.get("finite_q_softest"):
         lines.append(
             "- softness locus: **softest q is finite-q; Γ only mildly "
@@ -776,7 +845,81 @@ def write_soft_mode_report(
     json_path = store.save_json(REPORT_JSON, report)
     md_path = Path(store_dir) / REPORT_MD
     md_path.write_text(render_soft_mode_markdown(report), encoding="utf-8")
+    _maybe_auto_emit_pilot(report, evaluations, store_dir)
+    if report.get("auto_pilot_yaml"):
+        # Re-save JSON so the auto-pilot path is durable.
+        json_path = store.save_json(REPORT_JSON, report)
+        md_path.write_text(render_soft_mode_markdown(report), encoding="utf-8")
     return report, json_path, md_path
+
+
+def _maybe_auto_emit_pilot(
+    report: dict[str, Any],
+    evaluations: list[CandidateEvaluation],
+    store_dir: str | Path,
+) -> None:
+    """Write a denser-q phonon-only YAML on critical none-stable signals.
+
+    Never enables EPW. Failure is recorded on the report and does not
+    raise — the report itself remains the operator-facing artefact.
+    """
+    signal = report.get("campaign_signal")
+    if signal not in AUTO_PILOT_SIGNALS:
+        return
+    if report.get("skipped"):
+        return
+    store_path = Path(store_dir)
+    yaml_path = store_path / AUTO_PILOT_YAML
+    try:
+        from siscforge.pilot import (
+            build_pilot_campaign,
+            load_source_campaign,
+            write_pilot_yaml,
+        )
+
+        source_campaign = load_source_campaign(store_path)
+        mode = "binaries"
+        try:
+            cfg, _ = build_pilot_campaign(
+                evaluations,
+                name=f"{(report.get('campaign') or 'phonon_map')}_pilot_q3",
+                source_store=str(store_path.resolve()),
+                source_campaign=source_campaign,
+                max_jobs=4,
+                mode=mode,
+                qpoints=[3, 3, 3],
+                output_dir=str(store_path.resolve()) + "_pilot_q3",
+            )
+        except ValueError:
+            mode = "least_soft"
+            cfg, _ = build_pilot_campaign(
+                evaluations,
+                name=f"{(report.get('campaign') or 'phonon_map')}_pilot_q3",
+                source_store=str(store_path.resolve()),
+                source_campaign=source_campaign,
+                max_jobs=4,
+                mode=mode,
+                qpoints=[3, 3, 3],
+                output_dir=str(store_path.resolve()) + "_pilot_q3",
+            )
+        write_pilot_yaml(cfg, yaml_path)
+        extras = cfg.extras.get("pilot") if cfg.extras else {}
+        if extras is None:
+            extras = {}
+        report["auto_pilot_yaml"] = str(yaml_path)
+        report["auto_pilot_mode"] = mode
+        report["auto_pilot_do_epw"] = False
+        report["auto_pilot_formulas"] = list(extras.get("formulas") or [])
+        actions = list(report.get("next_actions") or [])
+        actions.insert(
+            0,
+            f"Auto-emitted denser-q phonon-only pilot: {yaml_path} "
+            f"(mode={mode}, do_epw=false). Review then "
+            f"`siscforge run --calculator qe {yaml_path}`.",
+        )
+        report["next_actions"] = actions
+    except Exception as exc:  # noqa: BLE001 — report write must not fail
+        report["auto_pilot_error"] = str(exc)
 
 
 def ensure_soft_mode_report(

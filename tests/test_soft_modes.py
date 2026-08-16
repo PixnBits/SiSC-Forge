@@ -12,12 +12,15 @@ from siscforge.models.candidate import CandidateEvaluation
 from siscforge.models.results import PhononResult, SiFeasibilityScore
 from siscforge.shortlist import select_shortlist_evaluations
 from siscforge.soft_modes import (
+    AUTO_PILOT_YAML,
+    KNOWN_STABLE_RS_NITRIDES,
     REPORT_JSON,
     REPORT_MD,
     SIGNAL_NONE_STABLE_BINARIES_SOFT,
     classify_soft_mode,
     ensure_soft_mode_report,
     is_binary_nitride,
+    is_known_stable_binary,
     write_soft_mode_report,
 )
 from siscforge.store import EvaluationStore
@@ -229,6 +232,14 @@ def test_report_written_for_finished_phonon_store(tmp_path: Path) -> None:
     md = md_path.read_text(encoding="utf-8")
     assert "siscforge pilot" in md
     assert "locus" in md.lower() or "Γ ω" in md
+    # Critical signal auto-emits a denser-q phonon-only pilot.
+    pilot = store.root / AUTO_PILOT_YAML
+    assert pilot.is_file(), report.get("auto_pilot_error")
+    assert report.get("auto_pilot_do_epw") is False
+    text = pilot.read_text(encoding="utf-8")
+    assert "do_epw" in text
+    assert "false" in text.lower()
+    assert "do_epw is false" in text.lower() or "do_epw: false" in text.lower()
 
 
 def test_report_surfaces_finite_q_locus(tmp_path: Path) -> None:
@@ -346,3 +357,32 @@ def test_ensure_does_not_overwrite_existing(tmp_path: Path) -> None:
     path.write_text(text.replace('"version": 1', '"version": 1'), encoding="utf-8")
     again, _, _ = ensure_soft_mode_report(store.root)
     assert again["n_evaluations"] == first["n_evaluations"]
+
+
+def test_vn_is_known_stable_and_metadata_override() -> None:
+    """#45: conservative literature expansion + documented metadata escape hatch."""
+    assert "VN" in KNOWN_STABLE_RS_NITRIDES
+    assert is_known_stable_binary("VN")
+    assert not is_known_stable_binary("CrN")
+    assert is_known_stable_binary("CrN", {"known_stable_binary": True})
+
+
+def test_acquisition_record_includes_soft_mode_class() -> None:
+    from siscforge.active_learning import prioritize_candidates
+    from siscforge.models.config import ActiveLearningConfig
+
+    ev = _ev(metal="Nb", formula="NbN", stable=False, min_freq=-80.0)
+    plan = prioritize_candidates(
+        [ev.candidate],
+        config=ActiveLearningConfig(enabled=True, max_epw_jobs=1),
+        evaluations={ev.candidate.candidate_id: ev},
+    )
+    rec = plan.ranked[0]
+    assert rec.soft_mode_class in {
+        "likely_mesh_artefact",
+        "genuinely_soft",
+        "optical_soft",
+    }
+    assert rec.block_expensive_epw is True
+    assert rec.selected_for_expensive is False
+    assert "denser-q" in rec.notes.lower() or "blocked" in rec.notes.lower()

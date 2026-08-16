@@ -32,6 +32,7 @@ from siscforge.models.config import (
     QualityConfig,
     RunConfig,
 )
+from siscforge.soft_modes import classify_soft_mode, needs_denser_q_before_epw
 from siscforge.store import EvaluationStore
 
 SelectMode = Literal[
@@ -131,10 +132,12 @@ def filter_stable_evaluations(
         if require_ok and not _has_ok_status(ev):
             continue
         if mode == "stable_only":
-            if is_dynamically_stable(ev):
+            if is_dynamically_stable(ev) and not needs_denser_q_before_epw(ev):
                 out.append(ev)
         elif mode == "stable_or_soft":
-            if is_stable_or_soft(ev, soft_min_cm1=soft_min_cm1):
+            if is_stable_or_soft(ev, soft_min_cm1=soft_min_cm1) and not needs_denser_q_before_epw(
+                ev
+            ):
                 out.append(ev)
         else:
             raise ValueError(f"Unknown stability filter mode: {mode!r}")
@@ -288,6 +291,9 @@ def evaluation_to_spec(ev: CandidateEvaluation) -> CandidateSpec:
         meta["source_dynamically_stable"] = ev.phonon.dynamically_stable
         meta["source_min_frequency_cm1"] = ev.phonon.min_frequency_cm1
         meta["source_has_imaginary_modes"] = ev.phonon.has_imaginary_modes
+        row = classify_soft_mode(ev)
+        meta["soft_mode_class"] = row["soft_mode_class"]
+        meta["known_stable_binary"] = row["is_known_stable_binary"]
     if ev.result_quality is not None:
         meta["source_result_quality"] = ev.result_quality
     return CandidateSpec(
