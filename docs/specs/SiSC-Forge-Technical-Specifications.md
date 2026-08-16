@@ -367,6 +367,10 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
 - **Result-quality / trust layer (must):**
   - Flags such as imaginary modes, high λ, screening Wannier, EPW failed, etc.
   - Ranking penalties so pathological screening EPW does not dominate.
+  - **Hard-zero (#44):** `wannier_random_proj` or `coarse_grids` **and**
+    `high_lambda` / `extreme_lambda` force the performance contribution to 0
+    (flag `screening_high_lambda`). Soft multiplicative penalties remain for
+    milder cases. Same rule refuses conventional-pool promotion.
   - Export/docs language: do not cite Tc until trust flags improve.
 - **Phonon-aware ranking:**
   - `rank --stable-first` prefers dynamically stable phonons.

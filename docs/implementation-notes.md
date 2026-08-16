@@ -993,6 +993,7 @@ Trust layer only — **not** denser-grid refinement or production Wannier.
 | `imaginary_modes_unreliable` | true | imag modes → `unreliable` |
 | `suspect_performance_penalty` | 0.45 | × composite |
 | `unreliable_performance_penalty` | 0.15 | × composite after zeroing Tc term |
+| `hard_zero_screening_high_lambda` | true | `#44` zero the performance term when random-Wannier / coarse grids co-occur with high/extreme λ (`screening_high_lambda` flag). Soft multiply remains for milder cases. Same rule refuses conventional promotion. |
 
 Raw λ/Tc always retained. Next step for citation-quality: refine-from-store
 production-tier campaign (denser grids, tuned Wannier).

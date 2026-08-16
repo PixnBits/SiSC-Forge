@@ -3,6 +3,10 @@
 This is a **trust layer**, not a substitute for denser-grid production
 refinement. Pathological screening λ (e.g. 6–13 vs literature ~1–1.5 for NbN)
 must not silently dominate ranking.
+
+Hard rule (#44): when ``wannier_random_proj`` or ``coarse_grids`` co-occurs
+with ``high_lambda`` / ``extreme_lambda``, the performance contribution is
+forced to 0 (not merely multiplied). Soft penalties remain for milder cases.
 """
 
 from __future__ import annotations
@@ -37,6 +41,9 @@ FLAG_EPW_FAILED = "epw_failed"
 FLAG_SURROGATE_ONLY = "surrogate_only"
 FLAG_DMFT_PAIRING = "dmft_pairing"
 FLAG_DMFT_PAIRING_MOCK = "dmft_pairing_mock"
+# Random-Wannier / coarse-grid screening λ that must not contribute to
+# composite performance (issue #44). Distinct from the soft high_lambda flag.
+FLAG_SCREENING_HIGH_LAMBDA = "screening_high_lambda"
 
 # Sort key: higher = more trustworthy (used as secondary sort key)
 _QUALITY_RANK: dict[str, int] = {
@@ -63,6 +70,28 @@ class ResultQualityAssessment(BaseModel):
 
 def quality_tier_rank(tier: str | None) -> int:
     return _QUALITY_RANK.get(tier or "unknown", 0)
+
+
+def screening_high_lambda_hard_zero(
+    flags: list[str] | set[str] | tuple[str, ...],
+    *,
+    config: QualityConfig | None = None,
+) -> bool:
+    """True when random-Wannier or coarse grids co-occur with high/extreme λ.
+
+    Hard trust-layer rule (#44): the performance axis must be zeroed, not
+    merely multiplied. Milder cases (high λ without screening mesh/proj,
+    or random proj without high λ) keep the existing soft penalties.
+    """
+    cfg = config or QualityConfig()
+    if not bool(getattr(cfg, "hard_zero_screening_high_lambda", True)):
+        return False
+    flagset = set(flags)
+    mesh_or_proj = (
+        FLAG_WANNIER_RANDOM in flagset or FLAG_COARSE_GRIDS in flagset
+    )
+    high_lam = FLAG_HIGH_LAMBDA in flagset or FLAG_EXTREME_LAMBDA in flagset
+    return mesh_or_proj and high_lam
 
 
 def assess_result_quality(
@@ -189,6 +218,16 @@ def assess_result_quality(
         if f not in seen:
             seen.add(f)
             uniq_flags.append(f)
+
+    # Hard-zero provenance: random-Wannier / coarse grids + high λ (#44)
+    if screening_high_lambda_hard_zero(uniq_flags, config=config):
+        if FLAG_SCREENING_HIGH_LAMBDA not in seen:
+            uniq_flags.append(FLAG_SCREENING_HIGH_LAMBDA)
+            seen.add(FLAG_SCREENING_HIGH_LAMBDA)
+        notes.append(
+            "hard-zero performance: random-Wannier or coarse grids "
+            "co-occur with high/extreme λ (screening Tc is not a ranking axis)"
+        )
 
     # --- Assign tier ---
     tier: ResultQualityTier = "unknown"

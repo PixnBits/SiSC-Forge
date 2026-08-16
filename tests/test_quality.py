@@ -10,13 +10,23 @@ from siscforge.models.results import (
     SiFeasibilityScore,
 )
 from siscforge.quality import (
+    FLAG_COARSE_GRIDS,
     FLAG_EXTREME_LAMBDA,
     FLAG_HIGH_LAMBDA,
     FLAG_IMAGINARY_MODES,
     FLAG_QUALITY_TAG_MOCK,
+    FLAG_SCREENING_HIGH_LAMBDA,
+    FLAG_WANNIER_RANDOM,
+    apply_quality_assessment,
     assess_result_quality,
+    screening_high_lambda_hard_zero,
 )
-from siscforge.ranking import compute_composite_score, rank_evaluations
+from siscforge.ranking import (
+    compute_composite_breakdown,
+    compute_composite_score,
+    pareto_objectives,
+    rank_evaluations,
+)
 
 
 def _cand(formula: str = "NbN") -> StructureCandidate:
@@ -180,3 +190,60 @@ def test_lambda_six_unreliable() -> None:
     assert ranked[0].result_quality == "unreliable"
     assert ranked[0].electron_phonon is not None
     assert ranked[0].electron_phonon.result_quality == "unreliable"
+
+
+def test_high_lambda_random_proj_hard_zero_flag() -> None:
+    """#44: random-Wannier + high λ is flagged for hard-zero performance."""
+    a = assess_result_quality(_ev(lam=4.0, tc=40.0, si=95.0))
+    assert FLAG_HIGH_LAMBDA in a.quality_flags
+    assert FLAG_WANNIER_RANDOM in a.quality_flags
+    assert FLAG_COARSE_GRIDS in a.quality_flags
+    assert FLAG_SCREENING_HIGH_LAMBDA in a.quality_flags
+    assert screening_high_lambda_hard_zero(a.quality_flags)
+    assert "hard-zero" in a.quality_notes.lower()
+
+
+def test_high_lambda_random_proj_cannot_dominate_high_si() -> None:
+    """#44: ceiling-saturated screening λ + high Si cannot beat a clean row."""
+    clean = _ev(formula="NbN", lam=1.1, tc=16.0, si=50.0, stable=True)
+    # Pairing/EPW ceiling maps extreme screening λ onto 40 K; Si is excellent.
+    inflated = _ev(
+        formula="Nb0.5Ti0.5N",
+        lam=4.0,
+        tc=40.0,
+        si=95.0,
+        stable=True,
+    )
+    ranked = rank_evaluations([inflated, clean], RankingConfig())
+    assert ranked[0].candidate.formula == "NbN"
+    assert ranked[1].candidate.formula == "Nb0.5Ti0.5N"
+    assert FLAG_SCREENING_HIGH_LAMBDA in ranked[1].quality_flags
+    bd = ranked[1].composite_breakdown
+    assert bd is not None
+    assert bd["performance_norm"] == 0.0
+    assert bd["performance_hard_zeroed"] is True
+    assert bd["performance_hard_zero_reason"] == FLAG_SCREENING_HIGH_LAMBDA
+    # Soft-multiply of a 40 K / 95 Si blend would still beat clean 16 K / 50 Si.
+    inflated_q = apply_quality_assessment(inflated)
+    bd_infl = compute_composite_breakdown(inflated_q, RankingConfig())
+    clean_q = apply_quality_assessment(clean)
+    bd_clean = compute_composite_breakdown(clean_q, RankingConfig())
+    assert bd_infl["composite"] < bd_clean["composite"]
+    # Excluded from Pareto so raw 40 K cannot dominate the front.
+    assert pareto_objectives(inflated_q, RankingConfig()) is None
+
+
+def test_hard_zero_disabled_keeps_soft_penalty() -> None:
+    """QualityConfig knob restores multiply-only behaviour."""
+    cfg = RankingConfig(
+        quality=QualityConfig(hard_zero_screening_high_lambda=False)
+    )
+    ev = apply_quality_assessment(
+        _ev(lam=4.0, tc=20.0, si=50.0),
+        cfg.quality,
+    )
+    assert FLAG_SCREENING_HIGH_LAMBDA not in ev.quality_flags
+    assert not screening_high_lambda_hard_zero(ev.quality_flags, config=cfg.quality)
+    bd = compute_composite_breakdown(ev, cfg)
+    assert bd["performance_hard_zeroed"] is False
+    assert bd["performance_norm"] > 0.0
