@@ -1,5 +1,23 @@
 # Implementation Notes
 
+## Slice 29.3 (2026-08-16) — Walltime: DFPT q-mesh + dense-q tier (#67)
+
+Operator UX only. Phonon-only campaigns were reading unused `epw.nqc`
+(default 2³) and locking the estimate tier to `quality_tag=screening`, so
+a 4³ / k=12³ ZrN DFPT printed **~7 min–1.1 h** and then ran **~6 h**.
+
+- `q-mesh=` uses `dft.qpoints` when EPW is off; `epw.nqc` only when EPW is on.
+- Dense q (3³+) upgrades the estimate tier even if `quality_tag` is still
+  screening, so 4³ is priced as `workstation_dense` (ref_q=64) not screening
+  (ref_q=8).
+- Mild k-mesh factor vs 4³ so k=12³ is not estimated like k=4³.
+- Estimates remain guidance; dense-k/q “screening” can still be multi-hour
+  on a workstation.
+
+Tests: `tests/test_walltime.py`. Files: `src/siscforge/walltime.py`.
+
+---
+
 ## Slice 29.2 (2026-08-15) — ZrN mesh ladder: k=8³ shrinks finite-q softness
 
 Phonon-first nitride diagnosis. Known-stable rock-salt binaries stay
@@ -904,9 +922,13 @@ machine load and convergence dominate. No physics/ranking changes.
 | Tests | `tests/test_walltime.py` (no real QE) |
 
 ### Estimation inputs
-- quality_tag / inferred tier (`screening` | `workstation_dense` | `production`)
+- quality_tag / inferred tier (`screening` | `workstation_dense` | `production`);
+  dense q-mesh (3³+) upgrades the tier even when `quality_tag` is still screening
 - n_atoms (from CIF / metadata; default 8 for ternary shortlists)
-- nproc, q-mesh product (`epw.nqc` or `qpoints`), EPW fine grids (`nkf`)
+- nproc, **DFPT** q-mesh product (`dft.qpoints` when EPW is off; `epw.nqc` when
+  EPW is on — never the unused EPW default on a phonon-only path)
+- SCF k-mesh product (sub-linear vs 4³)
+- EPW fine grids (`nkf`) when EPW is enabled
 - number of expensive candidates (sequential desktop total)
 
 ### Example startup (screening shortlist, 6 candidates, nproc=8)
