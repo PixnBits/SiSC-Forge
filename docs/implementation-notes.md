@@ -1,5 +1,63 @@
 # Implementation Notes
 
+## Slice 29.2 (2026-08-15) — ZrN mesh ladder: k=8³ shrinks finite-q softness
+
+Phonon-first nitride diagnosis. Known-stable rock-salt binaries stay
+imaginary across successive densifications. EPW remains frozen.
+
+### Numbers (ZrN ε=0, Fm-3m primitive, a_prim≈3.248 Å → a_cub≈4.59 Å)
+
+| Probe | q | k | ecutwfc | min ω (cm⁻¹) | Γ min | finite-q min | n_q imag / irr |
+|-------|:-:|:-:|--------:|-------------:|------:|-------------:|----------------|
+| Coarse map | 2³ | 4³ | 50 | ~−80 to −90 | — | — | — |
+| Pilot | 3³ | 4³ | 50 | −210.3 | — | — | — |
+| Diag q4 | 4³ | 4³ | 50 | **−148.655** | −33.8 | −148.7 (dyn14) | 10 / 24 |
+| K-mesh diag | 4³ | 8³ | 60 | **−72.064** | −29.7 | −72.1 (dyn18) | 3 / 24 |
+
+k=8³ / ecut=60 vs k=4³ / ecut=50 on the **same** q=4³: finite-q softness
+**shrunk** (−148.7 → −72.1) and **moved**. q4's softest points (dyn14/13/7)
+are now fully real; the leftover imaginary branches are dyn18 (−72.1) and
+dyn20 (−33.5) plus Γ acoustic noise. That relocation is metallic
+electronic-sampling noise, not a fixed lattice instability.
+
+Γ stays ~−30 cm⁻¹ (ordinary acoustic numerical noise). The parser / ph.x
+do **not** apply ASR; ASR would not move finite-q −72.
+
+### Pseudos (resolved)
+
+SSSP PBE efficiency pair under `/usr/share/espresso/pseudo`:
+
+- `Zr_pbe_v1.uspp.F.UPF` — GBRV USPP, 12e (4s4p4d5s), PBE
+- `N.pbe-n-radius_5.UPF` — Dal Corso USPP, suggested ecutwfc 39 Ry
+
+Not a known-soft pair for phonons. Optical Γ ~469 cm⁻¹ is in the PBE
+ballpark. Mixed-set / precision-PAW swap is a later lever, not the first.
+
+### Tooling (this slice)
+
+- `parse_qpoint_spectra` groups `Diagonalizing` blocks; `raw.qpoints` on
+  new parses. `asr_applied: false`. Flat `n_modes` / min ω unchanged.
+- Soft-mode report: `softness_locus`, Γ vs finite-q min, campaign line
+  “softest q is finite-q; Γ only mildly imaginary”. Class
+  `likely_mesh_artefact` unchanged (suspect, not proof).
+- Next-action hint: densify k / ecut or audit UPF when locus is finite-q;
+  do not blindly re-pilot q=3³.
+- Example: `examples/zrn_k12_diag.yaml`. Checklist:
+  `docs/examples/zrn_nitride_phonon_convergence.md`.
+
+### Next experiment (single cheapest discriminator)
+
+**k=12³, ecutwfc=60, q=4³, ZrN ε=0, Docker QE 7.3.1.** One lever (k).
+If min ω stays ~−70 at the same q → k is no longer dominant (try UPF /
+ecut=80). If the leftover dyn18/dyn20 branches heal toward Γ-noise,
+electronic sampling was the cause. Do not launch EPW. Do not
+`--force-rerun` finished dyn sets.
+
+**Out of scope:** composition expansion, EPW, refine, AL of soft cells,
+host Ubuntu 6.7 `ph.x` workarounds, stability or Tc claims.
+
+---
+
 ## Slice 29.1 (2026-08-14) — Pilot recovery: CRASH-only d_matrix + Provenance
 
 **Provenance (landed):** phonon-only `QECalculator.run()` raised

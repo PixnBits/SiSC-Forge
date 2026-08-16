@@ -399,6 +399,49 @@ def parse_frequencies_from_text(text: str) -> list[float]:
     return freqs
 
 
+_DIAG_SPLIT = re.compile(r"Diagonalizing the dynamical matrix", re.IGNORECASE)
+_Q_VEC = re.compile(
+    r"q\s*=\s*\(\s*([-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?)\s+"
+    r"([-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?)\s+"
+    r"([-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?)\s*\)",
+    re.IGNORECASE,
+)
+
+
+def parse_qpoint_spectra(text: str) -> list[dict[str, Any]]:
+    """Group QE frequencies by q after each ``Diagonalizing`` block.
+
+    Deduplicates identical q (``ph.out`` + ``*.dyn`` dumps are often
+    concatenated). Does **not** apply ASR; frequencies are as printed.
+    """
+    if not text:
+        return []
+    found: list[dict[str, Any]] = []
+    seen: set[tuple[float, float, float]] = set()
+    parts = _DIAG_SPLIT.split(text)
+    for part in parts[1:]:
+        qm = _Q_VEC.search(part)
+        if not qm:
+            continue
+        q = (float(qm.group(1)), float(qm.group(2)), float(qm.group(3)))
+        key = (round(q[0], 6), round(q[1], 6), round(q[2], 6))
+        if key in seen:
+            continue
+        freqs = parse_frequencies_from_text(part)
+        if not freqs:
+            continue
+        seen.add(key)
+        found.append(
+            {
+                "q": [q[0], q[1], q[2]],
+                "is_gamma": all(abs(x) < 1e-6 for x in q),
+                "frequencies_cm1": freqs,
+                "min_frequency_cm1": min(freqs),
+            }
+        )
+    return found
+
+
 def parse_ph_output(
     path_or_text: Path | str,
     *,
@@ -433,6 +476,11 @@ def parse_ph_output(
         "n_imaginary": summary["n_imaginary"],
         "imag_threshold_cm1": imag_threshold_cm1,
     }
+    qpoints = parse_qpoint_spectra(text)
+    if qpoints:
+        raw["qpoints"] = qpoints
+        raw["n_qpoints"] = len(qpoints)
+        raw["asr_applied"] = False
     if extra_raw:
         raw.update(extra_raw)
 

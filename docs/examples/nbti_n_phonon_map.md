@@ -233,3 +233,4 @@ DFPT (including the ~1–3 min binary successes).
 - [nbti_n_al_broad.md](nbti_n_al_broad.md) — broader AL dry-run (EPW-oriented)
 - Example YAML: `examples/nbti_n_phonon_map.yaml`
 - Specs §2.3c; PRD US10; implementation-notes Slice 29
+- [zrn_nitride_phonon_convergence.md](zrn_nitride_phonon_convergence.md) — Γ vs finite-q / k-ladder before another q-pilot

@@ -48,6 +48,10 @@ KNOWN_STABLE_RS_NITRIDES = frozenset({"NbN", "TiN", "ZrN", "HfN"})
 
 # Same threshold as the DFPT parser: ignore tiny numeric acoustic noise.
 _IMAG_THRESHOLD_CM1 = 5.0
+# |Γ| below this is ordinary acoustic numerical noise, not the campaign story.
+_GAMMA_MILD_CM1 = 50.0
+# Finite-q is the campaign min when it sits this far below Γ.
+_LOCUS_GAP_CM1 = 15.0
 
 # Campaign-level signals (not physical verdicts).
 SIGNAL_NONE_STABLE = "none_stable"
@@ -73,6 +77,10 @@ class SoftModeRow(TypedDict):
     asr_signal: str | None
     is_binary_nitride: bool
     is_known_stable_binary: bool
+    softness_locus: str
+    gamma_min_frequency_cm1: float | None
+    finite_q_min_frequency_cm1: float | None
+    n_q_imaginary: int | None
 
 
 def reduced_formula(formula: str) -> str:
@@ -186,6 +194,177 @@ def _acoustic_vs_optical(
     return "none_below_threshold", asr
 
 
+def _raw_qpoints(ph: PhononResult) -> list[dict[str, Any]]:
+    raw = ph.raw or {}
+    qps = raw.get("qpoints")
+    if not isinstance(qps, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for qp in qps:
+        if not isinstance(qp, dict):
+            continue
+        freqs = qp.get("frequencies_cm1")
+        if not isinstance(freqs, list) or not freqs:
+            continue
+        nums: list[float] = []
+        ok = True
+        for item in freqs:
+            if isinstance(item, (int, float)) and not isinstance(item, bool):
+                nums.append(float(item))
+            else:
+                ok = False
+                break
+        if not ok or not nums:
+            continue
+        qvec = qp.get("q")
+        is_gamma = qp.get("is_gamma")
+        if is_gamma is None and isinstance(qvec, (list, tuple)) and len(qvec) == 3:
+            try:
+                is_gamma = all(abs(float(x)) < 1e-6 for x in qvec)
+            except (TypeError, ValueError):
+                is_gamma = False
+        out.append(
+            {
+                "q": list(qvec) if isinstance(qvec, (list, tuple)) else None,
+                "is_gamma": bool(is_gamma),
+                "frequencies_cm1": nums,
+                "min_frequency_cm1": min(nums),
+            }
+        )
+    return out
+
+
+def _chunked_q_spectra(
+    freqs: list[float],
+    *,
+    n_atoms: int | None,
+) -> list[dict[str, Any]]:
+    """Treat a flat ldisp dump as successive 3 N_at q-blocks.
+
+    QE prints Γ first for ``ldisp=.true.``. The first block is tagged
+    ``is_gamma`` as an assumption, not a parsed q-vector.
+    """
+    if not freqs or n_atoms is None or int(n_atoms) <= 0:
+        return []
+    n = 3 * int(n_atoms)
+    if n < 3 or len(freqs) < 2 * n or len(freqs) % n != 0:
+        return []
+    chunks: list[dict[str, Any]] = []
+    for i in range(0, len(freqs), n):
+        block = freqs[i : i + n]
+        chunks.append(
+            {
+                "q": None,
+                "is_gamma": i == 0,
+                "frequencies_cm1": list(block),
+                "min_frequency_cm1": min(block),
+            }
+        )
+    return chunks
+
+
+def _spectra_for_locus(
+    ph: PhononResult,
+    freqs: list[float],
+    *,
+    n_atoms: int | None,
+) -> list[dict[str, Any]]:
+    parsed = _raw_qpoints(ph)
+    if len(parsed) >= 2:
+        return parsed
+    return _chunked_q_spectra(freqs, n_atoms=n_atoms)
+
+
+def _classify_acoustic_over_q(
+    qpoints: list[dict[str, Any]],
+    *,
+    n_atoms: int | None,
+    imag_threshold_cm1: float,
+) -> tuple[str, str | None]:
+    """Resolve acoustic/optical when each q is a 3 N_at list."""
+    if not qpoints:
+        return "undetermined", None
+    any_opt = False
+    any_ac = False
+    any_ok = False
+    asr: str | None = None
+    for qp in qpoints:
+        freqs = qp.get("frequencies_cm1") or []
+        label, this_asr = _acoustic_vs_optical(
+            freqs,
+            n_atoms=n_atoms,
+            n_modes=len(freqs) if freqs else None,
+            imag_threshold_cm1=imag_threshold_cm1,
+        )
+        if label == "undetermined":
+            continue
+        any_ok = True
+        if qp.get("is_gamma") and this_asr:
+            asr = this_asr
+        if label == "optical_imaginary":
+            any_opt = True
+        elif label == "acoustic_only_imaginary":
+            any_ac = True
+    if not any_ok:
+        return "undetermined", asr
+    if any_opt:
+        return "optical_imaginary", asr
+    if any_ac:
+        return "acoustic_only_imaginary", asr
+    return "none_below_threshold", asr
+
+
+def _softness_locus(
+    qpoints: list[dict[str, Any]],
+    *,
+    imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
+) -> tuple[str, float | None, float | None, int | None]:
+    """Return (locus, gamma_min, finite_q_min, n_q_imaginary)."""
+    if len(qpoints) < 2:
+        return "undetermined", None, None, None
+    thr = -abs(float(imag_threshold_cm1))
+    gamma_mins = [
+        float(qp["min_frequency_cm1"])
+        for qp in qpoints
+        if qp.get("is_gamma") and qp.get("min_frequency_cm1") is not None
+    ]
+    finite_mins = [
+        float(qp["min_frequency_cm1"])
+        for qp in qpoints
+        if not qp.get("is_gamma") and qp.get("min_frequency_cm1") is not None
+    ]
+    gamma_min = min(gamma_mins) if gamma_mins else None
+    finite_min = min(finite_mins) if finite_mins else None
+    n_imag_q = sum(
+        1
+        for qp in qpoints
+        if qp.get("min_frequency_cm1") is not None
+        and float(qp["min_frequency_cm1"]) < thr
+    )
+    gamma_imag = gamma_min is not None and gamma_min < thr
+    finite_imag = finite_min is not None and finite_min < thr
+    if not gamma_imag and not finite_imag:
+        return "none", gamma_min, finite_min, n_imag_q
+    if finite_imag and finite_min is not None:
+        gamma_mild = gamma_min is None or gamma_min > -_GAMMA_MILD_CM1
+        finite_softer = gamma_min is None or finite_min < gamma_min - _LOCUS_GAP_CM1
+        if (not gamma_imag) or gamma_mild or finite_softer:
+            return "finite_q", gamma_min, finite_min, n_imag_q
+        return "both", gamma_min, finite_min, n_imag_q
+    if gamma_imag:
+        return "gamma", gamma_min, finite_min, n_imag_q
+    return "undetermined", gamma_min, finite_min, n_imag_q
+
+
+def _blank_locus() -> dict[str, Any]:
+    return {
+        "softness_locus": "undetermined",
+        "gamma_min_frequency_cm1": None,
+        "finite_q_min_frequency_cm1": None,
+        "n_q_imaginary": None,
+    }
+
+
 def classify_soft_mode(
     ev: CandidateEvaluation,
     *,
@@ -216,17 +395,36 @@ def classify_soft_mode(
             asr_signal=None,
             is_binary_nitride=binary,
             is_known_stable_binary=known,
+            **_blank_locus(),
         )
 
     status = (ph.status or "unknown").lower()
     freqs = _frequency_list(ph)
+    n_atoms = _n_atoms(ev)
     n_modes = ph.n_modes if ph.n_modes is not None else (len(freqs) or None)
-    ac_op, asr = _acoustic_vs_optical(
-        freqs,
-        n_atoms=_n_atoms(ev),
-        n_modes=n_modes,
-        imag_threshold_cm1=imag_threshold_cm1,
+    qpoints = _spectra_for_locus(ph, freqs, n_atoms=n_atoms)
+    if qpoints:
+        ac_op, asr = _classify_acoustic_over_q(
+            qpoints,
+            n_atoms=n_atoms,
+            imag_threshold_cm1=imag_threshold_cm1,
+        )
+    else:
+        ac_op, asr = _acoustic_vs_optical(
+            freqs,
+            n_atoms=n_atoms,
+            n_modes=n_modes,
+            imag_threshold_cm1=imag_threshold_cm1,
+        )
+    locus, gamma_min, finite_min, n_q_imag = _softness_locus(
+        qpoints, imag_threshold_cm1=imag_threshold_cm1
     )
+    locus_fields = {
+        "softness_locus": locus,
+        "gamma_min_frequency_cm1": gamma_min,
+        "finite_q_min_frequency_cm1": finite_min,
+        "n_q_imaginary": n_q_imag,
+    }
 
     setup = status not in {"ok", "mock"} or (
         not freqs
@@ -252,6 +450,7 @@ def classify_soft_mode(
             asr_signal=asr,
             is_binary_nitride=binary,
             is_known_stable_binary=known,
+            **locus_fields,
         )
 
     if ph.dynamically_stable and not ph.has_imaginary_modes:
@@ -273,6 +472,7 @@ def classify_soft_mode(
                 asr_signal=asr,
                 is_binary_nitride=binary,
                 is_known_stable_binary=known,
+                **locus_fields,
             )
 
     # Imaginary / not dynamically stable from here.
@@ -297,6 +497,10 @@ def classify_soft_mode(
 
     if asr:
         reasons.append(asr)
+    if locus == "finite_q":
+        reasons.append("softest_q_is_finite_q")
+        if gamma_min is not None and gamma_min > -_GAMMA_MILD_CM1:
+            reasons.append("gamma_only_mildly_imaginary")
 
     return SoftModeRow(
         candidate_id=c.candidate_id,
@@ -314,6 +518,7 @@ def classify_soft_mode(
         asr_signal=asr,
         is_binary_nitride=binary,
         is_known_stable_binary=known,
+        **locus_fields,
     )
 
 
@@ -335,7 +540,12 @@ def _campaign_signal(rows: list[SoftModeRow], *, n_with_phonon: int) -> str:
     return SIGNAL_NONE_STABLE
 
 
-def _next_actions(store_dir: str | Path, signal: str) -> list[str]:
+def _next_actions(
+    store_dir: str | Path,
+    signal: str,
+    *,
+    finite_q_softest: bool = False,
+) -> list[str]:
     store = str(store_dir)
     if signal == SIGNAL_NO_PHONON:
         return [
@@ -348,16 +558,27 @@ def _next_actions(store_dir: str | Path, signal: str) -> list[str]:
             "Launch EPW only on dynamically_stable survivors. "
             "Coarse q remains a gate, not production proof.",
         ]
-    return [
+    actions = [
         "Do not shortlist imaginary-mode cells for EPW "
         "(stable_only correctly stays empty).",
         f"Read {REPORT_JSON} / {REPORT_MD} in the campaign store.",
-        f"siscforge pilot {store} -o <pilot.yaml> --mode binaries --qpoints 3,3,3",
-        f"siscforge pilot {store} -o <pilot.yaml> --mode least_soft -n 4 "
-        "--qpoints 3,3,3",
-        "The denser-q pilot is still a gate (do_epw stays false). "
-        "The human decides whether to expand or abandon the family.",
     ]
+    if finite_q_softest:
+        actions.append(
+            "Softest mode is at finite q (Γ only mildly imaginary). "
+            "Densify SCF k / ecut on the same q-grid or audit the UPF; "
+            "another coarse-q pilot will not discriminate this pattern."
+        )
+    actions.extend(
+        [
+            f"siscforge pilot {store} -o <pilot.yaml> --mode binaries --qpoints 3,3,3",
+            f"siscforge pilot {store} -o <pilot.yaml> --mode least_soft -n 4 "
+            "--qpoints 3,3,3",
+            "The denser-q pilot is still a gate (do_epw stays false). "
+            "The human decides whether to expand or abandon the family.",
+        ]
+    )
+    return actions
 
 
 def build_soft_mode_report(
@@ -379,6 +600,7 @@ def build_soft_mode_report(
         }
     )
     store = source_store or ""
+    finite_q_softest = any(r.get("softness_locus") == "finite_q" for r in rows)
     return {
         "version": REPORT_VERSION,
         "schema": REPORT_SCHEMA,
@@ -400,7 +622,10 @@ def build_soft_mode_report(
         "n_unknown": counts.get("unknown", 0),
         "known_stable_binaries_soft": known_soft,
         "campaign_signal": signal,
-        "next_actions": _next_actions(store, signal),
+        "finite_q_softest": finite_q_softest,
+        "next_actions": _next_actions(
+            store, signal, finite_q_softest=finite_q_softest
+        ),
         "candidates": rows,
     }
 
@@ -436,6 +661,12 @@ def render_soft_mode_markdown(report: dict[str, Any]) -> str:
     known = report.get("known_stable_binaries_soft") or []
     if known:
         lines.append(f"- known-stable binaries also soft: {', '.join(known)}")
+    if report.get("finite_q_softest"):
+        lines.append(
+            "- softness locus: **softest q is finite-q; Γ only mildly "
+            "imaginary** (acoustic numerical noise). "
+            "`likely_mesh_artefact` remains a suspect, not proof."
+        )
     lines.extend(["", "## Next actions", ""])
     for action in report.get("next_actions") or []:
         lines.append(f"- {action}")
@@ -446,8 +677,8 @@ def render_soft_mode_markdown(report: dict[str, Any]) -> str:
                 "",
                 "## Per-candidate",
                 "",
-                "| formula | strain | min ω (cm⁻¹) | class | acoustic/optical |",
-                "|---|---:|---:|---|---|",
+                "| formula | strain | min ω (cm⁻¹) | Γ ω | finite-q min | locus | class | acoustic/optical |",
+                "|---|---:|---:|---:|---:|---|---|---|",
             ]
         )
         # Least-soft first (highest min ω) so the operator sees the least
@@ -458,13 +689,23 @@ def render_soft_mode_markdown(report: dict[str, Any]) -> str:
                 return (1, 0.0, str(row.get("formula") or ""))
             return (0, -float(mf), str(row.get("formula") or ""))
 
+        def _fmt_omega(val: Any) -> str:
+            if val is None:
+                return "—"
+            try:
+                return f"{float(val):.1f}"
+            except (TypeError, ValueError):
+                return "—"
+
         for row in sorted(rows, key=_sort_key):
             strain = row.get("strain")
             strain_s = f"{float(strain):+.3f}" if strain is not None else "—"
-            mf = row.get("min_frequency_cm1")
-            mf_s = f"{float(mf):.1f}" if mf is not None else "—"
             lines.append(
-                f"| {row.get('formula') or '—'} | {strain_s} | {mf_s} | "
+                f"| {row.get('formula') or '—'} | {strain_s} | "
+                f"{_fmt_omega(row.get('min_frequency_cm1'))} | "
+                f"{_fmt_omega(row.get('gamma_min_frequency_cm1'))} | "
+                f"{_fmt_omega(row.get('finite_q_min_frequency_cm1'))} | "
+                f"`{row.get('softness_locus') or 'undetermined'}` | "
                 f"`{row.get('soft_mode_class')}` | "
                 f"{row.get('acoustic_vs_optical') or 'undetermined'} |"
             )
@@ -501,6 +742,18 @@ def write_soft_mode_report(
     """
     store = EvaluationStore(store_dir)
     source = str(Path(store_dir).resolve())
+    if not campaign_name:
+        meta_path = Path(store_dir) / "store_meta.json"
+        if meta_path.is_file():
+            try:
+                import json
+
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                name = meta.get("campaign") if isinstance(meta, dict) else None
+                if isinstance(name, str) and name.strip():
+                    campaign_name = name.strip()
+            except (OSError, ValueError):
+                pass
     if not evaluations:
         report = skip_report(
             source_store=source,

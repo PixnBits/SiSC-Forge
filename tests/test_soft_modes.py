@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from siscforge.cli.main import app
@@ -148,21 +149,62 @@ def test_classify_optical_soft_when_single_q_detectable() -> None:
     assert row["acoustic_vs_optical"] == "optical_imaginary"
 
 
-def test_mesh_dump_stays_undetermined() -> None:
-    # 2-atom × 8 q-points = 48 frequencies — must not slice first-3 as acoustic.
-    freqs = [-20.0] * 3 + [100.0] * 45
+def test_mesh_dump_not_multiple_of_3n_stays_undetermined() -> None:
+    # 47 frequencies cannot be sliced into 3 N_at q-blocks.
+    freqs = [-20.0] * 3 + [100.0] * 44
     ev = _ev(
         metal="Nb",
         formula="Nb0.5Ti0.5N",
         stable=False,
         min_freq=-20.0,
         freqs=freqs,
-        n_modes=48,
+        n_modes=47,
         n_atoms=2,
     )
     row = classify_soft_mode(ev)
     assert row["acoustic_vs_optical"] == "undetermined"
     assert row["soft_mode_class"] == "genuinely_soft"
+    assert row["softness_locus"] == "undetermined"
+
+
+def test_mesh_dump_optical_at_later_q() -> None:
+    # q0 (Γ-like) real; q1 optical imaginary — must not hide behind first-3.
+    freqs = [12.0, 15.0, 18.0, 200.0, 210.0, 220.0, 20.0, 25.0, 30.0, -80.0, 200.0, 210.0]
+    ev = _ev(
+        metal="Nb",
+        formula="Nb0.5Ti0.5N",
+        stable=False,
+        min_freq=-80.0,
+        freqs=freqs,
+        n_modes=12,
+        n_atoms=2,
+    )
+    row = classify_soft_mode(ev)
+    assert row["soft_mode_class"] == "optical_soft"
+    assert row["acoustic_vs_optical"] == "optical_imaginary"
+    assert row["softness_locus"] == "finite_q"
+    assert row["gamma_min_frequency_cm1"] == pytest.approx(12.0)
+    assert row["finite_q_min_frequency_cm1"] == pytest.approx(-80.0)
+
+
+def test_finite_q_softer_than_mild_gamma() -> None:
+    # ZrN-like: Γ ~ −30 (acoustic noise), campaign min at a later q.
+    freqs = [-29.7, -29.6, -29.2, 469.2, 469.3, 469.5, -72.1, 185.0, 186.9, 395.4, 401.8, 416.6]
+    ev = _ev(
+        metal="Zr",
+        formula="ZrN",
+        stable=False,
+        min_freq=-72.1,
+        freqs=freqs,
+        n_modes=12,
+        n_atoms=2,
+    )
+    row = classify_soft_mode(ev)
+    assert row["soft_mode_class"] == "likely_mesh_artefact"
+    assert row["softness_locus"] == "finite_q"
+    assert "softest_q_is_finite_q" in row["reasons"]
+    assert "gamma_only_mildly_imaginary" in row["reasons"]
+    assert row["acoustic_vs_optical"] == "acoustic_only_imaginary"
 
 
 def test_report_written_for_finished_phonon_store(tmp_path: Path) -> None:
@@ -184,7 +226,41 @@ def test_report_written_for_finished_phonon_store(tmp_path: Path) -> None:
     assert report["n_stable"] == 0
     assert report["campaign_signal"] == SIGNAL_NONE_STABLE_BINARIES_SOFT
     assert "NbN" in report["known_stable_binaries_soft"]
-    assert "siscforge pilot" in md_path.read_text(encoding="utf-8")
+    md = md_path.read_text(encoding="utf-8")
+    assert "siscforge pilot" in md
+    assert "locus" in md.lower() or "Γ ω" in md
+
+
+def test_report_surfaces_finite_q_locus(tmp_path: Path) -> None:
+    freqs = [-29.7, -29.6, -29.2, 469.2, 469.3, 469.5, -72.1, 185.0, 186.9, 395.4, 401.8, 416.6]
+    ev = _ev(
+        metal="Zr",
+        formula="ZrN",
+        stable=False,
+        min_freq=-72.1,
+        freqs=freqs,
+        n_modes=12,
+        n_atoms=2,
+    )
+    report, _, md_path = write_soft_mode_report(
+        [ev], tmp_path / "zrn", campaign_name="zrn_kmesh_diag"
+    )
+    assert report["finite_q_softest"] is True
+    md = md_path.read_text(encoding="utf-8")
+    assert "softest q is finite-q" in md
+    assert "Densify SCF k" in md
+
+
+def test_report_reads_campaign_name_from_store_meta(tmp_path: Path) -> None:
+    store = EvaluationStore(tmp_path / "named")
+    store.append_evaluation(
+        _ev(metal="Zr", formula="ZrN", stable=False, min_freq=-55.0)
+    )
+    (store.root / "store_meta.json").write_text(
+        '{"campaign": "zrn_kmesh_diag", "n_evaluations": 1}', encoding="utf-8"
+    )
+    report, _, _ = write_soft_mode_report(store.load_evaluations(), store.root)
+    assert report["campaign"] == "zrn_kmesh_diag"
 
 
 def test_report_skipped_without_phonon(tmp_path: Path) -> None:

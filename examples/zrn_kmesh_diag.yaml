@@ -1,0 +1,87 @@
+# ZrN ε=0 — denser k-mesh diagnostic (same q=4³)
+# Hypothesis: large finite-q imaginary modes are from coarse electronic sampling.
+# Structure is confirmed Fm-3m primitive; only k/ecut change.
+#
+# Docker (QE 7.3.1):
+#   docker run --rm -it -v "$PWD:/workspace" -w /workspace --cpus=16 \
+#     siscforge:latest siscforge run --calculator qe examples/zrn_kmesh_diag.yaml
+
+name: zrn_kmesh_diag
+description: >
+  Single-cell ZrN ε=0 DFPT at q=4×4×4 with denser SCF k-mesh (8³) and
+  ecutwfc=60. Tests whether finite-q soft modes are electronic under-sampling.
+version: "0.1"
+dry_run: false
+
+enumeration:
+  material_families:
+    - tm_nitride
+  metals:
+    - Zr
+  ternary_metals: []
+  x_values: []
+  formulas:
+    - ZrN
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 1
+
+calculators:
+  - name: qe
+
+formation_filter:
+  enabled: false
+
+surrogate:
+  tc_lambda:
+    enabled: false
+
+active_learning:
+  enabled: false
+
+dft:
+  engine: qe
+  pseudo_dir: /usr/share/espresso/pseudo
+  ecutwfc: 60.0
+  ecutrho: 480.0
+  kpoints: [8, 8, 8]
+  qpoints: [4, 4, 4]
+  conv_thr: 1.0e-8
+  occupations: smearing
+  smearing: mv
+  degauss: 0.02
+  nbnd: 48
+  do_relax: true
+  do_phonon: true
+  do_epw: false
+  epw:
+    enabled: false
+  phonon_method: dfpt
+  phonon_retry_on_d_matrix: true
+  tr2_ph: 1.0e-10
+  ph_alpha_mix: 0.1
+  ph_nmix: 12
+  ph_niter: 150
+  quality_tag: screening
+  nproc: 16
+
+ranking:
+  performance_weight: 0.35
+  si_feasibility_weight: 0.65
+  prefer_dynamically_stable: true
+
+run:
+  resume: true
+  continue_on_error: true
+  force_rerun: false
+  resume_qe_steps: true
+  heartbeat_seconds: 900
+  estimate_walltime: true
+
+output_dir: outputs/zrn_kmesh_diag
+export_formats:
+  - json
+  - csv
+  - markdown
