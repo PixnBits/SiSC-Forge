@@ -64,18 +64,24 @@ docker run --rm -e SISCFORGE_PSEUDO_DIR=/my/upfs -v /my/upfs:/my/upfs siscforge:
 docker run --rm siscforge:latest siscforge-verify
 ```
 
-### Results (this tree, 2026-08-02)
+### Results (verification snapshot)
+
+This table is a **snapshot**, not a live dashboard. Pytest counts drift as
+the suite grows — run `pytest -q` or CI for the current number. Image size,
+QE, and Wannier90 rows are from the last documented `docker build`
+(2026-08-02) and were **not** re-measured here. Re-run `siscforge-verify`
+after the next image rebuild.
 
 | Item | Result |
 |------|--------|
-| Image tag | `siscforge:latest` (~2.7 GB) |
+| Image tag | `siscforge:latest` (~2.7 GB) — image build 2026-08-02 |
 | QE | **7.3.1** at `/opt/qe/bin` (`Program PWSCF v.7.3.1`) |
 | Wannier90 | **3.1.0** at `/opt/qe/bin/wannier90.x` |
 | SiSC-Forge | `0.4.4` (`pip install -e ".[dev,qe,phonopy]"`) |
-| pytest | **202 passed**, 3 skipped (mock path; no real DFT) |
+| pytest | **647 passed**, 8 skipped (host/CI mock path, 2026-08-15; no real DFT) |
 | Dry-run | `dummy_campaign` + `nbn_epw` OK |
 | SSSP | Nb/N UPFs under `/usr/share/espresso/pseudo` |
-| Full suite | `=== ALL VERIFICATION CHECKS PASSED ===` |
+| Full suite | `=== ALL VERIFICATION CHECKS PASSED ===` (image build 2026-08-02) |
 
 The script checks:
 
