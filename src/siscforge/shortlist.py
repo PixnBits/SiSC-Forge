@@ -296,6 +296,10 @@ def evaluation_to_spec(ev: CandidateEvaluation) -> CandidateSpec:
         meta["known_stable_binary"] = row["is_known_stable_binary"]
     if ev.result_quality is not None:
         meta["source_result_quality"] = ev.result_quality
+    if ev.quality_flags:
+        meta["source_quality_flags"] = list(ev.quality_flags)
+        if "epw_remediation_exhausted" in ev.quality_flags:
+            meta["epw_reuse_blocked"] = True
     return CandidateSpec(
         formula=c.formula,
         in_plane_strain=float(c.in_plane_strain or 0.0),

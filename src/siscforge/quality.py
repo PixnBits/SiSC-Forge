@@ -38,6 +38,7 @@ FLAG_COARSE_GRIDS = "coarse_grids"
 FLAG_QUALITY_TAG_SCREENING = "quality_tag_screening"
 FLAG_QUALITY_TAG_MOCK = "quality_tag_mock"
 FLAG_EPW_FAILED = "epw_failed"
+FLAG_EPW_REMEDIATION_EXHAUSTED = "epw_remediation_exhausted"
 FLAG_SURROGATE_ONLY = "surrogate_only"
 FLAG_DMFT_PAIRING = "dmft_pairing"
 FLAG_DMFT_PAIRING_MOCK = "dmft_pairing_mock"
@@ -180,6 +181,24 @@ def assess_result_quality(
             notes.append("wannier_ok=False")
         if eph.status not in {"ok", "mock"} and status == "failed":
             flags.append(FLAG_EPW_FAILED)
+        # Durable remediation-exhaustion flags stamped by the EPW ladder (#49)
+        prior = list(eph.quality_flags or [])
+        summary = eph.alpha2F_summary or {}
+        raw = eph.raw or {}
+        if (
+            FLAG_EPW_REMEDIATION_EXHAUSTED in prior
+            or summary.get("remediation_exhausted")
+            or raw.get("remediation_exhausted")
+        ):
+            flags.append(FLAG_EPW_REMEDIATION_EXHAUSTED)
+            flags.append(FLAG_EPW_FAILED)
+            notes.append(
+                "EPW remediation exhausted (Phase A nkc + Phase B "
+                "search_shells) — identical (cell, projections, mesh) "
+                "must not be silently re-launched"
+            )
+        for f in prior:
+            flags.append(f)
     if phonon is not None:
         qtags.append(phonon.quality_tag or "unknown")
     if evaluation.candidate.quality_tag:

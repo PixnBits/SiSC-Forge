@@ -1076,6 +1076,113 @@ def save_epw_remediation_state(work_dir: Path, state: dict[str, Any]) -> Path:
     return path
 
 
+def epw_config_fingerprint(config: DFTConfig) -> dict[str, Any]:
+    """Identity of an EPW attempt: cell mesh + projections, not DFPT data.
+
+    ``wannier_projections is None`` fingerprints as ``\"random\"`` (screening
+    default). Restating random / leaving the field unset does **not** lift
+    an exhaustion block — set a different projection label or denser nqc.
+    """
+    epw = config.epw
+    proj = (getattr(epw, "wannier_projections", None) or "").strip() or "random"
+    return {
+        "nkc": [int(x) for x in (epw.nkc or [])],
+        "nqc": [int(x) for x in (epw.nqc or [])],
+        "search_shells": epw.search_shells,
+        "nbndsub": epw.nbndsub,
+        "projections": proj,
+    }
+
+
+def mark_remediation_exhausted(
+    work_dir: Path,
+    config: DFTConfig,
+    *,
+    reason: str = "phase_a_and_b_exhausted",
+) -> dict[str, Any]:
+    """Persist a durable exhaustion mark. Never deletes DFPT artefacts."""
+    state = load_epw_remediation_state(work_dir)
+    state["exhausted"] = True
+    state["exhausted_reason"] = reason
+    state["exhausted_fingerprint"] = epw_config_fingerprint(config)
+    save_epw_remediation_state(work_dir, state)
+    return state
+
+
+def remediation_blocks_silent_reepw(
+    work_dir: Path,
+    config: DFTConfig,
+) -> tuple[bool, str]:
+    """True when the same (projections, phonon mesh) must not be re-launched.
+
+    Override is explicit: ``epw.allow_retry_exhausted``, a different
+    ``wannier_projections`` label, or a denser ``nqc`` (phonon) mesh.
+    Changing nkc alone is *not* enough — the nkc ladder already ran.
+    """
+    if bool(getattr(config.epw, "allow_retry_exhausted", False)):
+        return False, "allow_retry_exhausted"
+    state = load_epw_remediation_state(work_dir)
+    if not state.get("exhausted"):
+        return False, ""
+    prev = state.get("exhausted_fingerprint") or {}
+    now = epw_config_fingerprint(config)
+    if list(prev.get("nqc") or []) != list(now.get("nqc") or []):
+        return False, "nqc_changed"
+    if str(prev.get("projections") or "random") != str(now.get("projections") or "random"):
+        return False, "projections_changed"
+    return True, "identical_projections_and_phonon_mesh"
+
+
+def stamp_remediation_exhausted_eph(
+    eph: ElectronPhononResult | None,
+    config: DFTConfig,
+    *,
+    reason: str = "phase_a_and_b_exhausted",
+) -> ElectronPhononResult:
+    """Attach durable quality flags so ranking / shortlist / promotion can see."""
+    from siscforge.quality import FLAG_EPW_FAILED, FLAG_EPW_REMEDIATION_EXHAUSTED
+
+    flags = []
+    summary: dict[str, Any] = {}
+    raw: dict[str, Any] = {}
+    if eph is not None:
+        flags = list(eph.quality_flags or [])
+        summary = dict(eph.alpha2F_summary or {})
+        raw = dict(eph.raw or {})
+    for flag in (FLAG_EPW_REMEDIATION_EXHAUSTED, FLAG_EPW_FAILED):
+        if flag not in flags:
+            flags.append(flag)
+    summary["remediation_exhausted"] = True
+    summary["remediation_exhausted_reason"] = reason
+    summary["remediation_fingerprint"] = epw_config_fingerprint(config)
+    raw["remediation_exhausted"] = True
+    note = (
+        "EPW remediation exhausted (Phase A nkc + Phase B search_shells). "
+        "DFPT/phonon is intact. Re-launch requires changing Wannier "
+        "projections, a denser phonon mesh (nqc), or "
+        "epw.allow_retry_exhausted=true."
+    )
+    if eph is None:
+        return ElectronPhononResult(
+            status="failed",
+            quality_tag=config.quality_tag,  # type: ignore[arg-type]
+            quality_flags=flags,
+            quality_notes=note,
+            alpha2F_summary=summary,
+            raw=raw,
+        )
+    existing = (eph.quality_notes or "").strip()
+    return eph.model_copy(
+        update={
+            "quality_flags": flags,
+            "quality_notes": f"{existing}; {note}" if existing else note,
+            "alpha2F_summary": summary,
+            "raw": raw,
+            "status": eph.status if eph.status not in {"ok", "mock"} else "failed",
+        }
+    )
+
+
 def record_epw_remediation_attempt(
     work_dir: Path,
     *,
@@ -2148,6 +2255,31 @@ def run_relax_scf_phonon_epw(
             return result
 
     # 6. epw.x (+ optional post-DFPT k-mesh remediation)
+    blocked, block_reason = remediation_blocks_silent_reepw(scf_dir, config)
+    if blocked and not ckpt.is_complete("epw"):
+        log.append(
+            f"skip epw (remediation exhausted; {block_reason}; "
+            "set epw.allow_retry_exhausted or change wannier_projections / nqc)"
+        )
+        eph = stamp_remediation_exhausted_eph(result.electron_phonon, config)
+        result.electron_phonon = eph
+        result.steps.append(
+            _skipped_step(
+                "epw",
+                scf_dir,
+                message=f"skip epw (remediation exhausted; {block_reason})",
+            )
+        )
+        result.success = False
+        result.message = (
+            "EPW blocked: remediation already exhausted for this "
+            f"(projections, phonon mesh) fingerprint ({block_reason}). "
+            "DFPT is intact. Override with epw.wannier_projections, "
+            "denser nqc, or epw.allow_retry_exhausted=true."
+        )
+        if step_log is not None and log is not step_log:
+            step_log.extend(log)
+        return result
     if ckpt.is_complete("epw"):
         probe = ckpt.steps["epw"]
         result.electron_phonon = probe.electron_phonon
@@ -2380,6 +2512,18 @@ def run_relax_scf_phonon_epw(
             f"{step_msg}\n"
             f"{next_step}"
         )
+        if is_kmesh_bvector_failure(step_msg) or is_remediable_kmesh_failure(
+            step_msg
+        ):
+            leftover = plan_kmesh_remediation(
+                config, step_msg, work_dir=scf_dir
+            )
+            if leftover is None:
+                mark_remediation_exhausted(scf_dir, config)
+                eph = stamp_remediation_exhausted_eph(
+                    result.electron_phonon, config
+                )
+                result.electron_phonon = eph
 
     if step_log is not None:
         # log already is step_log when provided
