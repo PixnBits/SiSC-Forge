@@ -149,3 +149,75 @@ def test_calculator_skips_epw_follow_ons_when_blocked(
     assert ev.phonon.has_imaginary_modes is True
     assert ev.status == "ok"
     assert EPW_BLOCKED_SOFT_TOKEN in (ev.notes or "")
+
+
+def test_recipe_returns_before_pp_nscf_epw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run_relax_scf_phonon_epw`` must skip pp.py / NSCF / EPW on soft DFPT."""
+    from unittest.mock import MagicMock
+
+    from siscforge.calculators.qe.epw_recipes import run_relax_scf_phonon_epw
+    from siscforge.calculators.qe.qe_checkpoint import StepProbe, WorkdirCheckpoint
+
+    structure = build_binary_nitride("Nb")
+    cfg = DFTConfig(do_epw=True, do_relax=True, do_phonon=True, quality_tag="screening")
+    launched: list[str] = []
+
+    def boom(name: str):
+        def _inner(*_a, **_k):
+            launched.append(name)
+            raise AssertionError(f"{name} must not run after soft-phonon gate")
+
+        return _inner
+
+    def fake_probe(work_dir, _config, **_kwargs):
+        ckpt = WorkdirCheckpoint(work_dir=Path(work_dir), prefix="siscforge")
+        ph = _phonon(imag=True)
+        ckpt.steps["vc-relax"] = StepProbe(
+            name="vc-relax",
+            complete=True,
+            message="ok",
+            relaxed_structure=structure,
+        )
+        ckpt.steps["scf"] = StepProbe(
+            name="scf",
+            complete=True,
+            message="ok",
+            scf=SCFResult(status="ok", quality_tag="screening"),
+        )
+        ckpt.steps["phonon"] = StepProbe(
+            name="phonon", complete=True, message="ok", phonon=ph
+        )
+        for name in ("epw_pp", "nscf", "epw"):
+            ckpt.steps[name] = StepProbe(name=name, complete=False, message="missing")
+        ckpt.log = ["skip phonon (checkpoint)"]
+        return ckpt
+
+    env = MagicMock()
+    env.pw = "/bin/true"
+    env.ph = "/bin/true"
+    env.epw = "/bin/true"
+    env.mpirun = None
+
+    monkeypatch.setattr(
+        "siscforge.calculators.qe.epw_recipes.require_epw", lambda: env
+    )
+    monkeypatch.setattr(
+        "siscforge.calculators.qe.qe_checkpoint.probe_workdir", fake_probe
+    )
+    monkeypatch.setattr(
+        "siscforge.calculators.qe.epw_recipes.run_epw_pp", boom("epw_pp")
+    )
+    monkeypatch.setattr(
+        "siscforge.calculators.qe.epw_recipes.run_nscf_for_epw", boom("nscf")
+    )
+    monkeypatch.setattr("siscforge.calculators.qe.epw_recipes.run_epw", boom("epw"))
+
+    result = run_relax_scf_phonon_epw(structure, cfg, tmp_path, prefix="siscforge")
+    assert launched == []
+    assert result.success is True
+    assert result.electron_phonon is None
+    assert result.phonon is not None
+    assert result.phonon.has_imaginary_modes is True
+    assert EPW_BLOCKED_SOFT_TOKEN in (result.message or "")

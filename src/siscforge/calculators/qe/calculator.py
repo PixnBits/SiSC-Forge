@@ -10,7 +10,10 @@ from siscforge import __version__
 from siscforge.calculators.base import BaseCalculator
 from siscforge.calculators.qe.eliashberg import performance_score_from_epw
 from siscforge.calculators.qe.env import QENotAvailableError, require_qe
-from siscforge.calculators.qe.epw_recipes import run_relax_scf_phonon_epw
+from siscforge.calculators.qe.epw_recipes import (
+    EPW_BLOCKED_SOFT_TOKEN,
+    run_relax_scf_phonon_epw,
+)
 from siscforge.calculators.qe.inputs import candidate_to_structure
 from siscforge.calculators.qe.recipes import run_dftu_workflow, run_relax_scf_phonon
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
@@ -307,7 +310,9 @@ class QECalculator(BaseCalculator):
 
         # P3.2: additive Wannierization after SCF / DFT+U.
         # Sacred upstream: Wannier failures never delete finished SCF/DFT+U.
-        if want_wannier:
+        # Soft-phonon EPW block also skips Wannier / DMFT follow-ons (#52).
+        epw_soft_blocked = EPW_BLOCKED_SOFT_TOKEN in (wf.message or "")
+        if want_wannier and not epw_soft_blocked:
             from siscforge.calculators.qe.recipes import run_wannier_after_scf
 
             wannier_dir = cand_dir / "wannier"
@@ -367,7 +372,7 @@ class QECalculator(BaseCalculator):
 
         # P3.3: additive DMFT after Wannier (gated on ready_for_dmft).
         # Sacred upstream: DMFT failures never delete finished SCF/DFT+U/Wannier.
-        if want_dmft:
+        if want_dmft and not epw_soft_blocked:
             from siscforge.calculators.qe.recipes import run_dmft_after_wannier
 
             dmft_dir = cand_dir / "dmft"

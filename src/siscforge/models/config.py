@@ -329,6 +329,14 @@ class EPWConfig(BaseModel):
     wdata_prefix: str = "siscforge"
     npool: int = 1
     strict_parallel: bool = False
+    allow_on_soft: bool = Field(
+        default=False,
+        description=(
+            "If True, run EPW even when DFPT reports imaginary modes or "
+            "dynamically_stable=false. Default False is a calculator-level "
+            "safety gate complementary to shortlist --mode stable_only."
+        ),
+    )
 
 
 class DFTUConfig(BaseModel):
