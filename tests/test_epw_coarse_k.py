@@ -475,6 +475,56 @@ def test_plan_phase_b_anti_loop_when_exhausted(tmp_path: Path) -> None:
     assert plan_kmesh_remediation(cfg, _BVECTOR_FAIL, work_dir=tmp_path) is None
 
 
+def test_remediation_exhaustion_blocks_silent_reepw(tmp_path: Path) -> None:
+    """#49: identical (projections, nqc) cannot silently re-run after exhaustion."""
+    from siscforge.calculators.qe.epw_recipes import (
+        epw_config_fingerprint,
+        mark_remediation_exhausted,
+        remediation_blocks_silent_reepw,
+        stamp_remediation_exhausted_eph,
+    )
+
+    cfg = DFTConfig(
+        quality_tag="screening",
+        epw=EPWConfig(nkc=[12, 12, 12], nqc=[2, 2, 2], search_shells=48),
+    )
+    mark_remediation_exhausted(tmp_path, cfg)
+    blocked, reason = remediation_blocks_silent_reepw(tmp_path, cfg)
+    assert blocked is True
+    assert "identical" in reason
+
+    # Explicit projection change lifts the block.
+    changed_proj = cfg.model_copy(
+        update={
+            "epw": cfg.epw.model_copy(update={"wannier_projections": "Nb:s;p;d"})
+        }
+    )
+    blocked2, why2 = remediation_blocks_silent_reepw(tmp_path, changed_proj)
+    assert blocked2 is False
+    assert why2 == "projections_changed"
+
+    # Denser phonon mesh lifts the block.
+    denser = cfg.model_copy(
+        update={"epw": cfg.epw.model_copy(update={"nqc": [3, 3, 3]})}
+    )
+    blocked3, why3 = remediation_blocks_silent_reepw(tmp_path, denser)
+    assert blocked3 is False
+    assert why3 == "nqc_changed"
+
+    # Operator opt-in.
+    opt_in = cfg.model_copy(
+        update={"epw": cfg.epw.model_copy(update={"allow_retry_exhausted": True})}
+    )
+    blocked4, why4 = remediation_blocks_silent_reepw(tmp_path, opt_in)
+    assert blocked4 is False
+    assert why4 == "allow_retry_exhausted"
+
+    eph = stamp_remediation_exhausted_eph(None, cfg)
+    assert "epw_remediation_exhausted" in eph.quality_flags
+    assert eph.alpha2F_summary.get("remediation_exhausted") is True
+    assert epw_config_fingerprint(cfg)["projections"] == "random"
+
+
 def test_phase_b_epw_only_no_phonon_clean_after_nk_exhausted(tmp_path: Path) -> None:
     """Simulated 8→12 already done + bvector → Phase B search_shells; phonon intact."""
     s = build_ternary_nitride("Nb", "Ti", 0.25, supercell=(2, 2, 1))

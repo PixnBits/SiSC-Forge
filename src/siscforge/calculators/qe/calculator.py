@@ -598,6 +598,17 @@ class QECalculator(BaseCalculator):
             notes_parts.append(f"dmft={dmft_result.summary_line()}")
         notes_parts.append(f"do_dmft={want_dmft}")
 
+        ev_flags: list[str] = []
+        ev_qnotes = ""
+        if eph is not None:
+            ev_flags = list(eph.quality_flags or [])
+            ev_qnotes = eph.quality_notes or ""
+        ev_quality: dict[str, Any] = {
+            "quality_flags": ev_flags,
+            "quality_notes": ev_qnotes,
+        }
+        if "epw_remediation_exhausted" in ev_flags:
+            ev_quality["result_quality"] = "unreliable"
         ev = CandidateEvaluation(
             candidate=out_candidate,
             scf=scf,
@@ -610,6 +621,7 @@ class QECalculator(BaseCalculator):
             performance_score=performance,
             composite_score=None,
             status=status,
+            **ev_quality,
             calculator_name=self.name,
             errors=err_list,
             notes="; ".join(notes_parts),

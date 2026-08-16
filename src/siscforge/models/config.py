@@ -432,6 +432,22 @@ class EPWConfig(BaseModel):
             "safety gate complementary to shortlist --mode stable_only."
         ),
     )
+    wannier_projections: str | None = Field(
+        default=None,
+        description=(
+            "Operator-set Wannier projection label. None = screening "
+            "proj=random. Changing this (or nqc / qpoints) lifts a "
+            "remediation-exhaustion re-EPW block (#49)."
+        ),
+    )
+    allow_retry_exhausted: bool = Field(
+        default=False,
+        description=(
+            "If True, allow another EPW attempt after remediation "
+            "exhaustion even when (nkc, nqc, projections) match the "
+            "blocked fingerprint. Default False — override must be explicit."
+        ),
+    )
 
 
 class DFTUConfig(BaseModel):

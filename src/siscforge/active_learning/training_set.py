@@ -40,6 +40,7 @@ DISALLOWED_QUALITY_FLAGS: frozenset[str] = frozenset(
         "epw_failed",
         "wannier_failed",
         FLAG_SCREENING_HIGH_LAMBDA,
+        "epw_remediation_exhausted",
     }
 )
 

@@ -11,6 +11,8 @@ from siscforge.models.results import (
 )
 from siscforge.quality import (
     FLAG_COARSE_GRIDS,
+    FLAG_EPW_FAILED,
+    FLAG_EPW_REMEDIATION_EXHAUSTED,
     FLAG_EXTREME_LAMBDA,
     FLAG_HIGH_LAMBDA,
     FLAG_IMAGINARY_MODES,
@@ -247,3 +249,34 @@ def test_hard_zero_disabled_keeps_soft_penalty() -> None:
     bd = compute_composite_breakdown(ev, cfg)
     assert bd["performance_hard_zeroed"] is False
     assert bd["performance_norm"] > 0.0
+
+
+def test_epw_remediation_exhaustion_surfaces_as_hard_flag() -> None:
+    """#49: terminal EPW-blocked after remediation is a durable quality flag."""
+    ev = _ev(lam=None, tc=None, status="failed")
+    assert ev.electron_phonon is None
+    eph = ElectronPhononResult(
+        status="failed",
+        quality_tag="screening",
+        quality_flags=[FLAG_EPW_REMEDIATION_EXHAUSTED, FLAG_EPW_FAILED],
+        quality_notes="EPW remediation exhausted",
+        alpha2F_summary={"remediation_exhausted": True},
+    )
+    ev = ev.model_copy(
+        update={
+            "electron_phonon": eph.model_copy(update={"status": "ok"}),
+            "quality_flags": [FLAG_EPW_REMEDIATION_EXHAUSTED],
+            "status": "ok",
+            "performance_score": 10.0,
+        }
+    )
+    a = assess_result_quality(ev)
+    assert FLAG_EPW_REMEDIATION_EXHAUSTED in a.quality_flags
+    assert FLAG_EPW_FAILED in a.quality_flags
+    assert "remediation exhausted" in a.quality_notes.lower()
+
+    from siscforge.active_learning.training_set import promotion_eligibility
+
+    ok, reason = promotion_eligibility(ev)
+    assert not ok
+    assert "epw_remediation_exhausted" in reason or "epw_failed" in reason

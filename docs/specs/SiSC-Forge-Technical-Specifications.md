@@ -385,6 +385,11 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
     `high_lambda` / `extreme_lambda` force the performance contribution to 0
     (flag `screening_high_lambda`). Soft multiplicative penalties remain for
     milder cases. Same rule refuses conventional-pool promotion.
+  - **#49:** terminal EPW-blocked after Phase A/B remediation stamps
+    `epw_remediation_exhausted` on `quality_flags` (and the sidecar). Ranking /
+    shortlist / promotion consume it. Silent re-EPW of the same
+    (projections, nqc) is blocked; override is `epw.wannier_projections`,
+    denser `nqc`, or `epw.allow_retry_exhausted`. DFPT is never deleted.
   - Export/docs language: do not cite Tc until trust flags improve.
 - **AL promotion (#47):** conventional-pool default refuses `screening` +
   `wannier_random_proj` (opt in with `allow_screening_random`). Default
