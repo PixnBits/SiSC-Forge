@@ -71,6 +71,12 @@ class AcquisitionRecord(BaseModel):
     score_signal: str = "surrogate_tc"
     """``surrogate_tc`` or ``performance_score`` — which Tc-like input was used."""
 
+    quality_flags: list[str] = Field(default_factory=list)
+    """Trust-layer flags copied from the evaluation when available (#47)."""
+
+    result_quality: str | None = None
+    """Trust-layer tier copied from the evaluation when available (#47)."""
+
 
 @dataclass
 class AcquisitionPlan:
@@ -208,6 +214,16 @@ def _score_one(
         weights=cfg.weights.model_dump(),
         tc_ceiling_K=cfg.tc_ceiling_K,
     )
+    qflags: list[str] = []
+    rq: str | None = None
+    if evaluation is not None:
+        qflags = list(getattr(evaluation, "quality_flags", None) or [])
+        eph = getattr(evaluation, "electron_phonon", None)
+        if eph is not None:
+            for flag in getattr(eph, "quality_flags", None) or []:
+                if flag not in qflags:
+                    qflags.append(flag)
+        rq = getattr(evaluation, "result_quality", None)
     rec = AcquisitionRecord(
         candidate_id=cand.candidate_id,
         formula=cand.formula,
@@ -228,6 +244,8 @@ def _score_one(
         pool_reason=decision.reason,
         acquisition_mode=mode,
         score_signal=score_signal,
+        quality_flags=qflags,
+        result_quality=rq,
     )
     return rec, decision
 

@@ -16,13 +16,16 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
 
+from siscforge.active_learning.pools import derive_pool
 from siscforge.models.active_learning import (
     TrainingExample,
     TrainingSetSnapshot,
 )
 from siscforge.models.candidate import CandidateEvaluation
 from siscforge.quality import (
+    FLAG_QUALITY_TAG_SCREENING,
     FLAG_SCREENING_HIGH_LAMBDA,
+    FLAG_WANNIER_RANDOM,
     assess_result_quality,
     screening_high_lambda_hard_zero,
 )
@@ -66,6 +69,7 @@ def promotion_eligibility(
     allowed_status: Iterable[str] | None = None,
     require_epw: bool = True,
     allow_unknown_quality: bool = False,
+    allow_screening_random: bool = False,
 ) -> tuple[bool, str]:
     """Return (ok, reason). Does not raise."""
     tags = frozenset(allowed_quality_tags or DEFAULT_ALLOWED_QUALITY_TAGS)
@@ -91,8 +95,8 @@ def promotion_eligibility(
     flags = set(evaluation.quality_flags or [])
     if evaluation.electron_phonon is not None:
         flags |= set(evaluation.electron_phonon.quality_flags or [])
-    # Re-assess so the #44 hard-zero rule applies even when the caller
-    # has not yet run rank / apply_quality_assessment.
+    # Re-assess so #44 / #47 flags apply even when the caller has not
+    # yet run rank / apply_quality_assessment.
     assessed = assess_result_quality(evaluation)
     flags |= set(assessed.quality_flags or [])
     bad = flags & DISALLOWED_QUALITY_FLAGS
@@ -107,6 +111,26 @@ def promotion_eligibility(
 
     if evaluation.result_quality == "unreliable":
         return False, "result_quality=unreliable"
+
+    pool = derive_pool(
+        candidate=evaluation.candidate, evaluation=evaluation
+    ).pool
+    is_screening = qtag == "screening" or FLAG_QUALITY_TAG_SCREENING in flags
+    is_random = FLAG_WANNIER_RANDOM in flags
+    # Conventional pool only: unconventional (DMFT pairing) screening
+    # labels remain eligible so mixed-pool campaigns can still promote
+    # a pairing proxy. Residual: document if that policy should tighten.
+    if (
+        not allow_screening_random
+        and pool == "conventional"
+        and is_screening
+        and is_random
+    ):
+        return (
+            False,
+            "screening + random-Wannier cannot enter the conventional "
+            "training set (pass allow_screening_random to opt in)",
+        )
 
     if require_epw:
         ep = evaluation.electron_phonon
@@ -130,6 +154,7 @@ def promote_evaluation(
     allowed_quality_tags: Iterable[str] | None = None,
     require_epw: bool = True,
     allow_unknown_quality: bool = False,
+    allow_screening_random: bool = False,
     notes: str = "",
 ) -> TrainingExample:
     """Explicitly promote a clean evaluation into a TrainingExample.
@@ -141,6 +166,7 @@ def promote_evaluation(
         allowed_quality_tags=allowed_quality_tags,
         require_epw=require_epw,
         allow_unknown_quality=allow_unknown_quality,
+        allow_screening_random=allow_screening_random,
     )
     if not ok:
         raise PromotionError(reason)

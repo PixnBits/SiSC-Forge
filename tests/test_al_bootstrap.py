@@ -41,7 +41,7 @@ def _cand(formula: str = "NbN") -> StructureCandidate:
 def _ok_epw_eval(
     formula: str = "NbN",
     *,
-    quality_tag: str = "screening",
+    quality_tag: str = "production",
     status: str = "ok",
     mock: bool = False,
 ) -> CandidateEvaluation:
@@ -66,7 +66,7 @@ def _ok_epw_eval(
         ),
         status="mock" if mock else status,
         calculator_name="mock" if mock else "qe-epw",
-        result_quality="screening" if not mock else "unknown",
+        result_quality=("unknown" if mock else ("screening" if quality_tag == "screening" else "production")),
     )
 
 
@@ -81,7 +81,7 @@ def test_promote_clean_evaluation() -> None:
     assert ex.formula == "NbN"
     assert ex.tc_K == pytest.approx(15.0)
     assert ex.source == "project"
-    assert ex.quality_tag == "screening"
+    assert ex.quality_tag == "production"
 
 
 def test_refuse_mock_promotion_ac18() -> None:
@@ -126,6 +126,21 @@ def test_refuse_screening_high_lambda_random_proj() -> None:
     assert "screening_high_lambda" in reason or "high-λ" in reason or "high-l" in reason.lower()
     with pytest.raises(PromotionError):
         promote_evaluation(ev)
+
+
+def test_refuse_screening_random_conventional_default() -> None:
+    """#47: screening + random-Wannier cannot freely enter the conventional set."""
+    ev = _ok_epw_eval(quality_tag="screening")
+    ok, reason = promotion_eligibility(ev)
+    assert not ok
+    assert "random" in reason.lower() or "screening" in reason.lower()
+    with pytest.raises(PromotionError):
+        promote_evaluation(ev)
+    # Explicit opt-in still works (promote step remains explicit).
+    ok2, _ = promotion_eligibility(ev, allow_screening_random=True)
+    assert ok2
+    ex = promote_evaluation(ev, allow_screening_random=True)
+    assert ex.quality_tag == "screening"
 
 
 def test_training_set_store_promote_and_snapshot(tmp_path: Path) -> None:
@@ -281,10 +296,10 @@ def test_full_mock_al_cycle(tmp_path: Path) -> None:
 
     # 2. Mock-evaluate selected as if EPW succeeded (not calculator mock tag)
     for c in plan1.selected:
-        ev = _ok_epw_eval(c.formula, quality_tag="screening")
+        ev = _ok_epw_eval(c.formula, quality_tag="production")
         # keep candidate id stable for promotion linkage
         ev.candidate = c.model_copy(
-            update={"quality_tag": "screening"}
+            update={"quality_tag": "production"}
         )
         tstore.promote(ev, campaign_store=str(tmp_path / "campaign"))
 

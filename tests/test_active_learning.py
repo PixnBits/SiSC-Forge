@@ -62,6 +62,54 @@ def test_acquisition_score_increases_with_tc_and_si() -> None:
     assert hi_si > base
 
 
+def test_default_hull_penalty_is_nontrivial() -> None:
+    """#47: default hull_penalty must be visible and non-trivial."""
+    assert ActiveLearningWeights().hull_penalty == pytest.approx(0.3)
+    cfg = ActiveLearningConfig()
+    assert cfg.weights.hull_penalty >= 0.25
+    # Weights are copied onto every acquisition record.
+    cands = [_cand("NbN"), _cand("TiN")]
+    for c in cands:
+        c.energy_above_hull_proxy = 0.2
+    plan = prioritize_candidates(
+        cands, config=ActiveLearningConfig(enabled=True, max_epw_jobs=1)
+    )
+    assert plan.ranked[0].weights["hull_penalty"] == pytest.approx(0.3)
+    assert plan.ranked[0].components["hull_penalty"] > 0.0
+
+
+def test_acquisition_record_surfaces_quality_flags() -> None:
+    """#47: quality_flags / result_quality appear on prioritization records."""
+    from siscforge.models.candidate import CandidateEvaluation
+    from siscforge.models.results import ElectronPhononResult, PhononResult
+
+    cand = _cand("NbN")
+    ev = CandidateEvaluation(
+        candidate=cand,
+        electron_phonon=ElectronPhononResult(
+            lambda_total=1.1,
+            Tc_allen_dynes=16.0,
+            status="ok",
+            quality_tag="screening",
+            quality_flags=["wannier_random_proj", "coarse_grids"],
+        ),
+        phonon=PhononResult(dynamically_stable=True, status="ok"),
+        status="ok",
+        result_quality="screening_suspect",
+        quality_flags=["wannier_random_proj", "high_lambda"],
+        performance_score=16.0,
+        performance_score_source="epw",
+    )
+    plan = prioritize_candidates(
+        [cand],
+        config=ActiveLearningConfig(enabled=True, max_epw_jobs=1),
+        evaluations={cand.candidate_id: ev},
+    )
+    rec = plan.ranked[0]
+    assert "wannier_random_proj" in rec.quality_flags
+    assert rec.result_quality == "screening_suspect"
+
+
 def test_hull_penalty_reduces_score() -> None:
     clean, _ = acquisition_score(
         uncertainty=0.4,

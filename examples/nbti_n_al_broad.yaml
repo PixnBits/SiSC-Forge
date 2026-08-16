@@ -86,7 +86,7 @@ active_learning:
     uncertainty: 0.35
     predicted_tc: 0.30
     si_feasibility: 0.30
-    hull_penalty: 0.10
+    hull_penalty: 0.30
 
 ranking:
   performance_weight: 0.55

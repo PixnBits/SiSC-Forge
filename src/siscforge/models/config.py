@@ -189,7 +189,15 @@ class ActiveLearningWeights(BaseModel):
     uncertainty: float = Field(default=0.4, ge=0.0)
     predicted_tc: float = Field(default=0.3, ge=0.0)
     si_feasibility: float = Field(default=0.3, ge=0.0)
-    hull_penalty: float = Field(default=0.1, ge=0.0)
+    hull_penalty: float = Field(
+        default=0.3,
+        ge=0.0,
+        description=(
+            "Soft penalty weight for energy_above_hull / hull_norm. "
+            "Default 0.3 (#47) is non-trivial so high-hull cells are not "
+            "preferred early. YAML-overridable; 0.1 restores the old default."
+        ),
+    )
 
 
 class ActiveLearningPoolQuotas(BaseModel):
