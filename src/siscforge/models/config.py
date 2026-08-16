@@ -18,6 +18,15 @@ class QualityConfig(BaseModel):
     suspect_performance_penalty: float = Field(default=0.45, ge=0.0, le=1.0)
     unreliable_performance_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
     unreliable_zero_performance: bool = True
+    hard_zero_screening_high_lambda: bool = Field(
+        default=True,
+        description=(
+            "When wannier_random_proj or coarse_grids co-occurs with "
+            "high_lambda / extreme_lambda, force the performance contribution "
+            "to 0 (issue #44). Soft multiplicative penalties still apply to "
+            "milder cases. Set false to restore multiply-only behaviour."
+        ),
+    )
     prefer_higher_quality_tier: bool = True
     version: str = "0.1"
 

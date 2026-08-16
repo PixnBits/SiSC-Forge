@@ -16,7 +16,12 @@ from typing import Any
 
 from siscforge.models.candidate import CandidateEvaluation
 from siscforge.models.config import QualityConfig, RankingConfig
-from siscforge.quality import apply_quality_assessment, quality_tier_rank
+from siscforge.quality import (
+    FLAG_SCREENING_HIGH_LAMBDA,
+    apply_quality_assessment,
+    quality_tier_rank,
+    screening_high_lambda_hard_zero,
+)
 
 
 def _is_stable(evaluation: CandidateEvaluation) -> bool:
@@ -75,8 +80,12 @@ def ranking_axis_values(
     config = config or RankingConfig()
     tier = evaluation.result_quality or "unknown"
     qcfg = config.quality or QualityConfig()
+    flags = list(evaluation.quality_flags or [])
 
-    if tier == "unreliable" and qcfg.unreliable_zero_performance:
+    if (
+        (tier == "unreliable" and qcfg.unreliable_zero_performance)
+        or screening_high_lambda_hard_zero(flags, config=qcfg)
+    ):
         perf_norm = 0.0
     else:
         perf_norm = normalize_performance(
@@ -116,6 +125,8 @@ def compute_composite_breakdown(
     config = config or RankingConfig()
     qcfg = config.quality or QualityConfig()
     tier = evaluation.result_quality or "unknown"
+    flags = list(evaluation.quality_flags or [])
+    hard_zero = screening_high_lambda_hard_zero(flags, config=qcfg)
     axes = ranking_axis_values(evaluation, config)
 
     # Explicit None checks — valid 0.0 scores must not hit neutral fallbacks
@@ -130,7 +141,10 @@ def compute_composite_breakdown(
     w_s = float(config.si_feasibility_weight)
     w_u = float(config.uncertainty_weight)
 
-    # Unreliable + zero-performance: Si-only base (legacy behaviour)
+    # Unreliable + zero-performance: Si-only base (legacy behaviour).
+    # Screening high-λ + random/coarse (#44) zeros the performance *term*
+    # but keeps the configured blend so Si alone cannot inherit the
+    # full composite after a soft multiply of a ceiling-saturated Tc.
     if tier == "unreliable" and qcfg.unreliable_zero_performance:
         pre_penalty = si
         used_weights = {"performance": 0.0, "si_feasibility": 1.0, "uncertainty": 0.0}
@@ -189,6 +203,10 @@ def compute_composite_breakdown(
         "uncertainty": float(u) if u is not None else None,
         "weights_used": used_weights,
         "config_weights": config.active_weights(),
+        "performance_hard_zeroed": bool(hard_zero),
+        "performance_hard_zero_reason": (
+            FLAG_SCREENING_HIGH_LAMBDA if hard_zero else None
+        ),
     }
 
 
@@ -205,7 +223,9 @@ def compute_composite_score(
     * Missing fields fall back to neutral defaults so ranking never crashes
       on partial evaluations.
     * Result-quality tiers apply multiplicative penalties so inflated screening
-      λ/Tc cannot dominate (see :class:`QualityConfig`).
+      λ/Tc cannot dominate (see :class:`QualityConfig`). Random-Wannier or
+      coarse-grid results with high/extreme λ have their performance term
+      forced to 0 before those penalties (#44).
     """
     return float(compute_composite_breakdown(evaluation, config)["composite"])
 
@@ -231,6 +251,12 @@ def pareto_objectives(
     ``uncertainty_weight > 0``.
     """
     config = config or RankingConfig()
+    qcfg = config.quality or QualityConfig()
+    # Hard-zero rows must not sit on / dominate the front via raw Tc (#44).
+    if screening_high_lambda_hard_zero(
+        list(evaluation.quality_flags or []), config=qcfg
+    ):
+        return None
     if evaluation.performance_score is None:
         return None
     try:
@@ -333,6 +359,12 @@ def rank_evaluations(
                         "certainty_norm": breakdown["certainty_norm"],
                         "pre_penalty": breakdown["pre_penalty"],
                         "weights_used": breakdown["weights_used"],
+                        "performance_hard_zeroed": breakdown.get(
+                            "performance_hard_zeroed", False
+                        ),
+                        "performance_hard_zero_reason": breakdown.get(
+                            "performance_hard_zero_reason"
+                        ),
                     },
                 }
             )

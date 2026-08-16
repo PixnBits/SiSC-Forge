@@ -101,6 +101,33 @@ def test_refuse_failed_status_ac13() -> None:
         promote_evaluation(ev)
 
 
+def test_refuse_screening_high_lambda_random_proj() -> None:
+    """#44: high-λ + random/coarse screening cannot enter the training set."""
+    ev = _ok_epw_eval()
+    assert ev.electron_phonon is not None
+    ev = ev.model_copy(
+        update={
+            "electron_phonon": ev.electron_phonon.model_copy(
+                update={
+                    "lambda_total": 4.5,
+                    "Tc_allen_dynes": 40.0,
+                    "alpha2F_summary": {
+                        "method": "epw",
+                        "material_notes": "proj=random",
+                    },
+                }
+            ),
+            "performance_score": 40.0,
+            "performance_score_source": "epw",
+        }
+    )
+    ok, reason = promotion_eligibility(ev)
+    assert not ok
+    assert "screening_high_lambda" in reason or "high-λ" in reason or "high-l" in reason.lower()
+    with pytest.raises(PromotionError):
+        promote_evaluation(ev)
+
+
 def test_training_set_store_promote_and_snapshot(tmp_path: Path) -> None:
     store = TrainingSetStore(tmp_path / "train")
     seed_default_goldens(store)

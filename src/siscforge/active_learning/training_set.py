@@ -21,6 +21,11 @@ from siscforge.models.active_learning import (
     TrainingSetSnapshot,
 )
 from siscforge.models.candidate import CandidateEvaluation
+from siscforge.quality import (
+    FLAG_SCREENING_HIGH_LAMBDA,
+    assess_result_quality,
+    screening_high_lambda_hard_zero,
+)
 
 # Default quality allow-list for promotion (Specs §2.2.2)
 DEFAULT_ALLOWED_QUALITY_TAGS: frozenset[str] = frozenset({"screening", "production"})
@@ -31,6 +36,7 @@ DISALLOWED_QUALITY_FLAGS: frozenset[str] = frozenset(
         "unreliable",
         "epw_failed",
         "wannier_failed",
+        FLAG_SCREENING_HIGH_LAMBDA,
     }
 )
 
@@ -85,9 +91,19 @@ def promotion_eligibility(
     flags = set(evaluation.quality_flags or [])
     if evaluation.electron_phonon is not None:
         flags |= set(evaluation.electron_phonon.quality_flags or [])
+    # Re-assess so the #44 hard-zero rule applies even when the caller
+    # has not yet run rank / apply_quality_assessment.
+    assessed = assess_result_quality(evaluation)
+    flags |= set(assessed.quality_flags or [])
     bad = flags & DISALLOWED_QUALITY_FLAGS
     if bad:
         return False, f"disallowed quality flags: {sorted(bad)}"
+    if screening_high_lambda_hard_zero(flags):
+        return (
+            False,
+            "screening high-λ + random-Wannier / coarse grids "
+            "cannot enter the conventional training set",
+        )
 
     if evaluation.result_quality == "unreliable":
         return False, "result_quality=unreliable"
