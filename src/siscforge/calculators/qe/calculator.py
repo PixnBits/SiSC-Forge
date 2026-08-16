@@ -343,8 +343,6 @@ class QECalculator(BaseCalculator):
                     primary_wannier_failure_reason,
                 )
                 from siscforge.models.results import WannierResult
-                from siscforge.models.provenance import Provenance
-                from siscforge import __version__ as _sf_ver
 
                 _LOG.exception(
                     "Wannier step failed (upstream preserved) work_dir=%s",
@@ -362,7 +360,7 @@ class QECalculator(BaseCalculator):
                     raw={"error": str(exc), "pathway": "wannier"},
                     provenance=Provenance(
                         source="qe_wannier",
-                        software={"siscforge": _sf_ver},
+                        software={"siscforge": __version__},
                         notes=primary_wannier_failure_reason(str(exc)),
                     ),
                 )
@@ -390,9 +388,7 @@ class QECalculator(BaseCalculator):
                         + dres.summary_line()
                     )
             except Exception as exc:  # noqa: BLE001 — never destroy upstream
-                from siscforge import __version__ as _sf_ver
                 from siscforge.calculators.qe.dmft import classify_dmft_failure
-                from siscforge.models.provenance import Provenance
                 from siscforge.models.results import DMFTResult
 
                 _LOG.exception(
@@ -411,7 +407,7 @@ class QECalculator(BaseCalculator):
                     raw={"error": str(exc), "pathway": "dmft"},
                     provenance=Provenance(
                         source="qe_dmft",
-                        software={"siscforge": _sf_ver},
+                        software={"siscforge": __version__},
                         notes=str(exc),
                     ),
                 )
@@ -498,12 +494,21 @@ class QECalculator(BaseCalculator):
                     if sp is not None and Path(sp).is_file():
                         try:
                             # Fixed path only — never open a log blob as a path
-                            diag_src = Path(sp).read_text(
+                            from siscforge.calculators.qe.qe_checkpoint import (
+                                phonon_diagnostic_text,
+                            )
+
+                            diag_src = phonon_diagnostic_text(
+                                getattr(step, "work_dir", None), Path(sp)
+                            ) or Path(sp).read_text(
                                 encoding="utf-8", errors="replace"
                             )
                             # Prefer last 8 KiB for classification, not the full multi-MB log
+                            # but keep a leading CRASH sidecar if present (usually short).
                             if len(diag_src) > 8192:
-                                diag_src = diag_src[-8192:]
+                                head = diag_src[:2048]
+                                tail = diag_src[-8192:]
+                                diag_src = head + "\n" + tail if head not in tail else tail
                             break
                         except OSError:
                             continue
@@ -518,7 +523,13 @@ class QECalculator(BaseCalculator):
                 pass
             notes_parts.append(truncate_for_notes(wf.message, max_chars=800))
             # Setup failures are not stability conclusions
-            if "fft" in primary.lower() or "phq_setup" in primary.lower():
+            if (
+                "fft" in primary.lower()
+                or "phq_setup" in primary.lower()
+                or "d_matrix" in primary.lower()
+                or "phq_readin" in primary.lower()
+                or "niter_ph" in primary.lower()
+            ):
                 notes_parts.append(
                     "phonon setup failure — not a dynamical-stability conclusion "
                     "(stable_only shortlist ignores this candidate)"

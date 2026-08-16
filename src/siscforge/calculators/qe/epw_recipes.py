@@ -266,6 +266,20 @@ def _fermi_from_work_dir(work_dir: Path) -> float | None:
 # and mislabeling FFT/symmetry setup crashes as "EPW: k-grid inconsistency".
 _PHONON_FAILURE_HINTS: list[tuple[str, str, str]] = [
     (
+        "wrong niter_ph",
+        "phonon: phq_readin — Wrong niter_ph",
+        "QE rejected niter_ph before DFPT. Ubuntu/distro ph.x 6.7 allows "
+        "niter_ph≤100 (maxter); QE 7.3.1 allows ≤150. Set QE_BIN to a "
+        "≥7.2 build. Do not treat as dynamical instability; artefacts "
+        "from a prior ph.x must be kept.",
+    ),
+    (
+        "error in routine phq_readin",
+        "phonon: phq_readin (input rejected before DFPT)",
+        "ph.x never started DFPT. Inspect CRASH / niter_ph / prefix. "
+        "Not a stability conclusion; do not wipe recoverables.",
+    ),
+    (
         "fft grid incompatible with symmetry",
         "phonon: FFT grid incompatible with symmetry (phq_setup)",
         "Ordered/low-symmetry cells often need SCF+PH with nosym/noinv. "
@@ -598,6 +612,29 @@ def is_phq_setup_failure(text: str | None) -> bool:
     )
 
 
+def is_phq_readin_failure(text: str | None) -> bool:
+    """True if ph.x rejected the input namelist in ``phq_readin``.
+
+    ``cannot recover`` / recover-file errors also mention ``phq_readin``
+    but mean corrupt restart state — those must still wipe + full restart.
+    """
+    if not text:
+        return False
+    blob = text.lower()
+    if "phq_readin" not in blob:
+        return False
+    if "cannot recover" in blob or "error reading recover" in blob:
+        return False
+    return "wrong niter_ph" in blob or "wrong" in blob or "error in routine phq_readin" in blob
+
+
+def is_wrong_niter_ph(text: str | None) -> bool:
+    """True if ph.x rejected ``niter_ph`` (QE 6.7 maxter is 100; 7.3.1 is 150)."""
+    if not text:
+        return False
+    return "wrong niter_ph" in text.lower()
+
+
 def is_d_matrix_failure(text: str | None) -> bool:
     """True if ph.x / QE failed with PAW d_matrix / non-orthogonal D_S."""
     if not text:
@@ -779,6 +816,12 @@ def extract_primary_failure_reason(
     phonon_step = _step_is_phonon(step_name)
 
     # Explicit high-signal classes first (order independent of substring tables)
+    if is_wrong_niter_ph(text):
+        msg = "phonon: phq_readin — Wrong niter_ph (use QE ≥ 7.2 / QE_BIN)"
+        return msg[:max_len] + ("…" if len(msg) > max_len else "")
+    if is_phq_readin_failure(text):
+        msg = "phonon: phq_readin (input rejected before DFPT)"
+        return msg[:max_len] + ("…" if len(msg) > max_len else "")
     if is_phq_setup_fft_symmetry_failure(text):
         msg = "phonon: FFT grid incompatible with symmetry (phq_setup)"
         return msg[:max_len] + ("…" if len(msg) > max_len else "")

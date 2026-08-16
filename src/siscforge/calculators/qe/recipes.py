@@ -479,9 +479,14 @@ def run_ph(
     msg = f"ph.x rc={rc}"
     # Detect known Ubuntu/distro QE 6.7 fortify crash when reading data-file-schema.xml
     try:
-        body = out_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        body = ""
+        from siscforge.calculators.qe.qe_checkpoint import phonon_diagnostic_text
+
+        body = phonon_diagnostic_text(work_dir, out_path)
+    except Exception:  # noqa: BLE001 — never fail the step on log IO
+        try:
+            body = out_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            body = ""
     if "buffer overflow detected" in body or "*** buffer overflow" in body:
         ok = False
         msg = (
@@ -605,12 +610,35 @@ def _run_ph_with_optional_recover(
     - ``resuming DFPT with QE recover=.true.``
     - ``DFPT recover failed or unsafe — full phonon step restart``
     - ``running DFPT / phonon`` (clean full step)
+    - remediable ``d_matrix`` / FFT setup leftovers skip recover and
+      hand off to the nosym SCF+PH retry
     """
+    from siscforge.calculators.qe.epw_recipes import (
+        is_phonon_nosym_retryable,
+        is_phq_readin_failure,
+    )
     from siscforge.calculators.qe.qe_checkpoint import (
         assess_phonon_recoverability,
         clean_step_outputs,
         ph_recover_hard_failure,
+        phonon_diagnostic_text,
     )
+
+    prior_blob = phonon_diagnostic_text(work_dir, scf_dir / "ph.out")
+    if prior_blob and is_phonon_nosym_retryable(prior_blob):
+        log.append(
+            "prior ph.x is remediable setup failure (d_matrix/fft) — "
+            "skip recover; handing to nosym SCF+PH retry"
+        )
+        return QEStepResult(
+            name="ph",
+            work_dir=scf_dir,
+            returncode=1,
+            stdout_path=scf_dir / "ph.out",
+            input_path=scf_dir / "ph.in",
+            success=False,
+            message="ph.x prior run: remediable setup failure (see CRASH / ph.out)",
+        )
 
     rec = assess_phonon_recoverability(work_dir, prefix=prefix)
     if rec.recoverable:
@@ -627,6 +655,12 @@ def _run_ph_with_optional_recover(
         hard_fail = ph_recover_hard_failure(
             step.stdout_path, returncode=step.returncode
         )
+        recover_blob = phonon_diagnostic_text(work_dir, step.stdout_path)
+        if not step.success and is_phq_readin_failure(recover_blob):
+            log.append(
+                "ph.x rejected input (phq_readin) — leaving DFPT artefacts in place"
+            )
+            return step
         # Also fall back when recover left no useful state and failed.
         if hard_fail or (
             not step.success
@@ -696,7 +730,9 @@ def _maybe_retry_phonon_setup(
       (``dft.phonon_retry_on_fft_symmetry``, default True)
 
     Policy:
-    1. Classify failure from ph.out fingerprint.
+    1. Classify failure from ``ph.out`` **and** sibling ``CRASH``
+       (QE often writes ``d_matrix`` only to ``CRASH`` and ``MPI_ABORT``
+       to stdout).
     2. Clean phonon partials only for this candidate; re-run SCF with
        ``nosym=.true.`` + ``noinv=.true.``.
     3. Re-run phonon once (no recover from the broken DFPT).
@@ -709,9 +745,14 @@ def _maybe_retry_phonon_setup(
         is_d_matrix_failure,
         is_phq_setup_fft_symmetry_failure,
     )
-    from siscforge.calculators.qe.qe_checkpoint import clean_step_outputs
+    from siscforge.calculators.qe.qe_checkpoint import (
+        clean_step_outputs,
+        phonon_diagnostic_text,
+    )
 
-    body = _read_step_log(step.stdout_path)
+    body = phonon_diagnostic_text(step.work_dir, step.stdout_path) or _read_step_log(
+        step.stdout_path
+    )
     if step.success:
         return step, body
 
@@ -1076,7 +1117,6 @@ def run_relax_scf_phonon(
                 from siscforge.calculators.qe.epw_recipes import (
                     diagnose_qe_step_failure,
                     extract_primary_failure_reason,
-                    log_tail_lines,
                     truncate_for_notes,
                 )
 

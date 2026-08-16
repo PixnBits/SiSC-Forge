@@ -1,5 +1,62 @@
 # Implementation Notes
 
+## Slice 29.1 (2026-08-14) — Pilot recovery: CRASH-only d_matrix + Provenance
+
+**Provenance (landed):** phonon-only `QECalculator.run()` raised
+`UnboundLocalError` on `Provenance` after `ph.x` rc=0 because Wannier/DMFT
+except blocks re-imported the name locally. Module-level import is used.
+Regression: `tests/test_qe_calculator.py`.
+
+**NbN MPI_ABORT (this slice):** `outputs/nitride_phonon_pilot` NbN ε=0
+(`3386c52d`) died with `MPI_ABORT` rank 15. `02_scf/CRASH` is the real
+reason:
+
+```
+from d_matrix : error # 2
+D_S (l=3) for this symmetry operation is not orthogonal
+```
+
+`ph.out` only had the MPI abort (plus NULs), so
+`phonon_retry_on_d_matrix` never fired and the evaluation was labelled
+`MPI_ABORT` instead of `d_matrix`. nproc=16 is **not** excessive on this
+16-core machine (ZrN ε=0 finished the same 3³ mesh with 16 ranks).
+
+Fix: read QE `CRASH` sidecars with `ph.out` for classification / retry /
+recoverability; treat `d_matrix` / `phq_setup` as recover-unsafe; skip
+`recover=.true.` when leftovers are a remediable setup failure and hand
+off to the existing nosym SCF+PH retry. Tests in
+`tests/test_phonon_failure.py` and `tests/test_qe_checkpoint.py`.
+
+A resume without `QE_BIN` picked up Ubuntu `ph.x` 6.7MaX
+(`/usr/bin/ph.x`). QE 6.7 `maxter=100` rejected campaign
+`niter_ph=150` (`Wrong niter_ph` / `phq_readin`) in ~1 s. The same
+setting is valid on QE 7.3.1 (`maxter=150`). A recover-then-hard-fail
+wipe deleted the nearly-complete ZrN ε=-0.04 dyn set (SCF kept).
+Follow-up: classify `Wrong niter_ph`; **do not wipe** DFPT artefacts
+on namelist `phq_readin`; print resolved `pw.x`/`ph.x` and warn only
+for `/usr/bin/ph.x` when `ph_niter>100`.
+
+**Pilot outcome** (QE 7.3.1, `QE_BIN=$HOME/src/q-e-qe-7.3.1/bin`,
+resume, `do_epw=false`, nproc=16): all four cells have honest `qe`
+evaluations, `status=ok`, no mock rows. ZrN ε=0 DFPT left untouched.
+NbN finished on the nosym SCF from the d_matrix retry. ZrN ε=-0.04
+and ε=-0.01 re-ran DFPT from intact SCF after the 6.7 wipe.
+
+| cell | min ω (cm⁻¹) | stable | class |
+|------|-------------:|:------:|-------|
+| ZrN ε=0 | −210.3 | no | likely_mesh_artefact |
+| NbN ε=0 | −297.7 | no | likely_mesh_artefact |
+| ZrN ε=-0.01 | −212.8 | no | likely_mesh_artefact |
+| ZrN ε=-0.04 | −212.2 | no | likely_mesh_artefact |
+
+`n_stable=0`. q=3³ screening does **not** clear the denser-q gate.
+Do not launch EPW. Human decides whether to try a still-denser mesh
+or abandon. Not a production stability certificate; not a Tc claim.
+
+**Out of scope:** no ecut/q-mesh/pseudo/nproc YAML change; no EPW.
+
+---
+
 ## Slice 29 (2026-08-15) — Phonon-map recovery (soft-mode report + denser-q pilot)
 
 **Scope**: Workstation-first recovery when a coarse q=2³ phonon map
@@ -22,6 +79,12 @@ mesh → mesh artefact is the primary suspect.
 | Walkthrough | `docs/examples/nbti_n_phonon_map.md` |
 | Contracts | PRD v0.4.4 US10; Specs v0.5.4 §2.3c / AC19–AC22 |
 | Tests | `tests/test_soft_modes.py`, `tests/test_pilot.py` |
+
+**Follow-up:** phonon-only `QECalculator.run()` raised `UnboundLocalError`
+on `Provenance` after successful `ph.x` because Wannier/DMFT except
+blocks re-imported the name locally (making it function-scoped). Those
+local imports were removed; module-level `Provenance` / `__version__`
+are used. Regression: `tests/test_qe_calculator.py`.
 
 **Out of scope / TODO later:** feed `soft_mode_class` and pilot
 provenance into AL acquisition; automatic q-convergence beyond a single
