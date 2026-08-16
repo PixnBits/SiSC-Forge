@@ -120,13 +120,18 @@ siscforge run --calculator qe examples/nbti_n_phonon_pilot_q3.yaml
 
 The pilot **reuses** `candidate_specs` from the map store (no full-grid
 re-enumeration), copies `pseudo_dir` / `nproc`, writes a **new**
-`output_dir`, and keeps `do_epw: false`. Resume-safe.
+`output_dir`, and keeps `do_epw: false`. Resume-safe. Electronic k on
+the pilot path now uses `siscforge.pilot.NITRIDE_PHONON_K_POLICY`;
+it never lowers a denser source-campaign k. See
+[zrn_nitride_phonon_convergence.md](zrn_nitride_phonon_convergence.md)
+and implementation-notes Slice 29.4.
 
 This is still a **gate**. The operator decides expand vs abandon. Do not
 cite dynamical stability from q=3³ either; production proof needs a
-denser, analysed DFPT on the cells you keep.
+denser, analysed DFPT on the cells you keep. Mild residual imaginary
+modes after dense k stay `likely_mesh_artefact`, not `stable` / EPW.
 
-PRD US10 / Specs §2.3c / implementation-notes Slice 29.
+PRD US10 / Specs §2.3c / implementation-notes Slice 29 / 29.4.
 
 ## Why not AL → EPW first?
 
@@ -232,5 +237,5 @@ DFPT (including the ~1–3 min binary successes).
 - [desktop_shortlist_epw.md](desktop_shortlist_epw.md) — AL shortlist → EPW → refine
 - [nbti_n_al_broad.md](nbti_n_al_broad.md) — broader AL dry-run (EPW-oriented)
 - Example YAML: `examples/nbti_n_phonon_map.yaml`
-- Specs §2.3c; PRD US10; implementation-notes Slice 29
-- [zrn_nitride_phonon_convergence.md](zrn_nitride_phonon_convergence.md) — Γ vs finite-q / k-ladder before another q-pilot
+- Specs §2.3c; PRD US10; implementation-notes Slice 29 / 29.4
+- [zrn_nitride_phonon_convergence.md](zrn_nitride_phonon_convergence.md) — Γ vs finite-q / k-ladder (closed at k=12³, −29.3 cm⁻¹)

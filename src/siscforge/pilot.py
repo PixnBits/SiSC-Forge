@@ -1,4 +1,4 @@
-"""Guided denser-q phonon pilot from an existing map store (Slice 29).
+"""Guided denser-q phonon pilot from an existing map store (Slice 29 / 29.4).
 
 When a coarse q=2³ map returns zero ``dynamically_stable`` survivors, the
 operator should not have to hand-write a pilot YAML or abandon the family
@@ -10,10 +10,16 @@ on a mesh-artefact suspicion. This helper:
 * reuses exact ``candidate_specs`` (no full-grid re-enumeration)
 * forces ``do_epw: false`` — never auto-launches EPW on soft cells
 * is resume-safe (``run.resume: true``)
+* uses a nitride-phonon recovery electronic k of at least 8³ (prefer 12³
+  for small / rock-salt binary cells). Electronic k under-sampling was
+  the dominant artefact on ZrN (k=4³ → −149; k=8³ → −72; k=12³ → −29
+  Γ-noise). The pilot never lowers a denser source-campaign k.
 
-The pilot does **not** decide physical stability. The human still chooses
-whether to expand or abandon.
+The pilot does **not** decide physical stability. Residual |ω| ≲ 30–40
+cm⁻¹ after dense k is not auto-promoted to stable or EPW. The human
+still chooses whether to expand or abandon.
 """
+
 
 from __future__ import annotations
 
@@ -28,11 +34,24 @@ from siscforge.shortlist import evaluation_to_spec
 from siscforge.soft_modes import (
     classify_soft_mode,
     is_binary_nitride,
+    n_atoms,
 )
 
 PilotMode = Literal["binaries", "least_soft", "ids"]
 
 DEFAULT_QPOINTS = (3, 3, 3)
+
+# Nitride phonon recovery electronic k (Slice 29.4). Global DFTConfig.kpoints
+# stays [4,4,4]; this floor is scoped to the pilot / map-recovery path.
+# ZrN: k=4³ invented large finite-q imag; k=8³ healed most; k=12³ collapsed
+# leftover softness to Γ-noise (~−29 cm⁻¹).
+NITRIDE_PHONON_K_MIN = (8, 8, 8)
+NITRIDE_PHONON_K_SMALL_BINARY = (12, 12, 12)
+_SMALL_CELL_N_ATOMS = 4
+NITRIDE_PHONON_K_POLICY = (
+    f"min {NITRIDE_PHONON_K_MIN[0]}³ "
+    f"(prefer {NITRIDE_PHONON_K_SMALL_BINARY[0]}³ for small/binary cells)"
+)
 
 
 def load_source_campaign(store_dir: str | Path) -> CampaignConfig | None:
@@ -133,22 +152,64 @@ def select_pilot_evaluations(
     return ranked[:max_jobs]
 
 
+def _cell_is_small_or_binary(ev: CandidateEvaluation) -> bool:
+    """True for rock-salt binaries or cells with n_atoms ≤ 4."""
+    if is_binary_nitride(ev.candidate.formula):
+        return True
+    n = n_atoms(ev)
+    return n is not None and n <= _SMALL_CELL_N_ATOMS
+
+
+def nitride_phonon_recovery_kpoints(
+    selected: list[CandidateEvaluation] | None = None,
+) -> list[int]:
+    """Nitride-phonon recovery k from ``NITRIDE_PHONON_K_*`` constants.
+
+    12³ only when *every* selected cell is small or a rock-salt binary.
+    A mixed selection (any large non-binary) takes the 8³ floor for the
+    whole campaign. Conservative; per-cell k is out of scope.
+    """
+    if selected and all(_cell_is_small_or_binary(ev) for ev in selected):
+        return list(NITRIDE_PHONON_K_SMALL_BINARY)
+    return list(NITRIDE_PHONON_K_MIN)
+
+
+def _pilot_kpoints(
+    source: CampaignConfig | None,
+    selected: list[CandidateEvaluation] | None = None,
+) -> list[int]:
+    """Recovery k, never lowering a denser source-campaign mesh."""
+    recovery = nitride_phonon_recovery_kpoints(selected)
+    if source is None:
+        return recovery
+    src = [int(x) for x in (source.dft.kpoints or [])[:3]]
+    if len(src) != 3:
+        return recovery
+    return [max(s, r) for s, r in zip(src, recovery, strict=True)]
+
+
 def _pilot_dft(
     source: CampaignConfig | None,
     *,
     qpoints: list[int],
     pseudo_dir: str | None,
     nproc: int | None,
+    selected: list[CandidateEvaluation] | None = None,
 ) -> DFTConfig:
-    """Copy map DFT knobs; force phonon-only + denser q. Never enable EPW."""
+    """Copy map DFT knobs; force phonon-only + denser q. Never enable EPW.
+
+    Fallback (no source campaign) uses nitride-phonon recovery k, never 4³.
+    """
+    kpts = _pilot_kpoints(source, selected)
     if source is not None:
         dft = source.dft.model_copy(deep=True)
+        dft.kpoints = list(kpts)
     else:
         dft = DFTConfig(
             engine="qe",
             ecutwfc=60.0,
             ecutrho=480.0,
-            kpoints=[4, 4, 4],
+            kpoints=list(kpts),
             qpoints=list(qpoints),
             do_relax=True,
             do_phonon=True,
@@ -227,6 +288,7 @@ def build_pilot_campaign(
         nproc=nproc if nproc is not None else (
             source_campaign.dft.nproc if source_campaign is not None else None
         ),
+        selected=chosen,
     )
     # CLI / operator override of UPF / ranks after copy.
     if pseudo_dir:
@@ -288,11 +350,15 @@ def build_pilot_campaign(
                 "formulas": [s.formula for s in specs],
                 "candidate_ids": [s.candidate_id for s in specs],
                 "do_epw": False,
+                "kpoints": list(dft.kpoints),
                 "limitation": (
                     "Denser q is still a gate, not production dynamical-stability "
-                    "proof. do_epw is forced false; do not promote these cells "
-                    "into EPW solely because the pilot ran. Soft-mode class is "
-                    "heuristic."
+                    "proof. Electronic k under-sampling was the dominant ZrN "
+                    f"artefact; pilot k is {NITRIDE_PHONON_K_POLICY}. "
+                    "do_epw is forced false; do not promote these cells into "
+                    "EPW solely because the pilot ran. Soft-mode class is "
+                    "heuristic. Mild residual imaginary modes after dense k "
+                    "stay suspect, not stable."
                 ),
                 # soft_mode_class / denser-q confirmation are first-class on
                 # shortlist + AcquisitionRecord (#45). This YAML stays
@@ -314,7 +380,10 @@ def write_pilot_yaml(config: CampaignConfig, path: str | Path) -> Path:
         fh.write(
             "# Auto-generated DENSER-Q PHONON PILOT — do_epw is false\n"
             "# Coarse-map recovery: reuse candidate_specs, denser q, new output_dir\n"
-            f"# qpoints: {qpts}  selection={extras.get('mode')}\n"
+            f"# qpoints: {qpts}  kpoints: {config.dft.kpoints}  "
+            f"selection={extras.get('mode')}\n"
+            f"# Electronic k: {NITRIDE_PHONON_K_POLICY}. "
+            "Never lower source k.\n"
             "# This is still a discovery gate, not production dynamical-stability proof.\n"
             "# q=3³ is denser than the map, not a stability certificate.\n"
             "# Do not launch EPW on these cells until a human decides they are stable.\n"

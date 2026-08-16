@@ -1,5 +1,83 @@
 # Implementation Notes
 
+## Slice 29.4 (2026-08-16) — ZrN k=12³ closes the electronic-sampling ladder
+
+
+Phonon-first nitride diagnosis. Large finite-q imaginary modes on ZrN
+ε=0 were **electronic k-mesh under-sampling**, not a lattice instability
+and not primarily a q-mesh artefact. EPW remains frozen.
+
+### Numbers (ZrN ε=0, Fm-3m primitive, a_prim≈3.248 Å → a_cub≈4.59 Å)
+
+| Store / probe | q | k | ecutwfc | min ω (cm⁻¹) | Notes |
+|---------------|:-:|:-:|--------:|-------------:|-------|
+| nitride_phonon_diag_q4 | 4³ | 4³ | 50 | **−148.7** | many finite-q soft |
+| zrn_kmesh_diag | 4³ | 8³ | 60 | **−72.1** | most soft q healed |
+| zrn_k12_diag | 4³ | 12³ | 60 | **−29.3** | collapsed to Γ-noise scale |
+
+k=12³ / ecut=60 vs k=8³ / ecut=60 on the **same** q=4³: leftover finite-q
+softness collapsed to ordinary Γ acoustic numerical noise (~−29 cm⁻¹,
+acoustic-like). Soft-mode class stays `likely_mesh_artefact` (suspect,
+not proof). Residual |ω| ≲ 30–40 cm⁻¹ is **not** auto-promoted to
+`stable` and does **not** clear the EPW gate.
+
+The leftover −29.3 cm⁻¹ is acoustic-like at Γ (ASR not applied). Soft-mode
+locus treats |Γ| below `_GAMMA_MILD_CM1` (50 cm⁻¹) as ordinary acoustic
+numerical noise — consistent with the k=12³ leftover sitting at Γ-noise
+scale after finite-q branches healed.
+
+The first recorded step also raised ecutwfc 50 → 60 with k. Progressive
+healing still identifies electronic k as the dominant artefact; k=8³ →
+12³ was at **fixed** ecut=60. Future ladders should change one lever at
+a time.
+
+Structure: primitive Fm-3m, basis (0,0,0) / (½,½,½); a_cub ≈ 4.59 Å
+matches experiment. Confirm space group / CIF in the store, not just
+the formula.
+
+### Pseudos (unchanged)
+
+SSSP PBE efficiency pair under `/usr/share/espresso/pseudo`:
+
+- `Zr_pbe_v1.uspp.F.UPF` — GBRV USPP
+- `N.pbe-n-radius_5.UPF` — Dal Corso USPP
+
+Remain adequate. Do **not** swap UPFs. ASR is **not** applied and would
+only clean Γ.
+
+### Policy (nitride phonon screening / pilot)
+
+Electronic k under-sampling was the dominant artefact. Canonical numbers
+live in `siscforge.pilot` (`NITRIDE_PHONON_K_MIN` / `_SMALL_BINARY` /
+`NITRIDE_PHONON_K_POLICY`): min 8³, prefer 12³ for small / rock-salt
+binary cells (`n_atoms` ≤ 4 or known RS binary formulas). Pilot fallback
+never uses `kpoints=[4,4,4]`; it never lowers a denser source-campaign k.
+Global `DFTConfig.kpoints` default stays `[4,4,4]` for generality.
+
+A mixed selection (any large non-binary cell) takes the 8³ floor for the
+**whole** pilot. Conservative; per-cell k is out of scope.
+
+Soft-mode locus already prefers “densify SCF k / ecut on the same
+q-grid” when the softest mode is finite-q. k is no longer the dominant
+lever for this ZrN cell. Cheapest remaining cross-check before any
+family-wide default change: optional NbN ε=0 at the same settings
+(issue #72).
+
+### Tooling (this slice)
+
+- Checklist: `docs/examples/zrn_nitride_phonon_convergence.md`
+- Diagnostic campaign: `examples/zrn_k12_diag.yaml`
+- Pilot recovery k: `siscforge.pilot._pilot_dft` / `_pilot_kpoints`
+- Atom count helper: `siscforge.soft_modes.n_atoms`
+
+### Out of scope
+
+EPW, composition expansion, UPF swap, ASR as a “fix”, `--force-rerun`
+of finished dyn sets, Tc / λ claims from these stores, changing
+soft-mode class of mild residual imaginary modes to `stable`.
+
+---
+
 ## Slice 29.3 (2026-08-16) — Walltime: DFPT q-mesh + dense-q tier (#67)
 
 Operator UX only. Phonon-only campaigns were reading unused `epw.nqc`
@@ -19,6 +97,7 @@ Tests: `tests/test_walltime.py`. Files: `src/siscforge/walltime.py`.
 ---
 
 ## Slice 29.2 (2026-08-15) — ZrN mesh ladder: k=8³ shrinks finite-q softness
+
 
 Phonon-first nitride diagnosis. Known-stable rock-salt binaries stay
 imaginary across successive densifications. EPW remains frozen.

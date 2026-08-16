@@ -1,4 +1,4 @@
-"""Slice 29 — denser-q phonon pilot helper."""
+"""Slice 29 / 29.4 — denser-q phonon pilot helper + nitride recovery k."""
 
 from __future__ import annotations
 
@@ -11,11 +11,14 @@ from siscforge.models.candidate import CandidateEvaluation
 from siscforge.models.config import CampaignConfig, DFTConfig, EPWConfig
 from siscforge.models.results import PhononResult, SiFeasibilityScore
 from siscforge.pilot import (
+    NITRIDE_PHONON_K_POLICY,
     build_pilot_campaign,
+    nitride_phonon_recovery_kpoints,
     parse_qpoints,
     select_pilot_evaluations,
     write_pilot_yaml,
 )
+from siscforge.soft_modes import n_atoms
 from siscforge.store import EvaluationStore
 from siscforge.structure.generator import generate_candidates, structure_to_candidate
 from siscforge.structure.nitrides import build_binary_nitride
@@ -127,6 +130,8 @@ def test_build_pilot_yaml_reuses_specs_no_epw(tmp_path: Path) -> None:
     assert cfg.dft.pseudo_dir == "/usr/share/espresso/pseudo"
     assert cfg.run.resume is True
     assert cfg.output_dir != str(store_dir)
+    # Source map was k=4³ (DFTConfig default); binaries raise to 12³.
+    assert list(cfg.dft.kpoints) == [12, 12, 12]
     # Must not re-enumerate the full metal × strain grid.
     assert not cfg.enumeration.metals
     assert cfg.enumeration.max_candidates == 2
@@ -203,3 +208,108 @@ def test_write_pilot_yaml_header(tmp_path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert "do_epw is false" in text
     assert "not production dynamical-stability proof" in text
+
+
+def test_pilot_fallback_k_is_dense_for_binaries(tmp_path: Path) -> None:
+    """No source campaign: rock-salt binaries get 12³, never 4³."""
+    assert list(DFTConfig().kpoints) == [4, 4, 4]
+    evals = [
+        _ev(metal="Zr", formula="ZrN", min_freq=-29.3),
+        _ev(metal="Nb", formula="NbN", min_freq=-40.0),
+    ]
+    cfg, chosen = build_pilot_campaign(
+        evals,
+        name="fallback_k",
+        source_campaign=None,
+        mode="binaries",
+        max_jobs=2,
+        output_dir=str(tmp_path / "pout"),
+    )
+    assert len(chosen) == 2
+    assert list(cfg.dft.kpoints) == [12, 12, 12]
+    assert min(cfg.dft.kpoints) >= 8
+    assert cfg.dft.do_epw is False
+    assert list(cfg.dft.qpoints) == [3, 3, 3]
+
+
+def test_pilot_keeps_denser_source_k(tmp_path: Path) -> None:
+    evals = [_ev(metal="Zr", formula="ZrN", min_freq=-29.3)]
+    src = CampaignConfig(
+        name="dense_src",
+        dft=DFTConfig(kpoints=[16, 16, 16], qpoints=[4, 4, 4], do_epw=False),
+    )
+    cfg, _ = build_pilot_campaign(
+        evals,
+        source_campaign=src,
+        mode="ids",
+        candidate_ids=[evals[0].candidate.candidate_id],
+        max_jobs=1,
+        output_dir=str(tmp_path / "pout"),
+    )
+    assert list(cfg.dft.kpoints) == [16, 16, 16]
+    assert cfg.dft.do_epw is False
+
+
+def test_pilot_raises_coarse_source_k_for_binaries(tmp_path: Path) -> None:
+    evals = [_ev(metal="Zr", formula="ZrN", min_freq=-29.3)]
+    src = CampaignConfig(
+        name="coarse_src",
+        dft=DFTConfig(kpoints=[4, 4, 4], qpoints=[2, 2, 2], do_epw=False),
+    )
+    cfg, _ = build_pilot_campaign(
+        evals,
+        source_campaign=src,
+        mode="binaries",
+        max_jobs=1,
+        output_dir=str(tmp_path / "pout"),
+    )
+    assert list(cfg.dft.kpoints) == [12, 12, 12]
+    assert cfg.dft.do_epw is False
+    assert list(cfg.dft.qpoints) == [3, 3, 3]
+
+
+def test_pilot_fallback_k_floor_for_large_ternary(tmp_path: Path) -> None:
+    ev = _ev(metal="Nb", formula="Nb0.5Ti0.5N", min_freq=-200.0)
+    ev.candidate.metadata = {**(ev.candidate.metadata or {}), "n_atoms": 8}
+    ev.candidate.structure_cif = None
+    assert nitride_phonon_recovery_kpoints([ev]) == [8, 8, 8]
+    cfg, _ = build_pilot_campaign(
+        [ev],
+        source_campaign=None,
+        mode="least_soft",
+        max_jobs=1,
+        output_dir=str(tmp_path / "pout"),
+    )
+    assert list(cfg.dft.kpoints) == [8, 8, 8]
+    assert min(cfg.dft.kpoints) >= 8
+    assert cfg.dft.do_epw is False
+
+
+def test_pilot_mixed_selection_uses_floor(tmp_path: Path) -> None:
+    binary = _ev(metal="Zr", formula="ZrN", min_freq=-29.3)
+    ternary = _ev(metal="Nb", formula="Nb0.5Ti0.5N", min_freq=-200.0)
+    ternary.candidate.metadata = {
+        **(ternary.candidate.metadata or {}),
+        "n_atoms": 8,
+    }
+    ternary.candidate.structure_cif = None
+    assert nitride_phonon_recovery_kpoints([binary, ternary]) == [8, 8, 8]
+    cfg, _ = build_pilot_campaign(
+        [binary, ternary],
+        source_campaign=None,
+        mode="least_soft",
+        max_jobs=2,
+        output_dir=str(tmp_path / "pout"),
+    )
+    assert list(cfg.dft.kpoints) == [8, 8, 8]
+    assert cfg.dft.do_epw is False
+
+
+def test_n_atoms_is_public_and_policy_is_canonical() -> None:
+    ev = _ev(metal="Zr", formula="ZrN", min_freq=-29.3)
+    assert n_atoms(ev) == 2
+    ev.candidate.metadata = {**(ev.candidate.metadata or {}), "n_atoms": 8}
+    ev.candidate.structure_cif = None
+    assert n_atoms(ev) == 8
+    assert "8" in NITRIDE_PHONON_K_POLICY
+    assert "12" in NITRIDE_PHONON_K_POLICY

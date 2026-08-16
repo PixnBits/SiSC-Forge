@@ -201,7 +201,8 @@ def _frequency_list(ph: PhononResult) -> list[float]:
     return []
 
 
-def _n_atoms(ev: CandidateEvaluation) -> int | None:
+def n_atoms(ev: CandidateEvaluation) -> int | None:
+    """Atom count from candidate metadata or CIF, when available."""
     meta = ev.candidate.metadata or {}
     for key in ("n_atoms", "natoms", "n_sites"):
         if key in meta:
@@ -218,6 +219,10 @@ def _n_atoms(ev: CandidateEvaluation) -> int | None:
         except Exception:  # noqa: BLE001
             return None
     return None
+
+
+# Back-compat alias.
+_n_atoms = n_atoms
 
 
 def _acoustic_vs_optical(
@@ -464,19 +469,19 @@ def classify_soft_mode(
 
     status = (ph.status or "unknown").lower()
     freqs = _frequency_list(ph)
-    n_atoms = _n_atoms(ev)
+    nat = n_atoms(ev)
     n_modes = ph.n_modes if ph.n_modes is not None else (len(freqs) or None)
-    qpoints = _spectra_for_locus(ph, freqs, n_atoms=n_atoms)
+    qpoints = _spectra_for_locus(ph, freqs, n_atoms=nat)
     if qpoints:
         ac_op, asr = _classify_acoustic_over_q(
             qpoints,
-            n_atoms=n_atoms,
+            n_atoms=nat,
             imag_threshold_cm1=imag_threshold_cm1,
         )
     else:
         ac_op, asr = _acoustic_vs_optical(
             freqs,
-            n_atoms=n_atoms,
+            n_atoms=nat,
             n_modes=n_modes,
             imag_threshold_cm1=imag_threshold_cm1,
         )
@@ -628,10 +633,13 @@ def _next_actions(
         f"Read {REPORT_JSON} / {REPORT_MD} in the campaign store.",
     ]
     if finite_q_softest:
+        from siscforge.pilot import NITRIDE_PHONON_K_POLICY
+
         actions.append(
             "Softest mode is at finite q (Γ only mildly imaginary). "
             "Densify SCF k / ecut on the same q-grid or audit the UPF; "
-            "another coarse-q pilot will not discriminate this pattern."
+            "another coarse-q pilot will not discriminate this pattern. "
+            f"Nitride phonon recovery k is {NITRIDE_PHONON_K_POLICY}."
         )
     actions.extend(
         [

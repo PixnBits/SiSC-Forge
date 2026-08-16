@@ -35,6 +35,11 @@
 # Limitations: coarse q-grids (2³) can mis-label soft modes; treat stability as
 # a discovery gate, not a production dynamical-stability proof. Do not densify
 # to refine-tier 4³ on this map — that is multi-day ROI for survivors only.
+#
+# k-policy (Slice 29.4): this YAML keeps historical k=4³ so a finished map
+# is not force-rerun. New nitride phonon screening / recovery uses
+# siscforge.pilot.NITRIDE_PHONON_K_POLICY. See
+# docs/examples/zrn_nitride_phonon_convergence.md.
 
 name: nbti_n_phonon_map
 description: >
@@ -99,6 +104,9 @@ dft:
   pseudo_dir: /usr/share/espresso/pseudo
   ecutwfc: 50.0
   ecutrho: 400.0
+  # Historical coarse-map k. New nitride phonon screening / recovery
+  # uses siscforge.pilot.NITRIDE_PHONON_K_POLICY. Do not rewrite this
+  # finished map's k — that would force-rerun DFPT.
   kpoints: [4, 4, 4]
   # Screening-quality q-mesh (NOT refine 4³ — keep map cheaper than dense EPW)
   qpoints: [2, 2, 2]

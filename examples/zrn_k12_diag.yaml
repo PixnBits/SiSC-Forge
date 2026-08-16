@@ -1,7 +1,8 @@
-# ZrN ε=0 — k=12³ diagnostic (same q=4³, ecut=60)
-# Previous: k=4³ → min −148.7; k=8³ → min −72.1 (most soft q healed).
-# This run: one more k step. If dyn18/dyn20 collapse toward Γ-noise,
-# electronic sampling was the cause. If still ~−70 at same q → UPF/ecut next.
+# ZrN ε=0 — k=12³ diagnostic (FINISHED). Same q=4³, ecut=60.
+# Ladder: k=4³ → −148.7; k=8³ → −72.1; k=12³ → −29.3 (finite-q collapsed
+# to Γ-noise scale). k is no longer the dominant lever for this cell.
+# Soft-mode class stays likely_mesh_artefact. Still no EPW. Do not
+# --force-rerun this finished dyn set.
 #
 # docker run --rm -it -v "$PWD:/workspace" -w /workspace --cpus=16 \
 #   siscforge:latest siscforge run --calculator qe examples/zrn_k12_diag.yaml
@@ -9,7 +10,8 @@
 name: zrn_k12_diag
 description: >
   Single-cell ZrN ε=0 DFPT at q=4×4×4 with SCF k=12×12×12, ecutwfc=60.
-  Discriminating step after k=8³ halved |min ω| and healed most soft q-points.
+  Closed the electronic-sampling ladder: min ω −29.3 cm⁻¹ (Γ-noise scale).
+  Do not --force-rerun. Still not a stability / EPW certificate.
 version: "0.1"
 dry_run: false
 

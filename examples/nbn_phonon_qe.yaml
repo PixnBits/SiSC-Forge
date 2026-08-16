@@ -39,6 +39,8 @@ dft:
   engine: qe
   ecutwfc: 50.0
   ecutrho: 400.0
+  # Gamma-point golden-system example (historical). For nitride phonon
+  # *maps* / recovery pilots, see siscforge.pilot.NITRIDE_PHONON_K_POLICY.
   kpoints: [4, 4, 4]
   conv_thr: 1.0e-8
   occupations: smearing
