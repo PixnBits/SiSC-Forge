@@ -1,5 +1,59 @@
 # Implementation Notes
 
+## Slice 29.5 (2026-08-16) — NbN ε=0 k=12³ diagnostic (#72)
+
+Phonon-only **control** after Slice 29.4. YAML + docs only — actual
+DFPT numbers are recorded by the operator after the Docker run. Not
+a production claim and not an EPW run.
+
+### Purpose
+
+ZrN ε=0 finite-q imaginary modes were electronic k under-sampling and
+collapsed at k=12³ / q=4³ / ecut=60 to Γ-noise (−29.3 cm⁻¹). Before
+any family-wide nitride phonon k default for *new* maps, run the same
+settings on stoichiometric NbN (one lever: composition).
+
+### Settings
+
+`examples/nbn_k12_diag.yaml` — twin of `examples/zrn_k12_diag.yaml`:
+
+- NbN, ε=0, Fm-3m rock-salt, single candidate
+- k=12³, q=4³, ecutwfc=60, ecutrho=480, SSSP PBE efficiency
+- `do_relax: true`, `do_phonon: true`, `do_epw: false`
+- `quality_tag: screening`, `nproc: 16`, `ph_niter: 150` (QE 7.3.1)
+- `output_dir: outputs/nbn_k12_diag` (new store)
+- Resume-safe: `resume: true`, `force_rerun: false`, `resume_qe_steps: true`
+
+### How to interpret
+
+Compare Γ vs finite-q to the ZrN ladder in Slice 29.4 / the ZrN
+checklist. If finite-q softness also collapses to Γ-noise scale, the
+raised nitride k-policy is a candidate for *new* maps (historical
+YAMLs stay frozen). If the cell stays substantially soft at dense k,
+that is **not** automatically another mesh artefact.
+
+Literature: harmonic instability / extreme softness is often reported
+for *ideal stoichiometric* δ-NbN. Experimental superconducting NbN is
+typically N-deficient; recent work invokes anharmonicity. Record the
+numbers honestly. Do not invent expected min-ω.
+
+Still no EPW. Still no stability / λ / Tc claims from this store.
+Do not `--force-rerun` finished ZrN (or other) DFPT artefacts.
+
+### Tooling
+
+- Campaign: `examples/nbn_k12_diag.yaml`
+- Checklist: `docs/examples/nbn_nitride_phonon_diag.md`
+- ZrN comparison: `docs/examples/zrn_nitride_phonon_convergence.md`
+
+### Out of scope
+
+EPW, refine/shortlist changes, global `DFTConfig.kpoints` default,
+UPF swap, ASR, soft-mode class auto-promotion, ternaries / family
+maps, λ/Tc or dynamical-stability claims.
+
+---
+
 ## Slice 29.4 (2026-08-16) — ZrN k=12³ closes the electronic-sampling ladder
 
 
@@ -59,14 +113,15 @@ A mixed selection (any large non-binary cell) takes the 8³ floor for the
 
 Soft-mode locus already prefers “densify SCF k / ecut on the same
 q-grid” when the softest mode is finite-q. k is no longer the dominant
-lever for this ZrN cell. Cheapest remaining cross-check before any
-family-wide default change: optional NbN ε=0 at the same settings
-(issue #72).
+lever for this ZrN cell. Cross-check before any family-wide default
+change: NbN ε=0 at the same settings (`examples/nbn_k12_diag.yaml`,
+Slice 29.5 / issue #72).
 
 ### Tooling (this slice)
 
 - Checklist: `docs/examples/zrn_nitride_phonon_convergence.md`
 - Diagnostic campaign: `examples/zrn_k12_diag.yaml`
+- NbN control: `examples/nbn_k12_diag.yaml` (Slice 29.5 / #72)
 - Pilot recovery k: `siscforge.pilot._pilot_dft` / `_pilot_kpoints`
 - Atom count helper: `siscforge.soft_modes.n_atoms`
 
