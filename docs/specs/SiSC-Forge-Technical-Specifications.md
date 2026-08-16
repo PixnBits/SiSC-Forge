@@ -386,6 +386,10 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
     (flag `screening_high_lambda`). Soft multiplicative penalties remain for
     milder cases. Same rule refuses conventional-pool promotion.
   - Export/docs language: do not cite Tc until trust flags improve.
+- **AL promotion (#47):** conventional-pool default refuses `screening` +
+  `wannier_random_proj` (opt in with `allow_screening_random`). Default
+  `hull_penalty` is 0.3. `quality_flags` / `result_quality` appear on
+  `AcquisitionRecord`. Explicit promote and mock-refusal (AC13 / AC18) stay.
 - **Phonon-aware ranking:**
   - `rank --stable-first` prefers dynamically stable phonons.
   - Setup failures are not “stable.”

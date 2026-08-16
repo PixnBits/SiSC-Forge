@@ -447,7 +447,7 @@ active_learning:
     uncertainty: 0.4
     predicted_tc: 0.3
     si_feasibility: 0.3
-    hull_penalty: 0.1
+    hull_penalty: 0.3
   tc_ceiling_K: 40.0
   evaluate_deferred_with_surrogate: true
   version: 0.1-priority-queue

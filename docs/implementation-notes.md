@@ -1381,7 +1381,7 @@ Deferred: production Wannier, anisotropic Eliashberg, trained GNN, AL retrain, P
 ```
 score = w_u·unc + w_tc·(Tĉ/Tc_max) + w_si·(Si/100) − w_hull·(E_hull/0.25)
 ```
-Default weights: uncertainty 0.4, predicted_tc 0.3, si_feasibility 0.3, hull_penalty 0.1.
+Default weights: uncertainty 0.4, predicted_tc 0.3, si_feasibility 0.3, hull_penalty 0.3 (#47).
 
 ### Campaign YAML
 ```yaml
@@ -1394,7 +1394,7 @@ active_learning:
     uncertainty: 0.4
     predicted_tc: 0.3
     si_feasibility: 0.3
-    hull_penalty: 0.1
+    hull_penalty: 0.3
 ```
 
 ### Run-path behavior

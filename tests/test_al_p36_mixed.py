@@ -95,7 +95,7 @@ def _epw_eval(
             Tc_eliashberg=tc,
             converged=True,
             status="mock" if mock else "ok",
-            quality_tag="mock" if mock else "screening",
+            quality_tag="mock" if mock else "production",
         ),
         performance_score=tc,
         performance_score_source="mock" if mock else source,

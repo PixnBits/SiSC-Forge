@@ -52,7 +52,7 @@ active_learning:
     uncertainty: 0.4
     predicted_tc: 0.3
     si_feasibility: 0.3
-    hull_penalty: 0.1
+    hull_penalty: 0.3
 
 dft:
   do_dmft: true

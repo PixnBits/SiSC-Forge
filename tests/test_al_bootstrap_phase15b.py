@@ -36,7 +36,7 @@ def _cand(formula: str = "NbN", strain: float = 0.0) -> StructureCandidate:
     )
 
 
-def _ok_epw_eval(formula: str = "NbN", *, quality_tag: str = "screening") -> CandidateEvaluation:
+def _ok_epw_eval(formula: str = "NbN", *, quality_tag: str = "production") -> CandidateEvaluation:
     cand = _cand(formula)
     cand.quality_tag = quality_tag  # type: ignore[assignment]
     ep = ElectronPhononResult(
