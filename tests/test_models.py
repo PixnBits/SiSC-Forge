@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -136,3 +138,34 @@ def test_provenance_defaults() -> None:
     assert p.source == "siscforge"
     assert p.created_at is not None
     assert Provenance.model_validate(p.model_dump()).software == {}
+
+
+def test_nbn_k12_diag_example_loads() -> None:
+    """examples/nbn_k12_diag.yaml is a valid phonon-only twin of zrn_k12_diag."""
+    root = Path(__file__).resolve().parents[1]
+    nbn = CampaignConfig.from_yaml(root / "examples" / "nbn_k12_diag.yaml")
+    zrn = CampaignConfig.from_yaml(root / "examples" / "zrn_k12_diag.yaml")
+    assert nbn.enumeration.formulas == ["NbN"]
+    assert nbn.enumeration.strain_values == [0.0]
+    assert nbn.enumeration.max_candidates == 1
+    assert nbn.dft.do_relax is True
+    assert nbn.dft.do_phonon is True
+    assert nbn.dft.do_epw is False
+    assert nbn.dft.epw.enabled is False
+    assert list(nbn.dft.kpoints) == [12, 12, 12]
+    assert list(nbn.dft.qpoints) == [4, 4, 4]
+    assert nbn.dft.ecutwfc == 60.0
+    assert nbn.dft.ecutrho == 480.0
+    assert nbn.dft.ph_niter == 150
+    assert nbn.dft.quality_tag == "screening"
+    assert nbn.dft.nproc == 16
+    assert nbn.dft.pseudo_dir == "/usr/share/espresso/pseudo"
+    assert nbn.run.resume is True
+    assert nbn.run.force_rerun is False
+    assert nbn.run.resume_qe_steps is True
+    assert nbn.output_dir == "outputs/nbn_k12_diag"
+    assert nbn.output_dir != zrn.output_dir
+    assert list(nbn.dft.kpoints) == list(zrn.dft.kpoints)
+    assert list(nbn.dft.qpoints) == list(zrn.dft.qpoints)
+    assert nbn.dft.ecutwfc == zrn.dft.ecutwfc
+    assert nbn.dft.do_epw is zrn.dft.do_epw

@@ -56,8 +56,9 @@ identifies electronic k as the dominant artefact; k=8³ → 12³ was at
 `siscforge.pilot` (`NITRIDE_PHONON_K_POLICY`: min 8³, prefer 12³ for
 small / rock-salt binaries). Global `DFTConfig.kpoints` stays `[4,4,4]`.
 A mixed selection (any large non-binary) takes the 8³ floor for the whole
-pilot. Family-wide default change waits on a cheap NbN ε=0 cross-check
-at the same settings (issue #72) — not another ZrN k step.
+pilot. Family-wide default change waits on the NbN ε=0 control at the
+same settings (`examples/nbn_k12_diag.yaml`, issue #72) — not another
+ZrN k step. See `docs/examples/nbn_nitride_phonon_diag.md`.
 
 ## 4. Pseudopotentials
 
@@ -87,4 +88,5 @@ step.
 - `outputs/zrn_kmesh_diag/`, `outputs/zrn_k12_diag/`,
   `outputs/nitride_phonon_diag_q4/`
 - implementation-notes Slice 29.4; specs §2.3c
-- NbN ε=0 confirmation: issue #72
+- NbN ε=0 control: `examples/nbn_k12_diag.yaml`,
+  `docs/examples/nbn_nitride_phonon_diag.md`, issue #72
