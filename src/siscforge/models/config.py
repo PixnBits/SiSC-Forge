@@ -145,6 +145,34 @@ class RankingConfig(BaseModel):
         gt=0.0,
         description="Tc-like ceiling (K) used to normalize performance_score to 0–100.",
     )
+    missing_performance_default: float = Field(
+        default=15.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Normalized performance (0–100) when performance_score is missing. "
+            "Pessimistic (#46) so incomplete evals cannot look mid-to-good. "
+            "Set 50 to restore the pre-#46 neutral default."
+        ),
+    )
+    missing_si_feasibility_default: float = Field(
+        default=15.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Si-feasibility used when the score object is absent. "
+            "Pessimistic (#46); set 50 to restore the old neutral default. "
+            "Missing-lattice *component* demotion is owned by the Si scorer."
+        ),
+    )
+    performance_ceiling_by_source: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-source ceilings (K) keyed by performance_score_source "
+            "(e.g. epw, dmft_pairing, dmft_pairing_mock). Empty → use "
+            "performance_ceiling_K for every source (conventional default)."
+        ),
+    )
     pareto_enabled: bool = Field(
         default=True,
         description=(
@@ -175,6 +203,8 @@ class RankingConfig(BaseModel):
         "si_feasibility_weight",
         "uncertainty_weight",
         "performance_ceiling_K",
+        "missing_performance_default",
+        "missing_si_feasibility_default",
     )
     @classmethod
     def _finite_weight(cls, v: float) -> float:
@@ -189,7 +219,25 @@ class RankingConfig(BaseModel):
             "si_feasibility": float(self.si_feasibility_weight),
             "uncertainty": float(self.uncertainty_weight),
             "performance_ceiling_K": float(self.performance_ceiling_K),
+            "missing_performance_default": float(self.missing_performance_default),
+            "missing_si_feasibility_default": float(self.missing_si_feasibility_default),
         }
+
+    def ceiling_K_for_source(self, source: str | None) -> float:
+        """Resolve the Tc-like ceiling for a performance_score_source."""
+        default = float(self.performance_ceiling_K)
+        if not source:
+            return default
+        raw = (self.performance_ceiling_by_source or {}).get(source)
+        if raw is None:
+            return default
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(val) or val <= 0.0:
+            return default
+        return val
 
 
 class FormationFilterConfig(BaseModel):
@@ -730,6 +778,21 @@ class DMFTScoringConfig(BaseModel):
         description=(
             "Filling above this is treated as wildly unphysical for the "
             "soft Q demotion. 12 ≈ a full d + leftover count; loose fence."
+        ),
+    )
+    kelvin_per_unit_by_family: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-family override of kelvin_per_unit "
+            "(e.g. {nickelate: 15, tm_nitride: 25}). Empty → global scale. "
+            "Conventional-only campaigns never hit this map."
+        ),
+    )
+    score_ceiling_K_by_family: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-family override of score_ceiling_K. Empty → global "
+            "ceiling. Independent of RankingConfig.performance_ceiling_by_source."
         ),
     )
 

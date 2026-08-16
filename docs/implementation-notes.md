@@ -1308,6 +1308,11 @@ change Si-feasibility science (P2.1–P2.3) or introduce new ML models.
 | Tests | `tests/test_ranking_p24.py` |
 
 **Normalization**: performance_score (Tc-like K) → `min(100, score / performance_ceiling_K × 100)`.
+Missing performance / missing Si-feasibility default to **15** (not 50; #46).
+Restore with `ranking.missing_performance_default: 50` /
+`missing_si_feasibility_default: 50`. Optional
+`ranking.performance_ceiling_by_source` and pairing
+`kelvin_per_unit_by_family` / `score_ceiling_K_by_family` are opt-in.
 Si total is already 0–100. Optional certainty = `(1 − surrogate uncertainty) × 100` when
 `uncertainty_weight > 0` and uncertainty is present; missing uncertainty drops that weight
 from the denominator. Trust penalties, `prefer_dynamically_stable`, and hull demotion apply
