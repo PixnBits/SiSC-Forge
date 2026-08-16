@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 from pymatgen.core import Structure
 
 from siscforge.models.config import CampaignConfig, EnumerationConfig
@@ -137,3 +138,29 @@ def test_enumerate_nitrides_formulas() -> None:
     pairs = enumerate_nitrides(formulas=["NbN", "Nb0.5Ti0.5N"])
     assert len(pairs) == 2
     assert all(isinstance(s, Structure) for s, _ in pairs)
+
+
+def test_invalid_nitride_formula_keeps_operator_message() -> None:
+    with pytest.raises(ValueError, match="Cannot parse formula"):
+        enumerate_nitrides(formulas=["???"])
+
+
+@pytest.mark.parametrize("field", ["supercell", "bsi_supercell"])
+@pytest.mark.parametrize("value", [[2, 2], [2, 2, 2, 2]])
+def test_enumeration_supercell_rejects_wrong_length(field: str, value: list[int]) -> None:
+    with pytest.raises(ValidationError):
+        EnumerationConfig(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["supercell", "bsi_supercell"])
+@pytest.mark.parametrize("value", [[2, 2, 0], [-1, 1, 1]])
+def test_enumeration_supercell_rejects_non_positive(field: str, value: list[int]) -> None:
+    with pytest.raises(ValidationError):
+        EnumerationConfig(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["supercell", "bsi_supercell"])
+@pytest.mark.parametrize("value", [[1, 1, 1], [2, 2, 1]])
+def test_enumeration_supercell_accepts_valid(field: str, value: list[int]) -> None:
+    cfg = EnumerationConfig(**{field: value})
+    assert getattr(cfg, field) == value

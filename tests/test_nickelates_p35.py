@@ -110,6 +110,11 @@ def test_formula_rebuild() -> None:
     assert meta3["vacancy_pattern"] == PATTERN_APICAL_O
 
 
+def test_invalid_nickelate_formula_keeps_operator_message() -> None:
+    with pytest.raises(ValueError, match="Cannot parse nickelate formula"):
+        structure_from_nickelate_formula("???")
+
+
 def test_generate_candidates_unique_ids_and_family() -> None:
     enum = EnumerationConfig(
         material_families=["nickelate"],
