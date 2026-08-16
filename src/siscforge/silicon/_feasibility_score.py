@@ -31,8 +31,18 @@ from siscforge.silicon.feasibility import (
     evaluate_mismatch_options,
     normalize_component_weights,
 )
+from siscforge.structure.strain import parse_substrate
 
 WeightsLike = SiFeasibilityConfig | SiFeasibilityWeights | dict | None
+
+
+def _is_recognised_si_substrate(substrate: str | None) -> bool:
+    """True only for parseable Si(001) / Si(111) labels (default Si(001))."""
+    try:
+        parse_substrate(substrate or "Si(001)")
+    except ValueError:
+        return False
+    return True
 
 
 def _chemical_score_for_path(
@@ -187,7 +197,11 @@ def score_si_feasibility(
             notes.append("assumed 45deg in-plane registry vs Si(001)")
         if best.get("process_note"):
             notes.append(str(best["process_note"]))
-    elif candidate.in_plane_strain is not None:
+    elif (
+        candidate.in_plane_strain is not None
+        and _is_recognised_si_substrate(candidate.substrate)
+    ):
+        # |\u03b5| is a Si-epitaxy strain, not a match to an unsupported substrate.
         mismatch_pct = abs(candidate.in_plane_strain) * 100.0
         lattice_score = _mismatch_score_from_percent(mismatch_pct)
         notes.append("mismatch from |in_plane_strain|")
@@ -195,7 +209,14 @@ def score_si_feasibility(
         mismatch_pct = 5.0
         lattice_score = _mismatch_score_from_percent(mismatch_pct)
         lattice_data_missing = True
-        notes.append("mismatch defaulted (no lattice data)")
+        if not _is_recognised_si_substrate(candidate.substrate):
+            notes.append(
+                f"unsupported / non-Si substrate {candidate.substrate!r}; "
+                "lattice score uses conservative missing-data default "
+                "(~5% mismatch), not |in_plane_strain|"
+            )
+        else:
+            notes.append("mismatch defaulted (no lattice data)")
 
     thermal, t_proc, thermal_window_note, thermal_notes = _thermal_for_path(
         family, best, cmos_limit_c=cmos_limit_c

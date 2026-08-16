@@ -37,7 +37,7 @@ from siscforge.calculators.qe.recipes import (
     run_pw,
 )
 from siscforge.models.config import DFTConfig
-from siscforge.models.results import ElectronPhononResult
+from siscforge.models.results import ElectronPhononResult, PhononResult
 
 # Workdir sidecar: track EPW k-mesh remediation so resume does not infinite-loop.
 _EPW_REMEDIATION_JSON = "siscforge_epw_remediation.json"
@@ -63,6 +63,53 @@ class EPWWorkflowResult(QEWorkflowResult):
     electron_phonon: ElectronPhononResult | None = None
     performance_score: float | None = None
     epw_steps: list[QEStepResult] = field(default_factory=list)
+
+
+# Machine-readable terminal state when EPW is refused after a conclusive soft DFPT.
+EPW_BLOCKED_SOFT_TOKEN = "phonon-complete / EPW-blocked"
+
+
+def epw_blocked_on_soft_phonon(
+    phonon: PhononResult | None,
+    config: DFTConfig,
+) -> bool:
+    """Return True when EPW must be skipped after a conclusive soft DFPT parse.
+
+    Incomplete parses (``status`` not in ``{"ok", "mock"}``) are not a
+    stability conclusion and do not block. ``epw.allow_on_soft`` overrides.
+    """
+    if phonon is None:
+        return False
+    if phonon.status not in {"ok", "mock"}:
+        return False
+    if bool(getattr(getattr(config, "epw", None), "allow_on_soft", False)):
+        return False
+    if bool(phonon.has_imaginary_modes):
+        return True
+    if phonon.dynamically_stable is False:
+        return True
+    return False
+
+
+def soft_phonon_epw_block_message(phonon: PhononResult | None) -> str:
+    """Actionable notes including :data:`EPW_BLOCKED_SOFT_TOKEN`."""
+    imag = bool(getattr(phonon, "has_imaginary_modes", False))
+    stable = getattr(phonon, "dynamically_stable", None)
+    min_f = getattr(phonon, "min_frequency_cm1", None)
+    imag_txt = "true" if imag else "false"
+    if stable is True:
+        stable_txt = "true"
+    elif stable is False:
+        stable_txt = "false"
+    else:
+        stable_txt = "unknown"
+    freq_txt = "n/a" if min_f is None else f"{min_f}"
+    return (
+        f"{EPW_BLOCKED_SOFT_TOKEN}: DFPT reports has_imaginary_modes={imag_txt}, "
+        f"dynamically_stable={stable_txt}, min_frequency_cm1={freq_txt}. "
+        "Skipping NSCF / Wannier-EPW / EPW; DFPT artifacts kept. "
+        "To investigate a soft cell anyway, set epw.allow_on_soft: true."
+    )
 
 
 def _find_epw_pp_py() -> Path | None:
@@ -2022,6 +2069,17 @@ def run_relax_scf_phonon_epw(
         result.message = "ok" if not any(
             "skip" in (s.message or "") for s in result.steps
         ) else "ok (mid-step resume)"
+        if step_log is not None:
+            step_log.extend(log)
+        return result
+
+    # Soft-phonon safety gate (#52): after a conclusive DFPT parse, refuse
+    # pp.py / NSCF / EPW unless the operator set epw.allow_on_soft.
+    if epw_blocked_on_soft_phonon(result.phonon, config):
+        result.success = True
+        result.electron_phonon = None
+        result.message = soft_phonon_epw_block_message(result.phonon)
+        log.append(result.message)
         if step_log is not None:
             step_log.extend(log)
         return result

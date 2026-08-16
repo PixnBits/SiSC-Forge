@@ -263,6 +263,7 @@ Use `--dry-run` for mock.
 - First real NbN EPW may take a long wall-time even at screening grids; use a few MPI ranks (e.g. `dft.nproc: 4`–`16` on a workstation).
 - Ubuntu QE **6.7** EPW inputs can differ slightly from 7.x; if `epw.x` rejects a keyword, treat the SiSC-Forge `epw.in` as a template and adjust (parser still accepts standard λ / ω_log / Tc lines).
 - Full production Wannier projections for metals are non-trivial; a failed first EPW is common — inspect `outputs/.../qe_work/**/epw.out`.
+- **Soft-phonon EPW gate (default):** after a successful DFPT parse, `qe-epw` skips EPW (and NSCF / Wannier-EPW) when the phonon result has imaginary modes or is not `dynamically_stable`. Terminal state is `phonon-complete / EPW-blocked`; DFPT artifacts are kept. This is complementary to `shortlist --mode stable_only`. To investigate a soft cell anyway, set `epw.allow_on_soft: true`. Mock / `--dry-run` is unchanged.
 
 If a previous run hung, stop it (`Ctrl+C`) and kill stragglers before retrying:
 

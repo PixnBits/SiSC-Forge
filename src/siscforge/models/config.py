@@ -247,9 +247,19 @@ class EnumerationConfig(BaseModel):
     substrates: list[str] = Field(default_factory=lambda: ["Si(001)"])
     strain_values: list[float] = Field(default_factory=lambda: [0.0])
     poisson_ratio: float = Field(default=0.25, ge=0.0, le=0.5)
-    supercell: list[int] = Field(default_factory=lambda: [2, 2, 1])
+    supercell: list[int] = Field(
+        default_factory=lambda: [2, 2, 1],
+        min_length=3,
+        max_length=3,
+        description="Supercell for nitride ternary enumeration.",
+    )
     b_concentrations: list[float] = Field(default_factory=list)
-    bsi_supercell: list[int] = Field(default_factory=lambda: [2, 2, 2])
+    bsi_supercell: list[int] = Field(
+        default_factory=lambda: [2, 2, 2],
+        min_length=3,
+        max_length=3,
+        description="Supercell for B:Si enumeration.",
+    )
     seed: int = 42
     max_candidates: int = Field(default=50, ge=1)
     epitaxy_orientation: Literal["auto", "cube_on_cube", "45deg"] = "auto"
@@ -278,12 +288,12 @@ class EnumerationConfig(BaseModel):
     )
     """Supercell used for patterns that need one (``inplane_vacancy``)."""
 
-    @field_validator("nickelate_supercell")
+    @field_validator("supercell", "bsi_supercell", "nickelate_supercell")
     @classmethod
-    def _nickelate_supercell_positive(cls, v: list[int]) -> list[int]:
+    def _supercell_components_positive(cls, v: list[int], info) -> list[int]:
         out = [int(n) for n in v]
         if any(n < 1 for n in out):
-            raise ValueError(f"nickelate_supercell components must be ≥ 1, got {out}")
+            raise ValueError(f"{info.field_name} components must be ≥ 1, got {out}")
         return out
 
 
@@ -319,6 +329,14 @@ class EPWConfig(BaseModel):
     wdata_prefix: str = "siscforge"
     npool: int = 1
     strict_parallel: bool = False
+    allow_on_soft: bool = Field(
+        default=False,
+        description=(
+            "If True, run EPW even when DFPT reports imaginary modes or "
+            "dynamically_stable=false. Default False is a calculator-level "
+            "safety gate complementary to shortlist --mode stable_only."
+        ),
+    )
 
 
 class DFTUConfig(BaseModel):

@@ -410,7 +410,7 @@ def _rare_earth_from_formula(formula: str) -> str:
 
     try:
         comp = Composition(formula)
-    except Exception as exc:  # noqa: BLE001
+    except ValueError as exc:
         raise ValueError(f"Cannot parse nickelate formula {formula!r}") from exc
     symbols = {el.symbol for el in comp.elements}
     rare = [s for s in SUPPORTED_RARE_EARTHS if s in symbols]

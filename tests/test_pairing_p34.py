@@ -336,7 +336,7 @@ def test_conventional_mock_score_unchanged_when_dmft_off() -> None:
         candidate_id="conv-p34-nbn",
     )
     bare = get("mock").run(cand)
-    with_cfg = get("mock").run(cand, dft=DFTConfig())
+    with_cfg = get("mock").run(cand, dft=DFTConfig(do_epw=True))
     assert bare.dmft is None
     assert with_cfg.dmft is None
     assert bare.performance_score == with_cfg.performance_score
@@ -351,6 +351,7 @@ def test_scoring_disabled_keeps_mock_epw() -> None:
         candidate_id="p34-disabled",
     )
     dft = DFTConfig(
+        do_epw=True,
         do_dmft=True,
         dmft=DMFTConfig(
             enabled=True,

@@ -87,55 +87,14 @@ class MockCalculator(BaseCalculator):
         else:
             si = score_si_feasibility(candidate)
 
-        # Fake conventional e-ph moments → Allen–Dynes Tc as performance_score
-        lam = 0.4 + perf_rand * 1.2
-        omega_log = 200.0 + perf_rand * 300.0
-        if candidate.material_family == "tm_nitride":
-            lam = 0.7 + perf_rand * 0.8
-            omega_log = 220.0 + perf_rand * 150.0
-        elif candidate.material_family == "mgb2_boride":
-            lam = 0.6 + perf_rand * 0.4
-            omega_log = 600.0 + perf_rand * 150.0
-        if has_imag:
-            lam *= 0.3
-        mu_star = 0.10
-        tc_ad = allen_dynes_tc(lam, omega_log, mu_star)
-        performance = round(tc_ad, 2)
-
-        a2f_summary: dict[str, object] = {"method": "mock", "tc_model": "isotropic_average"}
-        if candidate.material_family == "mgb2_boride":
-            a2f_summary["material_notes"] = (
-                "MgB2 two-gap physics reduced to isotropic average in mock/EPW screening"
-            )
-            a2f_summary["pairing"] = "conventional_two_gap"
-
-        eph = ElectronPhononResult(
-            lambda_total=round(lam, 4),
-            omega_log=round(omega_log, 2),
-            mu_star=mu_star,
-            Tc_allen_dynes=performance,
-            Tc_eliashberg=round(performance * 1.05, 2) if performance > 0 else 0.0,
-            converged=not has_imag,
-            wannier_ok=True,
-            status="mock",
-            quality_tag="mock",
-            alpha2F_summary=a2f_summary,
-            provenance=Provenance(
-                source="mock_calculator",
-                software={"siscforge": __version__},
-                notes="dry-run EPW/Eliashberg placeholder",
-            ),
-        )
-
-        # Composite: blend normalized performance (assume ~40 K ceiling) with Si score.
-        perf_norm = min(100.0, (performance / 40.0) * 100.0)
-        composite = round(0.6 * perf_norm + 0.4 * si.total, 2)
-
         # P3.1: optional DFT+U mock — inert unless campaign enables it
         dftu_result = None
         wannier_result = None
         dmft_result = None
         dft = kwargs.get("dft")
+        # Default True when no campaign DFT is passed so existing unit tests
+        # and EPW mock examples keep receiving ElectronPhononResult.
+        want_epw = True
         enable_dftu = bool(kwargs.get("enable_dftu"))
         enable_wannier = bool(kwargs.get("enable_wannier"))
         enable_dmft = bool(kwargs.get("enable_dmft"))
@@ -147,6 +106,7 @@ class MockCalculator(BaseCalculator):
             from siscforge.calculators.qe.dmft import dmft_is_enabled
             from siscforge.calculators.qe.wannier import wannier_is_enabled
 
+            want_epw = bool(dft.do_epw or dft.epw.enabled)
             enable_dftu = enable_dftu or dftu_is_enabled(dft)
             enable_wannier = enable_wannier or wannier_is_enabled(dft)
             enable_dmft = enable_dmft or dmft_is_enabled(dft)
@@ -154,6 +114,9 @@ class MockCalculator(BaseCalculator):
             wannier_cfg = dft.wannier
             dmft_cfg = dft.dmft
         elif isinstance(dft, dict):
+            want_epw = bool(
+                dft.get("do_epw") or (dft.get("epw") or {}).get("enabled")
+            )
             enable_dftu = enable_dftu or bool(
                 dft.get("do_dftu") or (dft.get("dftu") or {}).get("enabled")
             )
@@ -220,6 +183,63 @@ class MockCalculator(BaseCalculator):
             extras.append("DMFT")
         extra_note = (" with " + "+".join(extras)) if extras else ""
 
+        if "do_epw" in kwargs:
+            want_epw = bool(kwargs["do_epw"])
+        elif kwargs.get("enable_epw"):
+            want_epw = True
+
+        eph = None
+        performance = None
+        if want_epw:
+            # Fake conventional e-ph moments → Allen–Dynes Tc as performance_score
+            lam = 0.4 + perf_rand * 1.2
+            omega_log = 200.0 + perf_rand * 300.0
+            if candidate.material_family == "tm_nitride":
+                lam = 0.7 + perf_rand * 0.8
+                omega_log = 220.0 + perf_rand * 150.0
+            elif candidate.material_family == "mgb2_boride":
+                lam = 0.6 + perf_rand * 0.4
+                omega_log = 600.0 + perf_rand * 150.0
+            if has_imag:
+                lam *= 0.3
+            mu_star = 0.10
+            tc_ad = allen_dynes_tc(lam, omega_log, mu_star)
+            performance = round(tc_ad, 2)
+
+            a2f_summary: dict[str, object] = {
+                "method": "mock",
+                "tc_model": "isotropic_average",
+            }
+            if candidate.material_family == "mgb2_boride":
+                a2f_summary["material_notes"] = (
+                    "MgB2 two-gap physics reduced to isotropic average in mock/EPW screening"
+                )
+                a2f_summary["pairing"] = "conventional_two_gap"
+
+            eph = ElectronPhononResult(
+                lambda_total=round(lam, 4),
+                omega_log=round(omega_log, 2),
+                mu_star=mu_star,
+                Tc_allen_dynes=performance,
+                Tc_eliashberg=round(performance * 1.05, 2) if performance > 0 else 0.0,
+                converged=not has_imag,
+                wannier_ok=True,
+                status="mock",
+                quality_tag="mock",
+                alpha2F_summary=a2f_summary,
+                provenance=Provenance(
+                    source="mock_calculator",
+                    software={"siscforge": __version__},
+                    notes="dry-run EPW/Eliashberg placeholder",
+                ),
+            )
+
+        if performance is not None:
+            perf_norm = min(100.0, (performance / 40.0) * 100.0)
+            composite = round(0.6 * perf_norm + 0.4 * si.total, 2)
+        else:
+            composite = round(si.total, 2)
+
         ev = CandidateEvaluation(
             candidate=candidate,
             scf=scf,
@@ -230,7 +250,7 @@ class MockCalculator(BaseCalculator):
             dmft=dmft_result,
             si_feasibility=si,
             performance_score=performance,
-            performance_score_source="mock",
+            performance_score_source="mock" if want_epw else None,
             composite_score=composite,
             status="mock",
             calculator_name=self.name,

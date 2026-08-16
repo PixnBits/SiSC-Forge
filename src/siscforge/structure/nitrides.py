@@ -306,7 +306,7 @@ def _structure_from_formula(
     formula = formula.strip()
     try:
         comp = Composition(formula)
-    except Exception as exc:  # noqa: BLE001
+    except ValueError as exc:
         raise ValueError(f"Cannot parse formula {formula!r}") from exc
 
     elements = {el.symbol: comp[el] for el in comp.elements}

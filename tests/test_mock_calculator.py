@@ -62,6 +62,40 @@ def test_mock_is_deterministic_for_same_id() -> None:
     assert a.si_feasibility.total == b.si_feasibility.total
 
 
+def test_mock_omits_electron_phonon_when_do_epw_false() -> None:
+    """Phonon-map / do_epw:false campaigns must not invent a mock Tc."""
+    from siscforge.models.config import DFTConfig, EPWConfig
+
+    cand = StructureCandidate(
+        formula="NbN",
+        material_family="tm_nitride",
+        composition={"Nb": 0.5, "N": 0.5},
+        substrate="Si(001)",
+        in_plane_strain=0.0,
+    )
+    calc = MockCalculator()
+    ev = calc.run(cand, dft=DFTConfig(do_epw=False, epw=EPWConfig(enabled=False)))
+    assert ev.electron_phonon is None
+    assert ev.performance_score is None
+    assert ev.phonon is not None
+    assert ev.si_feasibility is not None
+
+
+def test_mock_emits_electron_phonon_when_epw_requested() -> None:
+    from siscforge.models.config import DFTConfig, EPWConfig
+
+    cand = StructureCandidate(
+        formula="NbN",
+        material_family="tm_nitride",
+        composition={"Nb": 0.5, "N": 0.5},
+    )
+    calc = MockCalculator()
+    ev = calc.run(cand, dft=DFTConfig(do_epw=True, epw=EPWConfig(enabled=True)))
+    assert ev.electron_phonon is not None
+    assert ev.electron_phonon.status == "mock"
+    assert ev.performance_score is not None
+
+
 def test_rank_after_mock() -> None:
     calc = MockCalculator()
     formulas = ["NbN", "TiN", "ZrN"]
