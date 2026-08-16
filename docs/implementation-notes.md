@@ -1671,6 +1671,11 @@ Real nitride / B:Si candidates, epitaxial strain, transparent `SiFeasibilityScor
 
 Example: `examples/nbti_n_strain.yaml` (15 candidates dry-run).
 
+**#48 (scorer 0.6):** missing lattice data is a flagged, demoted component — not a 5 %
+assumption. When a Si score object is present, ranking uses that (possibly
+demoted) total. Ranking’s missing-Si default (#46) applies only when the
+score object itself is absent.
+
 ---
 
 ## Slice 1 (2026-07-24) — Foundation

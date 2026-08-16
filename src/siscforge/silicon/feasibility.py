@@ -40,7 +40,7 @@ from siscforge.structure.strain import (
     substrate_in_plane_spacing,
 )
 
-SCORER_VERSION = "0.5"
+SCORER_VERSION = "0.6"
 
 COMPONENT_WEIGHTS: dict[str, float] = {
     "lattice_mismatch": 0.35,

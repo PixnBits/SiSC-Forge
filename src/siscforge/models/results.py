@@ -768,6 +768,10 @@ class SiFeasibilityScore(BaseModel):
     """P2.2: rule-based chemical / process-window flags for the recommended path
     (e.g. nitrogen_window, oxygen_window, interdiffusion_caution)."""
 
+    quality_flags: list[str] = Field(default_factory=list)
+    """Data-quality / provenance flags for the Si score (e.g. missing_lattice).
+    Distinct from chemical_flags; also mirrored there so process-rec cards see it."""
+
     thermal_window_note: str = ""
     """P2.2: short thermal-window note for the recommended buffer/stack path."""
 

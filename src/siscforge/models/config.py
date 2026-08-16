@@ -35,6 +35,8 @@ class SiFeasibilityWeights(BaseModel):
     """YAML-overridable component weights for the Silicon Feasibility Score.
 
     Defaults match COMPONENT_WEIGHTS. Non-finite values are rejected at config load.
+    Extra knobs (missing-lattice demotion, per-family offsets) are not part of
+    the normalized weight vector — ``as_dict()`` stays component-only.
     """
 
     lattice_mismatch: float = Field(default=0.35, ge=0.0)
@@ -42,6 +44,32 @@ class SiFeasibilityWeights(BaseModel):
     chemical_compatibility: float = Field(default=0.20, ge=0.0)
     buffer_availability: float = Field(default=0.10, ge=0.0)
     process_maturity: float = Field(default=0.15, ge=0.0)
+    missing_lattice_score: float = Field(
+        default=20.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Base lattice-mismatch component (0–100) when no lattice constant "
+            "is available. Not a 5 % mismatch assumption (#48)."
+        ),
+    )
+    missing_lattice_demotion: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Multiply missing_lattice_score when lattice data is absent. "
+            "Default 0.5 → component 10. Set 1.0 to use the base score as-is."
+        ),
+    )
+    family_offsets: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional additive offsets applied to the composite total after "
+            "the weighted blend, keyed by material_family (e.g. "
+            "{tm_nitride: 3, nickelate: -5}). Clamped to [0, 100]."
+        ),
+    )
 
     @field_validator(
         "lattice_mismatch",
@@ -49,6 +77,8 @@ class SiFeasibilityWeights(BaseModel):
         "chemical_compatibility",
         "buffer_availability",
         "process_maturity",
+        "missing_lattice_score",
+        "missing_lattice_demotion",
     )
     @classmethod
     def _finite_non_negative(cls, v: float) -> float:
