@@ -516,3 +516,17 @@ def test_source_aware_ceiling_opt_in() -> None:
     assert bd_pair_tight["performance_norm"] == pytest.approx(100.0)
     assert bd_epw_tight["performance_norm"] == pytest.approx(50.0)
     assert bd_pair_tight["performance_source"] == "dmft_pairing"
+
+
+def test_hard_zero_wins_over_missing_default() -> None:
+    """#63 + #46: screening high-λ hard-zero is 0, not the missing-perf 15."""
+    from siscforge.quality import FLAG_SCREENING_HIGH_LAMBDA, apply_quality_assessment
+
+    ev = apply_quality_assessment(
+        _ev(formula="Hot", cid="h", tc=40.0, si=95.0, lam=4.0)
+    )
+    assert FLAG_SCREENING_HIGH_LAMBDA in ev.quality_flags
+    bd = compute_composite_breakdown(ev, RankingConfig())
+    assert bd["performance_hard_zeroed"] is True
+    assert bd["performance_norm"] == 0.0
+    assert bd["performance_missing"] is False
