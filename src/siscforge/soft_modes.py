@@ -631,7 +631,9 @@ def _next_actions(
         actions.append(
             "Softest mode is at finite q (Γ only mildly imaginary). "
             "Densify SCF k / ecut on the same q-grid or audit the UPF; "
-            "another coarse-q pilot will not discriminate this pattern."
+            "another coarse-q pilot will not discriminate this pattern. "
+            "Nitride phonon recovery k is min 8³ (prefer 12³ for "
+            "small/binary cells)."
         )
     actions.extend(
         [
