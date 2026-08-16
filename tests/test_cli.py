@@ -141,7 +141,7 @@ def test_run_nbti_strain_campaign(tmp_path: Path) -> None:
         ev = CandidateEvaluation.model_validate(row)
         assert ev.status == "mock"
         assert ev.si_feasibility is not None
-        assert ev.si_feasibility.version in {"0.1", "0.2", "0.3", "0.4", "0.5"}
+        assert ev.si_feasibility.version in {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6"}
 
         assert ev.candidate.material_family == "tm_nitride"
         assert ev.candidate.structure_cif
