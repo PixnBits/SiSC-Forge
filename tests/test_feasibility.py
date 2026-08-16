@@ -269,3 +269,44 @@ def test_unsupported_material_does_not_claim_matthews_blakeslee() -> None:
     )
     assert ct.method == "heuristic fallback"
     assert ct.hc_primary_nm is None
+
+
+def test_non_si_substrate_zero_strain_uses_conservative_lattice() -> None:
+    """SrTiO3 + in_plane_strain=0 (ndnio2_dmft_mock) must not get lattice_mismatch=100.
+
+    parse_substrate rejects non-Si labels so evaluate_mismatch_options is
+    empty. The |in_plane_strain| fallback would treat strain=0 as perfect match;
+    unsupported substrates must take the conservative lattice_data_missing
+    path instead.
+    """
+    cand = StructureCandidate(
+        formula="NdNiO2",
+        composition={"Nd": 0.25, "Ni": 0.25, "O": 0.5},
+        material_family="nickelate",
+        substrate="SrTiO3",
+        in_plane_strain=0.0,
+        lattice_abc=(3.92, 3.92, 3.31),
+        metadata={"prototype": "infinite_layer"},
+    )
+    assert evaluate_mismatch_options(cand) == []
+    score = score_si_feasibility(cand)
+    assert score.components.lattice_mismatch != 100.0
+    assert score.components.lattice_mismatch == pytest.approx(28.650479686019008)
+    assert score.lattice_mismatch_pct == pytest.approx(5.0)
+    assert score.total != 66.65
+    notes = score.notes.lower()
+    assert "unsupported" in notes or "non-si" in notes
+    assert "missing-data" in notes or "missing" in notes
+    assert "|in_plane_strain|" in score.notes or "in_plane_strain" in notes
+
+    # Recognised Si faces still use the |in_plane_strain| fallback when options are empty.
+    si_no_lattice = StructureCandidate(
+        formula="UnknownZed",
+        composition={"Z": 1.0},
+        material_family="other",
+        substrate="Si(001)",
+        in_plane_strain=0.0,
+    )
+    si_score = score_si_feasibility(si_no_lattice)
+    assert si_score.components.lattice_mismatch == pytest.approx(100.0)
+    assert "mismatch from |in_plane_strain|" in si_score.notes
