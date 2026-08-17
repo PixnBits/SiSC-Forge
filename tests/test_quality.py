@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.config import QualityConfig, RankingConfig
 from siscforge.models.results import (
@@ -168,7 +171,33 @@ def test_quality_config_safe_defaults() -> None:
     cfg = QualityConfig()
     assert cfg.mock_unreliable is True
     assert cfg.lambda_unreliable_above == 5.0
+    assert cfg.lambda_suspect_above == 3.0
+    assert cfg.lambda_unreliable_above > cfg.lambda_suspect_above
     assert "mock_unreliable" in QualityConfig.model_fields
+
+
+def test_quality_config_rejects_inverted_lambda_thresholds() -> None:
+    """#78: unreliable threshold must be strictly above suspect."""
+    with pytest.raises(ValidationError, match="lambda_unreliable_above must be >"):
+        QualityConfig(lambda_unreliable_above=2.0, lambda_suspect_above=4.0)
+    with pytest.raises(ValidationError, match=r"5\.0 <= 5\.0"):
+        QualityConfig(lambda_suspect_above=5.0, lambda_unreliable_above=5.0)
+    with pytest.raises(ValidationError, match="lambda_unreliable_above must be >"):
+        QualityConfig.model_validate(
+            {"lambda_suspect_above": 4.0, "lambda_unreliable_above": 2.0}
+        )
+    with pytest.raises(ValidationError, match="lambda_unreliable_above must be >"):
+        RankingConfig(
+            quality={"lambda_suspect_above": 4.0, "lambda_unreliable_above": 1.0}
+        )
+
+
+def test_quality_config_accepts_explicit_valid_thresholds() -> None:
+    """Defaults, historical 8.0, and a tight valid pair all construct."""
+    assert QualityConfig(lambda_unreliable_above=8.0).lambda_unreliable_above == 8.0
+    tight = QualityConfig(lambda_suspect_above=4.9, lambda_unreliable_above=5.0)
+    assert tight.lambda_unreliable_above == 5.0
+    assert tight.lambda_suspect_above == 4.9
 
 
 def test_mock_unreliable_false_keeps_mock_as_screening() -> None:

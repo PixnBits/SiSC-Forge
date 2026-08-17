@@ -1,5 +1,14 @@
 # Implementation Notes
 
+## Slice 29.7 (2026-08-17) — QualityConfig λ threshold order (#78)
+
+`QualityConfig` now rejects `lambda_unreliable_above <= lambda_suspect_above`
+at load time (`@model_validator`). Field descriptions record that the
+unreliable check runs first. Defaults (3.0 / 5.0) and explicit 8.0 are
+unchanged.
+
+---
+
 ## Slice 29.6 (2026-08-17) — QualityConfig knobs (#59)
 
 Expose `mock_unreliable` (default **true**) as a real `QualityConfig`

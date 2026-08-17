@@ -11,8 +11,25 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class QualityConfig(BaseModel):
-    lambda_suspect_above: float = Field(default=3.0, ge=0.0)
-    lambda_unreliable_above: float = Field(default=5.0, ge=0.0)
+    lambda_suspect_above: float = Field(
+        default=3.0,
+        ge=0.0,
+        description=(
+            "λ at or above this (and below lambda_unreliable_above) is "
+            "flagged high_lambda and assessed as screening_suspect. "
+            "Checked after the unreliable threshold. Must be strictly "
+            "less than lambda_unreliable_above."
+        ),
+    )
+    lambda_unreliable_above: float = Field(
+        default=5.0,
+        ge=0.0,
+        description=(
+            "λ at or above this is flagged extreme_lambda and assessed "
+            "as unreliable. Checked before the suspect threshold. Must "
+            "be strictly greater than lambda_suspect_above."
+        ),
+    )
     mock_unreliable: bool = Field(
         default=True,
         description=(
@@ -37,6 +54,16 @@ class QualityConfig(BaseModel):
     )
     prefer_higher_quality_tier: bool = True
     version: str = "0.1"
+
+    @model_validator(mode="after")
+    def _lambda_thresholds(self) -> QualityConfig:
+        if self.lambda_unreliable_above <= self.lambda_suspect_above:
+            raise ValueError(
+                "lambda_unreliable_above must be > lambda_suspect_above "
+                f"(got {self.lambda_unreliable_above} <= "
+                f"{self.lambda_suspect_above})"
+            )
+        return self
 
 
 class SiFeasibilityWeights(BaseModel):
