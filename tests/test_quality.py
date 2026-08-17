@@ -163,6 +163,44 @@ def test_quality_fields_on_ranked_export_shape() -> None:
     assert ranked[0].electron_phonon.result_quality == "screening_suspect"
 
 
+def test_quality_config_safe_defaults() -> None:
+    """#59: mock_unreliable and λ≥5 are real model defaults, not getattr lifts."""
+    cfg = QualityConfig()
+    assert cfg.mock_unreliable is True
+    assert cfg.lambda_unreliable_above == 5.0
+    assert "mock_unreliable" in QualityConfig.model_fields
+
+
+def test_mock_unreliable_false_keeps_mock_as_screening() -> None:
+    """Explicit mock_unreliable=False lets mock rows stay screening-quality."""
+    ev = _ev(lam=1.2, tc=20.0, quality_tag="mock", status="mock")
+    ev = ev.model_copy(update={"performance_score_source": "mock"})
+    a = assess_result_quality(ev, QualityConfig(mock_unreliable=False))
+    assert a.result_quality == "screening"
+    assert FLAG_QUALITY_TAG_MOCK in a.quality_flags
+
+
+def test_explicit_lambda_unreliable_above_eight_is_honoured() -> None:
+    """Explicit 8.0 is not force-lifted to 5.0 once the field exists."""
+    cfg = QualityConfig(lambda_unreliable_above=8.0)
+    a = assess_result_quality(_ev(lam=6.0, tc=40.0, stable=True), cfg)
+    assert a.result_quality == "screening_suspect"
+    assert FLAG_EXTREME_LAMBDA not in a.quality_flags
+    assert FLAG_HIGH_LAMBDA in a.quality_flags
+    b = assess_result_quality(_ev(lam=8.0, tc=50.0, stable=True), cfg)
+    assert b.result_quality == "unreliable"
+    assert FLAG_EXTREME_LAMBDA in b.quality_flags
+
+
+def test_quality_yaml_overrides() -> None:
+    """Campaign YAML can toggle both knobs (nested ranking.quality)."""
+    cfg = QualityConfig.model_validate(
+        {"mock_unreliable": False, "lambda_unreliable_above": 8.0}
+    )
+    assert cfg.mock_unreliable is False
+    assert cfg.lambda_unreliable_above == 8.0
+
+
 def test_mock_results_unreliable() -> None:
     """quality_tag=mock / FLAG_QUALITY_TAG_MOCK / src=mock must not stay screening."""
     ev = _ev(lam=1.2, tc=20.0, quality_tag="mock", status="mock")

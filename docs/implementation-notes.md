@@ -1,5 +1,15 @@
 # Implementation Notes
 
+## Slice 29.6 (2026-08-17) — QualityConfig knobs (#59)
+
+Expose `mock_unreliable` (default **true**) as a real `QualityConfig`
+Field and set the model default of `lambda_unreliable_above` to **5.0**.
+Default safe posture from #55 is unchanged: mock/dry-run and λ ≥ 5 →
+`unreliable`. Explicit YAML overrides are honoured; the 8.0→5.0 getattr
+lift is gone. Historical campaign YAMLs that still pin 8.0 are left as-is.
+
+---
+
 ## Slice 29.5 (2026-08-16) — NbN ε=0 k=12³ diagnostic (#72)
 
 Phonon-only **control** after Slice 29.4. YAML + docs only — actual
@@ -1182,7 +1192,8 @@ Trust layer only — **not** denser-grid refinement or production Wannier.
 | Knob | Default | Effect |
 |------|---------|--------|
 | `lambda_suspect_above` | 3.0 | → `high_lambda`, tier `screening_suspect` |
-| `lambda_unreliable_above` | 8.0 | → `extreme_lambda`, tier `unreliable` |
+| `lambda_unreliable_above` | 5.0 | → `extreme_lambda`, tier `unreliable` (#59; was 8.0) |
+| `mock_unreliable` | true | mock / dry-run → `unreliable` (#59) |
 | `min_frequency_cm1_soft` | 50 | soft modes flag |
 | `imaginary_modes_unreliable` | true | imag modes → `unreliable` |
 | `suspect_performance_penalty` | 0.45 | × composite |
