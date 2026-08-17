@@ -267,7 +267,7 @@ and random Wannier. SiSC-Forge now **flags and down-weights** these:
 |------|-----------------|---------|
 | `screening` | λ &lt; 3, stable phonon | normal weights |
 | `screening_suspect` | λ ≥ 3 or soft modes | composite × 0.45; Perf shows `*` |
-| `unreliable` | λ ≥ 8 or imaginary modes | Tc term dropped; composite × 0.15; Perf `!!` |
+| `unreliable` | λ ≥ 5, mock/dry-run, or imaginary modes | Tc term dropped; composite × 0.15; Perf `!!` |
 
 CLI example:
 

@@ -128,17 +128,8 @@ def assess_result_quality(
                 )
 
     # --- Lambda magnitude ---
-    # Historical QualityConfig default was 8.0 (no mock_unreliable field),
-    # which left the documented pathological band (λ≈6) as
-    # screening_suspect. Lift that one legacy default to 5.0. Explicit
-    # YAML / QualityConfig(lambda_unreliable_above=8.0) on the new model
-    # is honoured as-is.
+    # Model default is 5.0 (#59). Explicit YAML / QualityConfig(8.0) is honoured.
     unreliable_above = float(config.lambda_unreliable_above)
-    if (
-        unreliable_above == 8.0
-        and "mock_unreliable" not in getattr(type(config), "model_fields", {})
-    ):
-        unreliable_above = 5.0
     lam: float | None = None
     if eph is not None and eph.lambda_total is not None:
         lam = float(eph.lambda_total)
@@ -253,7 +244,7 @@ def assess_result_quality(
     has_eph = eph is not None and eph.lambda_total is not None
     has_phonon = phonon is not None
 
-    mock_unreliable = bool(getattr(config, "mock_unreliable", True)) and (
+    mock_unreliable = bool(config.mock_unreliable) and (
         FLAG_QUALITY_TAG_MOCK in uniq_flags
         or FLAG_DMFT_PAIRING_MOCK in uniq_flags
         or src == "mock"

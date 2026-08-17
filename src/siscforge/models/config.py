@@ -12,7 +12,15 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class QualityConfig(BaseModel):
     lambda_suspect_above: float = Field(default=3.0, ge=0.0)
-    lambda_unreliable_above: float = Field(default=8.0, ge=0.0)
+    lambda_unreliable_above: float = Field(default=5.0, ge=0.0)
+    mock_unreliable: bool = Field(
+        default=True,
+        description=(
+            "When True (default), mock / dry-run results are forced to the "
+            "unreliable tier. Set False only if you intentionally want mock "
+            "rows to participate in ranking as screening-quality."
+        ),
+    )
     min_frequency_cm1_soft: float = Field(default=50.0)
     imaginary_modes_unreliable: bool = True
     suspect_performance_penalty: float = Field(default=0.45, ge=0.0, le=1.0)
