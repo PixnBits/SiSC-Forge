@@ -78,9 +78,15 @@ Relaxed primitive is sensible Fm-3m rock-salt:
 - 33 finite-q points sit below −100 cm⁻¹; 3 sit below −200 cm⁻¹
 - acoustic-only imaginary at the softest q; optical branches stay
   real there (~440 cm⁻¹)
-- auto-heuristic class is `likely_mesh_artefact` (NbN is in
-  `KNOWN_STABLE_RS_NITRIDES` + `quality_tag=screening`). That label
-  is a **suspect**, not the #74 verdict — see the decision below.
+- After #76, `siscforge soft-modes --refresh` on this dense-k store
+  classifies the cell as `genuinely_soft` with reasons
+  `dense_k_still_substantially_soft` /
+  `ideal_stoichiometric_harmonic_instability` /
+  `policy_override_not_mesh_artefact`. The old auto-label
+  `likely_mesh_artefact` (NbN in `KNOWN_STABLE_RS_NITRIDES` +
+  `quality_tag=screening`) was a first-pass *suspect* and is no
+  longer applied once recorded SCF k is ≥12³ and leftover imag is
+  past Γ-noise. Still not `stable` / EPW.
 
 Compare to ZrN ε=0 at the **same** k=12³ / q=4³ / ecut=60: min
 **−29.3 cm⁻¹**, finite-q collapsed to Γ-noise scale. NbN did **not**.
@@ -135,4 +141,4 @@ launch EPW from this control.
 - Twin: `examples/zrn_k12_diag.yaml`
 - ZrN checklist: `docs/examples/zrn_nitride_phonon_convergence.md`
 - implementation-notes Slice 29.5 / #74; Slice 29.4
-- Issues #72 (YAML), #74 (numbers + policy)
+- Issues #72 (YAML), #74 (numbers + policy), #76 (heuristic)

@@ -44,16 +44,36 @@ REPORT_MD = "soft_mode_report.md"
 REPORT_SCHEMA = "siscforge.soft_mode_report"
 REPORT_VERSION = 1
 
-# Literature-stable rock-salt binaries that still go soft on coarse q=2³
-# screening meshes in practice. Used only as a *heuristic* flag.
+# Experimentally observed rock-salt superconductors / metals. Used as a
+# *heuristic* so a coarse q=2³ map that also softens these binaries is
+# not treated as automatic family abandonment, and so they stay off EPW
+# until a denser-q (do_epw=false) confirmation.
+#
+# This is *not* “ideally stoichiometric harmonic-stable”. Experimental
+# SC NbN is typically N-deficient; ideal 1:1 δ-NbN stays soft in
+# harmonic DFPT at dense k (#74). See HARMONICALLY_UNSTABLE_IDEAL_RS.
 #
 # How to extend: add a reduced formula only when a published RS phase is
-# widely treated as dynamically stable (same bar as NbN/TiN/ZrN/HfN).
+# widely treated as an observed RS metal/SC (same bar as NbN/TiN/ZrN/HfN).
 # Do not add ternaries, hexagonal/WC phases, or controversial cubics
 # (e.g. δ-TaN). Operators can also set
 # ``candidate.metadata["known_stable_binary"] = True`` for a one-off.
 # VN: NaCl-type, literature-stable metal (Tc ~8–9 K).
 KNOWN_STABLE_RS_NITRIDES = frozenset({"NbN", "TiN", "ZrN", "HfN", "VN"})
+
+# Ideal 1:1 rock-salt cells that remain *substantially* soft in harmonic
+# DFPT after dense electronic k (k≥12³). Not a mesh-artefact suspect at
+# that density. #74 NbN ε=0: min −301.5 cm⁻¹, finite-q. Literature:
+# arXiv:1808.05073, arXiv:2507.03417. Do not add ZrN/TiN/HfN/VN here —
+# those closed (or have not failed) the dense-k ladder.
+#
+# How to extend: add a reduced formula only after a recorded dense-k
+# harmonic result + literature agree (same bar as NbN #74). Operators
+# can set ``metadata["harmonically_unstable_ideal_rs"]`` True/False.
+HARMONICALLY_UNSTABLE_IDEAL_RS = frozenset({"NbN"})
+# Matches siscforge.pilot.NITRIDE_PHONON_K_SMALL_BINARY; do not import
+# pilot here (soft_modes is imported by pilot).
+_DENSE_ELECTRONIC_K_MIN = 12
 
 # Classes that must not go to EPW for a known-stable binary until a
 # denser-q phonon (still do_epw=false) has confirmed stability.
@@ -102,6 +122,7 @@ class SoftModeRow(TypedDict):
     asr_signal: str | None
     is_binary_nitride: bool
     is_known_stable_binary: bool
+    is_harmonically_unstable_ideal_rs: bool
     softness_locus: str
     gamma_min_frequency_cm1: float | None
     finite_q_min_frequency_cm1: float | None
@@ -143,6 +164,87 @@ def is_known_stable_binary(formula: str, metadata: dict[str, Any] | None = None)
     if metadata and metadata.get("known_stable_binary") is True:
         return True
     return reduced_formula(formula) in KNOWN_STABLE_RS_NITRIDES
+
+
+def is_harmonically_unstable_ideal_rs(
+    formula: str, metadata: dict[str, Any] | None = None
+) -> bool:
+    """True for ideal 1:1 RS cells known to stay harmonic-soft at dense k."""
+    if metadata and metadata.get("harmonically_unstable_ideal_rs") is False:
+        return False
+    if metadata and metadata.get("harmonically_unstable_ideal_rs") is True:
+        return True
+    return reduced_formula(formula) in HARMONICALLY_UNSTABLE_IDEAL_RS
+
+
+def _as_kvec(value: Any) -> list[int] | None:
+    if isinstance(value, (list, tuple)) and value:
+        try:
+            nums = [int(x) for x in value[:3]]
+        except (TypeError, ValueError):
+            return None
+        if len(nums) == 1:
+            nums = [nums[0], nums[0], nums[0]]
+        if len(nums) == 3 and all(n >= 1 for n in nums):
+            return nums
+    return None
+
+
+def electronic_kpoints(ev: CandidateEvaluation) -> list[int] | None:
+    """Best-effort SCF k-mesh from metadata or provenance (never invent)."""
+    meta = ev.candidate.metadata or {}
+    for key in ("kpoints", "scf_kpoints", "electronic_kpoints"):
+        got = _as_kvec(meta.get(key))
+        if got:
+            return got
+    sources: list[Any] = [ev.provenance]
+    if ev.phonon is not None:
+        sources.append(ev.phonon.provenance)
+    if ev.scf is not None:
+        sources.append(ev.scf.provenance)
+    for prov in sources:
+        if prov is None:
+            continue
+        params = getattr(prov, "parameters", None) or {}
+        if not isinstance(params, dict):
+            continue
+        got = _as_kvec(params.get("kpoints"))
+        if got:
+            return got
+        dft = params.get("dft")
+        if isinstance(dft, dict):
+            got = _as_kvec(dft.get("kpoints"))
+            if got:
+                return got
+    return None
+
+
+def is_dense_electronic_k(ev: CandidateEvaluation) -> bool:
+    """True when recorded SCF k is at least 12³ (NbN / ZrN ladder)."""
+    kpts = electronic_kpoints(ev)
+    return kpts is not None and min(kpts) >= _DENSE_ELECTRONIC_K_MIN
+
+
+def _substantially_soft_beyond_gamma_noise(
+    *,
+    min_frequency_cm1: float | None,
+    softness_locus: str,
+    finite_q_min: float | None,
+    imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
+) -> bool:
+    """True when leftover imag is well past ordinary Γ acoustic noise.
+
+    |ω| ≲ ``_GAMMA_MILD_CM1`` (50 cm⁻¹) is the ZrN k=12³ leftover class,
+    not this exception.
+    """
+    if min_frequency_cm1 is None:
+        return False
+    campaign = float(min_frequency_cm1)
+    if campaign > -_GAMMA_MILD_CM1:
+        return False
+    if softness_locus == "finite_q" and finite_q_min is not None:
+        return float(finite_q_min) <= -_GAMMA_MILD_CM1
+    return campaign <= -_GAMMA_MILD_CM1 and campaign < -abs(imag_threshold_cm1)
 
 
 def denser_q_confirmed(ev: CandidateEvaluation) -> bool:
@@ -445,6 +547,7 @@ def classify_soft_mode(
     ph = ev.phonon
     binary = is_binary_nitride(formula)
     known = is_known_stable_binary(formula, c.metadata)
+    ideal_harm_soft = is_harmonically_unstable_ideal_rs(formula, c.metadata)
     reasons: list[str] = []
 
     if ph is None:
@@ -464,6 +567,7 @@ def classify_soft_mode(
             asr_signal=None,
             is_binary_nitride=binary,
             is_known_stable_binary=known,
+            is_harmonically_unstable_ideal_rs=ideal_harm_soft,
             **_blank_locus(),
         )
 
@@ -519,6 +623,7 @@ def classify_soft_mode(
             asr_signal=asr,
             is_binary_nitride=binary,
             is_known_stable_binary=known,
+            is_harmonically_unstable_ideal_rs=ideal_harm_soft,
             **locus_fields,
         )
 
@@ -541,13 +646,30 @@ def classify_soft_mode(
                 asr_signal=asr,
                 is_binary_nitride=binary,
                 is_known_stable_binary=known,
+                is_harmonically_unstable_ideal_rs=ideal_harm_soft,
                 **locus_fields,
             )
 
     # Imaginary / not dynamically stable from here.
+    if ideal_harm_soft:
+        reasons.append("ideal_stoichiometric_may_be_harmonic_soft")
+    dense_k = is_dense_electronic_k(ev)
+    deep_soft = _substantially_soft_beyond_gamma_noise(
+        min_frequency_cm1=ph.min_frequency_cm1,
+        softness_locus=locus,
+        finite_q_min=finite_min,
+        imag_threshold_cm1=imag_threshold_cm1,
+    )
     if ac_op == "optical_imaginary":
         cls = "optical_soft"
         reasons.append("imaginary_weight_on_optical_branches")
+    elif ideal_harm_soft and dense_k and deep_soft:
+        # #76: policy / literature override of the known-stable mesh-artefact
+        # auto-label. Still not stable and still not an EPW go-ahead.
+        cls = "genuinely_soft"
+        reasons.append("dense_k_still_substantially_soft")
+        reasons.append("ideal_stoichiometric_harmonic_instability")
+        reasons.append("policy_override_not_mesh_artefact")
     elif known:
         cls = "likely_mesh_artefact"
         reasons.append("known_stable_binary_nitride_on_coarse_or_screening_mesh")
@@ -587,6 +709,7 @@ def classify_soft_mode(
         asr_signal=asr,
         is_binary_nitride=binary,
         is_known_stable_binary=known,
+        is_harmonically_unstable_ideal_rs=ideal_harm_soft,
         **locus_fields,
     )
 
@@ -614,6 +737,8 @@ def _next_actions(
     signal: str,
     *,
     finite_q_softest: bool = False,
+    harmonic_soft_overrides: bool = False,
+    still_mesh_suspect: bool = False,
 ) -> list[str]:
     store = str(store_dir)
     if signal == SIGNAL_NO_PHONON:
@@ -632,7 +757,14 @@ def _next_actions(
         "(stable_only correctly stays empty).",
         f"Read {REPORT_JSON} / {REPORT_MD} in the campaign store.",
     ]
-    if finite_q_softest:
+    if harmonic_soft_overrides:
+        actions.append(
+            "Ideal 1:1 stoichiometric cells (e.g. δ-NbN) that stay "
+            "substantially soft at dense electronic k are treated as "
+            "expected harmonic instability (Slice 29.5 / #74 / #76), "
+            "not a mesh artefact. Do not auto-promote to stable or EPW."
+        )
+    if finite_q_softest and still_mesh_suspect:
         from siscforge.pilot import NITRIDE_PHONON_K_POLICY
 
         actions.append(
@@ -673,6 +805,16 @@ def build_soft_mode_report(
     )
     store = source_store or ""
     finite_q_softest = any(r.get("softness_locus") == "finite_q" for r in rows)
+    override_rows = [
+        r
+        for r in rows
+        if r.get("soft_mode_class") == "genuinely_soft"
+        and "policy_override_not_mesh_artefact" in (r.get("reasons") or [])
+    ]
+    override_formulas = sorted({str(r.get("formula") or "") for r in override_rows if r.get("formula")})
+    still_mesh_suspect = any(
+        r.get("soft_mode_class") == "likely_mesh_artefact" for r in rows
+    )
     return {
         "version": REPORT_VERSION,
         "schema": REPORT_SCHEMA,
@@ -682,7 +824,10 @@ def build_soft_mode_report(
             "Heuristic characterisation only. Coarse q=2³ maps are a discovery "
             "gate, not production dynamical-stability proof. Classes such as "
             "likely_mesh_artefact do not certify that a cell is physically "
-            "stable. Never launch EPW on imaginary-mode cells from this report."
+            "stable. Human / policy overrides (e.g. #74 / #76 for ideal "
+            "stoichiometric δ-NbN at dense k) take precedence over the "
+            "auto-label. Never launch EPW on imaginary-mode cells from this "
+            "report."
         ),
         "n_evaluations": len(evaluations),
         "n_with_phonon": n_with_phonon,
@@ -693,10 +838,15 @@ def build_soft_mode_report(
         "n_genuinely_soft": counts.get("genuinely_soft", 0),
         "n_unknown": counts.get("unknown", 0),
         "known_stable_binaries_soft": known_soft,
+        "ideal_stoichiometric_harmonic_soft": override_formulas,
         "campaign_signal": signal,
         "finite_q_softest": finite_q_softest,
         "next_actions": _next_actions(
-            store, signal, finite_q_softest=finite_q_softest
+            store,
+            signal,
+            finite_q_softest=finite_q_softest,
+            harmonic_soft_overrides=bool(override_formulas),
+            still_mesh_suspect=still_mesh_suspect,
         ),
         "candidates": rows,
     }
@@ -733,17 +883,36 @@ def render_soft_mode_markdown(report: dict[str, Any]) -> str:
     known = report.get("known_stable_binaries_soft") or []
     if known:
         lines.append(f"- known-stable binaries also soft: {', '.join(known)}")
+    overrides = report.get("ideal_stoichiometric_harmonic_soft") or []
+    if overrides:
+        lines.append(
+            "- policy / literature override: "
+            + ", ".join(str(x) for x in overrides)
+            + " stayed substantially soft at dense k — treated as "
+            "expected ideal-stoichiometric harmonic instability "
+            "(`genuinely_soft`), not `likely_mesh_artefact`. Still not "
+            "stable / EPW."
+        )
     if report.get("auto_pilot_yaml"):
         lines.append(
             f"- auto denser-q pilot: `{report['auto_pilot_yaml']}` "
             f"(mode={report.get('auto_pilot_mode')}, do_epw=false)"
         )
     if report.get("finite_q_softest"):
-        lines.append(
-            "- softness locus: **softest q is finite-q; Γ only mildly "
-            "imaginary** (acoustic numerical noise). "
-            "`likely_mesh_artefact` remains a suspect, not proof."
-        )
+        if overrides:
+            lines.append(
+                "- softness locus: **softest q is finite-q**. For "
+                + ", ".join(str(x) for x in overrides)
+                + " leftover imag at dense k is the expected "
+                "ideal-stoichiometric harmonic-instability pattern, not a "
+                "mesh artefact."
+            )
+        else:
+            lines.append(
+                "- softness locus: **softest q is finite-q; Γ only mildly "
+                "imaginary** (acoustic numerical noise). "
+                "`likely_mesh_artefact` remains a suspect, not proof."
+            )
     lines.extend(["", "## Next actions", ""])
     for action in report.get("next_actions") or []:
         lines.append(f"- {action}")

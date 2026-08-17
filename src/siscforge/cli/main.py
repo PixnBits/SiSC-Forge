@@ -777,13 +777,32 @@ def soft_modes_cmd(
         f"setup={report.get('n_setup_failed', 0)}"
     )
     known = report.get("known_stable_binaries_soft") or []
+    overrides = report.get("ideal_stoichiometric_harmonic_soft") or []
     if known:
-        console.print(
-            "[yellow]Known-stable binaries also soft on this mesh:[/yellow] "
-            + ", ".join(str(x) for x in known)
-            + " — mesh artefact is the primary suspect, not automatic "
-            "abandonment of the family."
-        )
+        if overrides and set(str(x) for x in overrides) >= set(str(x) for x in known):
+            console.print(
+                "[yellow]Known-stable binaries also soft:[/yellow] "
+                + ", ".join(str(x) for x in known)
+                + " — leftover imag at dense k is expected "
+                "ideal-stoichiometric harmonic instability (#76), not a "
+                "mesh artefact. Still not stable / EPW."
+            )
+        elif overrides:
+            console.print(
+                "[yellow]Known-stable binaries also soft on this mesh:[/yellow] "
+                + ", ".join(str(x) for x in known)
+                + " — first-pass mesh artefact remains a suspect for some; "
+                + ", ".join(str(x) for x in overrides)
+                + " stayed soft at dense k (literature harmonic "
+                "instability, not mesh artefact)."
+            )
+        else:
+            console.print(
+                "[yellow]Known-stable binaries also soft on this mesh:[/yellow] "
+                + ", ".join(str(x) for x in known)
+                + " — mesh artefact is the primary suspect, not automatic "
+                "abandonment of the family."
+            )
     if int(report.get("n_stable") or 0) == 0:
         console.print(
             "[bold]None stable.[/bold] Do not fall back to unstable EPW.\n"

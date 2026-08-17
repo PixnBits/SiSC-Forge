@@ -9,10 +9,12 @@ from typer.testing import CliRunner
 
 from siscforge.cli.main import app
 from siscforge.models.candidate import CandidateEvaluation
+from siscforge.models.provenance import Provenance
 from siscforge.models.results import PhononResult, SiFeasibilityScore
 from siscforge.shortlist import select_shortlist_evaluations
 from siscforge.soft_modes import (
     AUTO_PILOT_YAML,
+    HARMONICALLY_UNSTABLE_IDEAL_RS,
     KNOWN_STABLE_RS_NITRIDES,
     REPORT_JSON,
     REPORT_MD,
@@ -20,6 +22,7 @@ from siscforge.soft_modes import (
     classify_soft_mode,
     ensure_soft_mode_report,
     is_binary_nitride,
+    is_harmonically_unstable_ideal_rs,
     is_known_stable_binary,
     write_soft_mode_report,
 )
@@ -42,6 +45,8 @@ def _ev(
     n_modes: int | None = None,
     n_atoms: int | None = None,
     strain: float = 0.0,
+    kpoints: list[int] | None = None,
+    extra_metadata: dict | None = None,
 ) -> CandidateEvaluation:
     cand = structure_to_candidate(
         build_binary_nitride(metal),
@@ -50,10 +55,15 @@ def _ev(
         substrate="Si(001)",
         in_plane_strain=strain,
     )
+    meta = dict(cand.metadata or {})
     if n_atoms is not None:
-        cand = cand.model_copy(
-            update={"metadata": {**(cand.metadata or {}), "n_atoms": n_atoms}}
-        )
+        meta["n_atoms"] = n_atoms
+    if kpoints is not None:
+        meta["kpoints"] = list(kpoints)
+    if extra_metadata:
+        meta.update(extra_metadata)
+    if meta != dict(cand.metadata or {}):
+        cand = cand.model_copy(update={"metadata": meta})
     if status == "failed" and phonon_status is None:
         ph = PhononResult(
             min_frequency_cm1=None,
@@ -121,6 +131,9 @@ def test_classify_known_binary_imag_is_mesh_artefact() -> None:
     row = classify_soft_mode(ev)
     assert row["soft_mode_class"] == "likely_mesh_artefact"
     assert row["is_known_stable_binary"] is True
+    assert row["is_harmonically_unstable_ideal_rs"] is True
+    assert "ideal_stoichiometric_may_be_harmonic_soft" in row["reasons"]
+    assert "policy_override_not_mesh_artefact" not in row["reasons"]
 
 
 def test_classify_missing_freqs_is_conservative() -> None:
@@ -365,6 +378,110 @@ def test_vn_is_known_stable_and_metadata_override() -> None:
     assert is_known_stable_binary("VN")
     assert not is_known_stable_binary("CrN")
     assert is_known_stable_binary("CrN", {"known_stable_binary": True})
+
+
+def test_nbn_is_harmonically_unstable_ideal_rs() -> None:
+    """#76: split experimentally-known vs ideal-1:1 harmonic-stable."""
+    assert "NbN" in HARMONICALLY_UNSTABLE_IDEAL_RS
+    assert is_harmonically_unstable_ideal_rs("NbN")
+    assert not is_harmonically_unstable_ideal_rs("ZrN")
+    assert not is_harmonically_unstable_ideal_rs("TiN")
+    assert is_harmonically_unstable_ideal_rs(
+        "ZrN", {"harmonically_unstable_ideal_rs": True}
+    )
+    assert not is_harmonically_unstable_ideal_rs(
+        "NbN", {"harmonically_unstable_ideal_rs": False}
+    )
+
+
+def test_classify_dense_k_nbn_is_not_mesh_artefact() -> None:
+    """#74 / #76: NbN at k=12³ staying at −301 cm⁻¹ is literature-soft."""
+    freqs = [
+        -76.8, -76.6, -76.4, 378.2, 378.3, 378.5,
+        -301.5, -100.4, -97.0, 440.2, 441.3, 442.2,
+    ]
+    ev = _ev(
+        metal="Nb",
+        formula="NbN",
+        stable=False,
+        min_freq=-301.5,
+        freqs=freqs,
+        n_modes=12,
+        n_atoms=2,
+        kpoints=[12, 12, 12],
+    )
+    row = classify_soft_mode(ev)
+    assert row["soft_mode_class"] == "genuinely_soft"
+    assert row["softness_locus"] == "finite_q"
+    assert "policy_override_not_mesh_artefact" in row["reasons"]
+    assert "dense_k_still_substantially_soft" in row["reasons"]
+    assert "known_stable_binary_nitride_on_coarse_or_screening_mesh" not in row["reasons"]
+    assert row["is_known_stable_binary"] is True
+
+
+def test_classify_reads_kpoints_from_qe_provenance() -> None:
+    """Real QE evaluations stamp k in provenance.parameters.dft."""
+    ev = _ev(metal="Nb", formula="NbN", stable=False, min_freq=-301.5)
+    ev = ev.model_copy(
+        update={
+            "provenance": Provenance(
+                source="qe_calculator",
+                parameters={"dft": {"kpoints": [12, 12, 12]}},
+            )
+        }
+    )
+    # No per-q dump → locus undetermined, but campaign min is deep.
+    row = classify_soft_mode(ev)
+    assert row["soft_mode_class"] == "genuinely_soft"
+    assert "policy_override_not_mesh_artefact" in row["reasons"]
+
+
+def test_classify_dense_k_zrn_gamma_noise_stays_artefact() -> None:
+    """ZrN k=12³ leftover at Γ-noise scale is not this exception."""
+    freqs = [
+        -29.3, -29.2, -29.1, 469.2, 469.3, 469.5,
+        -28.0, 185.0, 186.9, 395.4, 401.8, 416.6,
+    ]
+    ev = _ev(
+        metal="Zr",
+        formula="ZrN",
+        stable=False,
+        min_freq=-29.3,
+        freqs=freqs,
+        n_modes=12,
+        n_atoms=2,
+        kpoints=[12, 12, 12],
+    )
+    row = classify_soft_mode(ev)
+    assert row["soft_mode_class"] == "likely_mesh_artefact"
+    assert "policy_override_not_mesh_artefact" not in row["reasons"]
+
+
+def test_report_surfaces_nbn_dense_k_override(tmp_path: Path) -> None:
+    freqs = [
+        -76.8, -76.6, -76.4, 378.2, 378.3, 378.5,
+        -301.5, -100.4, -97.0, 440.2, 441.3, 442.2,
+    ]
+    ev = _ev(
+        metal="Nb",
+        formula="NbN",
+        stable=False,
+        min_freq=-301.5,
+        freqs=freqs,
+        n_modes=12,
+        n_atoms=2,
+        kpoints=[12, 12, 12],
+    )
+    report, _, md_path = write_soft_mode_report(
+        [ev], tmp_path / "nbn_k12", campaign_name="nbn_k12_diag"
+    )
+    assert report["ideal_stoichiometric_harmonic_soft"] == ["NbN"]
+    assert report["n_genuinely_soft"] == 1
+    assert report["n_likely_mesh_artefact"] == 0
+    md = md_path.read_text(encoding="utf-8")
+    assert "policy / literature override" in md
+    assert "not a mesh artefact" in md.lower() or "not `likely_mesh_artefact`" in md
+    assert "expected harmonic instability" in "\n".join(report["next_actions"])
 
 
 def test_acquisition_record_includes_soft_mode_class() -> None:

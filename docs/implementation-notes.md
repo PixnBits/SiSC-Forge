@@ -1,5 +1,29 @@
 # Implementation Notes
 
+## Slice 29.7 (2026-08-17) — Soft-mode heuristic: ideal-1:1 harmonic-unstable RS (#76)
+
+Follow-up to PR #75 / #74. `KNOWN_STABLE_RS_NITRIDES` still lists NbN
+as an *experimentally observed* RS SC so a coarse q=2³ map does not
+auto-abandon the family and EPW stays gated. That list is **not**
+“ideally stoichiometric harmonic-stable.”
+
+New `HARMONICALLY_UNSTABLE_IDEAL_RS` (`NbN`). When recorded SCF k is
+≥12³ and leftover imag is past `_GAMMA_MILD_CM1` (50 cm⁻¹), classify
+as `genuinely_soft` with reasons `dense_k_still_substantially_soft` /
+`ideal_stoichiometric_harmonic_instability` /
+`policy_override_not_mesh_artefact`. Coarse-mesh NbN stays
+`likely_mesh_artefact` plus a caveat reason. ZrN k=12³ Γ-noise
+(~−29 cm⁻¹) is unchanged. No auto-promote to `stable` or EPW.
+
+Report / CLI surface the override (`ideal_stoichiometric_harmonic_soft`)
+and do not say “mesh artefact is the primary suspect” when every
+known-soft cell is this exception.
+
+Metadata: `harmonically_unstable_ideal_rs` True/False one-off.
+Tests: `tests/test_soft_modes.py`. Specs §2.3c.
+
+---
+
 ## Slice 29.6 (2026-08-17) — QualityConfig knobs (#59)
 
 Expose `mock_unreliable` (default **true**) as a real `QualityConfig`
@@ -93,9 +117,10 @@ small / rock-salt binaries) for *new* maps. Global
 Remaining NbN softness is treated as expected literature behaviour
 for *ideal stoichiometric* δ-NbN — **not** a mesh artefact and
 **not** a reason to block prefer-12³ for other binaries (ZrN already
-closed its ladder). Auto-heuristic `likely_mesh_artefact` on this
-store is a suspect (known-stable binary + screening tag), not the
-verdict. Do not auto-promote to `stable` or launch EPW.
+closed its ladder). The then-current auto-heuristic `likely_mesh_artefact`
+(known-stable binary + screening tag) was a suspect, not the verdict.
+Slice 29.7 / #76 now overrides that auto-label at dense k. Do not
+auto-promote to `stable` or launch EPW.
 
 Pilot constants / recovery-path behaviour unchanged (comment-only
 clarification).

@@ -64,8 +64,9 @@ The NbN ε=0 control at the same k=12³ / q=4³ / ecut=60 settings
 min −301.5 cm⁻¹, finite-q −301.5 vs Γ −76.8. That leftover is treated
 as expected harmonic softness of *ideal stoichiometric* δ-NbN, **not**
 as a mesh artefact and **not** as a reason to block prefer-12³ for
-other binaries (ZrN already closed its ladder). See
-`docs/examples/nbn_nitride_phonon_diag.md`.
+other binaries (ZrN already closed its ladder). Soft-mode class after
+#76 is `genuinely_soft` (policy override) when recorded k ≥ 12³; still
+not `stable` / EPW. See `docs/examples/nbn_nitride_phonon_diag.md`.
 
 ## 4. Pseudopotentials
 

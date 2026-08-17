@@ -286,12 +286,15 @@ Parser `raw.qpoints` is additive and does **not** apply ASR. `acoustic_vs_optica
 - `setup_failed` — phonon `status` not `ok`/`mock`, or no modes and no `min_frequency_cm1`.
 - `stable` — completed phonon, no imaginary modes under the campaign threshold.
 - `optical_soft` — **only** when a single-q / Γ list is detectable (list length = 3 N_at) **and** imaginary weight sits on optical branches. A flat mesh dump (n_modes ≫ 3 N_at) is `undetermined`.
-- `likely_mesh_artefact` — known-stable rock-salt binaries (NbN, TiN, ZrN, HfN) with imaginary modes on a screening / coarse mesh; **or** imaginary weight confined to the lowest three branches when a single-q list is detectable.
-- `genuinely_soft` — imaginary modes present and not classified above. **Default when the frequency list is missing** (conservative).
+- `likely_mesh_artefact` — known-stable rock-salt binaries (NbN, TiN, ZrN, HfN, VN) with imaginary modes on a screening / coarse mesh; **or** imaginary weight confined to the lowest three branches when a single-q list is detectable. First-pass *suspect* only.
+- `genuinely_soft` — imaginary modes present and not classified above. **Default when the frequency list is missing** (conservative). **Also** when an ideal 1:1 cell in `HARMONICALLY_UNSTABLE_IDEAL_RS` (currently NbN) stays substantially soft (min ω past `_GAMMA_MILD_CM1`) at recorded SCF k ≥ 12³ — policy / literature override of the mesh-artefact auto-label (#74 / #76). Still not `stable` and still not an EPW go-ahead.
 - `unknown` — no `PhononResult` at all.
 
-Labels such as `likely_mesh_artefact` are **suspects, not proof**. The
-report **must** state that coarse q is a gate only.
+Labels such as `likely_mesh_artefact` are **suspects, not proof**. Human /
+policy overrides take precedence and **must** be surfaced on the report
+(`ideal_stoichiometric_harmonic_soft`, reason tokens
+`policy_override_not_mesh_artefact`). The report **must** state that
+coarse q is a gate only.
 
 **Campaign-level summary (must):** counts by class; `campaign_signal`
 (`has_stable_survivors` \| `none_stable` \| `none_stable_known_binaries_also_soft` \| `no_phonon_results` \| `skipped`); list of known-stable binaries that are also soft; `next_actions` (report path + `siscforge pilot` command). Written as `soft_mode_report.json` plus a short Markdown section (`soft_mode_report.md`) in the campaign store.
@@ -404,8 +407,12 @@ Produces Si-Feasibility Score 0–100 plus process recommendations.
     mesh are not EPW-shortlisted until denser-q confirmation
     (`metadata.denser_q_confirmed` or a stable q≥3³ pilot). Critical
     campaign signals auto-emit `denser_q_pilot.yaml` (`do_epw: false`).
-    `KNOWN_STABLE_RS_NITRIDES` is conservative (NbN/TiN/ZrN/HfN/VN);
-    extend the frozenset or set `metadata.known_stable_binary`.
+    `KNOWN_STABLE_RS_NITRIDES` is conservative (NbN/TiN/ZrN/HfN/VN)
+    and means *experimentally observed*, not *ideal-1:1 harmonic-stable*.
+    `HARMONICALLY_UNSTABLE_IDEAL_RS` (NbN) is the dense-k exception
+    (#76). Extend either frozenset or set
+    `metadata.known_stable_binary` /
+    `metadata.harmonically_unstable_ideal_rs`.
 - Surrogate provenance (model version, training-set size, acquisition weights, bootstrap flag) appears in status and synthesis cards.
 - JosephsonMetrics optional secondary ranking when module enabled (Phase 4).
 
