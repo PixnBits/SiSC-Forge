@@ -14,6 +14,9 @@
 # anharmonicity. A dense-k harmonic result that remains substantially
 # soft is therefore not automatically another mesh artefact. Record
 # the numbers honestly either way. Do not invent expected min-ω.
+# Operator result (#74): min −301.5 cm⁻¹, Γ −76.8, finite-q −301.5.
+# Did not collapse to Γ-noise. Policy: keep prefer-12³ for *new* maps;
+# do not treat this leftover as a mesh artefact. Historical YAMLs frozen.
 #
 # Control experiment — not a production claim and not an EPW run.
 # Do not launch EPW. Do not --force-rerun finished dyn sets (this

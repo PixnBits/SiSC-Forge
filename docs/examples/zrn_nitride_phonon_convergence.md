@@ -34,13 +34,14 @@ is finite-q.
 
 ## 3. Electronic sampling (same cell, same q)
 
-Keep one lever at a time. Recorded ZrN ε=0 ladder (QE 7.3.1 Docker):
+Keep one lever at a time. Recorded ε=0 ladders (QE 7.3.1 Docker):
 
-| k | ecutwfc | q | min ω (cm⁻¹) | Notes |
-|---|---------|---|-------------:|-------|
-| 4³ | 50 | 4³ | −148.7 | many finite-q soft |
-| 8³ | 60 | 4³ | −72.1 | most soft q healed |
-| 12³ | 60 | 4³ | **−29.3** | finite-q softness collapsed to Γ-noise scale |
+| cell | k | ecutwfc | q | min ω (cm⁻¹) | Γ / finite-q | Notes |
+|------|---|---------|---|-------------:|--------------|-------|
+| ZrN | 4³ | 50 | 4³ | −148.7 | finite-q | many finite-q soft |
+| ZrN | 8³ | 60 | 4³ | −72.1 | finite-q | most soft q healed |
+| ZrN | 12³ | 60 | 4³ | **−29.3** | Γ-noise | finite-q collapsed to Γ-noise scale |
+| NbN | 12³ | 60 | 4³ | **−301.5** | Γ −76.8 / finite-q **−301.5** | still substantially soft (#74) |
 
 Leftover −29.3 cm⁻¹ is acoustic-like at Γ (ASR not applied). Soft-mode
 locus treats |Γ| below `_GAMMA_MILD_CM1` (50 cm⁻¹) as ordinary acoustic
@@ -56,9 +57,15 @@ identifies electronic k as the dominant artefact; k=8³ → 12³ was at
 `siscforge.pilot` (`NITRIDE_PHONON_K_POLICY`: min 8³, prefer 12³ for
 small / rock-salt binaries). Global `DFTConfig.kpoints` stays `[4,4,4]`.
 A mixed selection (any large non-binary) takes the 8³ floor for the whole
-pilot. Family-wide default change waits on the NbN ε=0 control at the
-same settings (`examples/nbn_k12_diag.yaml`, issue #72) — not another
-ZrN k step. See `docs/examples/nbn_nitride_phonon_diag.md`.
+pilot. Historical campaign YAMLs stay frozen at their original k.
+
+The NbN ε=0 control at the same k=12³ / q=4³ / ecut=60 settings
+(`examples/nbn_k12_diag.yaml`, issue #74) did **not** collapse:
+min −301.5 cm⁻¹, finite-q −301.5 vs Γ −76.8. That leftover is treated
+as expected harmonic softness of *ideal stoichiometric* δ-NbN, **not**
+as a mesh artefact and **not** as a reason to block prefer-12³ for
+other binaries (ZrN already closed its ladder). See
+`docs/examples/nbn_nitride_phonon_diag.md`.
 
 ## 4. Pseudopotentials
 
@@ -87,6 +94,6 @@ step.
 - `examples/zrn_kmesh_diag.yaml`, `examples/zrn_k12_diag.yaml`
 - `outputs/zrn_kmesh_diag/`, `outputs/zrn_k12_diag/`,
   `outputs/nitride_phonon_diag_q4/`
-- implementation-notes Slice 29.4; specs §2.3c
+- implementation-notes Slice 29.4 / 29.5 / #74; specs §2.3c
 - NbN ε=0 control: `examples/nbn_k12_diag.yaml`,
-  `docs/examples/nbn_nitride_phonon_diag.md`, issue #72
+  `docs/examples/nbn_nitride_phonon_diag.md`, issues #72 / #74

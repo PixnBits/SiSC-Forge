@@ -13,7 +13,10 @@ on a mesh-artefact suspicion. This helper:
 * uses a nitride-phonon recovery electronic k of at least 8³ (prefer 12³
   for small / rock-salt binary cells). Electronic k under-sampling was
   the dominant artefact on ZrN (k=4³ → −149; k=8³ → −72; k=12³ → −29
-  Γ-noise). The pilot never lowers a denser source-campaign k.
+  Γ-noise). NbN ε=0 at the same k=12³ / q=4³ stayed substantially soft
+  (min −301.5 cm⁻¹, finite-q; #74) — literature-expected for ideal
+  stoichiometric δ-NbN, not a reason to drop prefer-12³. The pilot
+  never lowers a denser source-campaign k.
 
 The pilot does **not** decide physical stability. Residual |ω| ≲ 30–40
 cm⁻¹ after dense k is not auto-promoted to stable or EPW. The human
@@ -41,10 +44,12 @@ PilotMode = Literal["binaries", "least_soft", "ids"]
 
 DEFAULT_QPOINTS = (3, 3, 3)
 
-# Nitride phonon recovery electronic k (Slice 29.4). Global DFTConfig.kpoints
-# stays [4,4,4]; this floor is scoped to the pilot / map-recovery path.
-# ZrN: k=4³ invented large finite-q imag; k=8³ healed most; k=12³ collapsed
-# leftover softness to Γ-noise (~−29 cm⁻¹).
+# Nitride phonon recovery electronic k (Slice 29.4 / #74). Global
+# DFTConfig.kpoints stays [4,4,4]; this floor is scoped to the pilot /
+# map-recovery path. ZrN: k=4³ invented large finite-q imag; k=8³ healed
+# most; k=12³ collapsed leftover softness to Γ-noise (~−29 cm⁻¹). NbN
+# ε=0 at k=12³ / q=4³ stayed finite-q soft (~−301 cm⁻¹) — do not treat
+# that as a mesh artefact or drop prefer-12³ for other binaries.
 NITRIDE_PHONON_K_MIN = (8, 8, 8)
 NITRIDE_PHONON_K_SMALL_BINARY = (12, 12, 12)
 _SMALL_CELL_N_ATOMS = 4

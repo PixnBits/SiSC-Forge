@@ -27,10 +27,8 @@ settings on stoichiometric NbN (one lever: composition).
 ### How to interpret
 
 Compare Γ vs finite-q to the ZrN ladder in Slice 29.4 / the ZrN
-checklist. If finite-q softness also collapses to Γ-noise scale, the
-raised nitride k-policy is a candidate for *new* maps (historical
-YAMLs stay frozen). If the cell stays substantially soft at dense k,
-that is **not** automatically another mesh artefact.
+checklist. Operator numbers and the policy call are in the
+Slice 29.5 / #74 entry below.
 
 Literature: harmonic instability / extreme softness is often reported
 for *ideal stoichiometric* δ-NbN. Experimental superconducting NbN is
@@ -51,6 +49,46 @@ Do not `--force-rerun` finished ZrN (or other) DFPT artefacts.
 EPW, refine/shortlist changes, global `DFTConfig.kpoints` default,
 UPF swap, ASR, soft-mode class auto-promotion, ternaries / family
 maps, λ/Tc or dynamical-stability claims.
+
+---
+
+## Slice 29.5 / #74 (2026-08-17) — NbN k=12³ numbers and k-policy
+
+Operator follow-up to Slice 29.5 / #72. Store `outputs/nbn_k12_diag`
+finished on Docker QE 7.3.1 (16 cores). No EPW. No `--force-rerun`.
+First `ph.x` hit `d_matrix` / D_S not orthogonal; nosym+noinv retry
+succeeded (`JOB DONE`, 64 q-points, ~16 h 4 m).
+
+### Measured (k=12³ / q=4³ / ecutwfc=60)
+
+|  | ω (cm⁻¹) |
+|---|---:|
+| min | **−301.5** |
+| Γ | −76.8 |
+| finite-q min | **−301.5** |
+
+Locus `finite_q`. 34 / 64 q-points below −5 cm⁻¹. Relaxed cell is
+Fm-3m, `a_prim`=3.1266 Å → `a_cub`=4.422 Å (lit. ≈ 4.39 Å). No
+band-count / PP warning; `nbnd=48` for 18 electrons.
+
+ZrN at the same settings was −29.3 cm⁻¹ with finite-q collapsed to
+Γ-noise. NbN did **not** collapse.
+
+### Policy
+
+Confirm existing `NITRIDE_PHONON_K_POLICY` (min 8³, prefer 12³ for
+small / rock-salt binaries) for *new* maps. Global
+`DFTConfig.kpoints` stays `[4,4,4]`. Historical YAMLs stay frozen.
+
+Remaining NbN softness is treated as expected literature behaviour
+for *ideal stoichiometric* δ-NbN — **not** a mesh artefact and
+**not** a reason to block prefer-12³ for other binaries (ZrN already
+closed its ladder). Auto-heuristic `likely_mesh_artefact` on this
+store is a suspect (known-stable binary + screening tag), not the
+verdict. Do not auto-promote to `stable` or launch EPW.
+
+Pilot constants / recovery-path behaviour unchanged (comment-only
+clarification).
 
 ---
 
@@ -113,15 +151,15 @@ A mixed selection (any large non-binary cell) takes the 8³ floor for the
 
 Soft-mode locus already prefers “densify SCF k / ecut on the same
 q-grid” when the softest mode is finite-q. k is no longer the dominant
-lever for this ZrN cell. Cross-check before any family-wide default
-change: NbN ε=0 at the same settings (`examples/nbn_k12_diag.yaml`,
-Slice 29.5 / issue #72).
+lever for this ZrN cell. NbN ε=0 at the same settings is recorded in
+Slice 29.5 / #74 (`examples/nbn_k12_diag.yaml`): finite-q stayed at
+−301.5 cm⁻¹ and does not block this prefer-12³ stance.
 
 ### Tooling (this slice)
 
 - Checklist: `docs/examples/zrn_nitride_phonon_convergence.md`
 - Diagnostic campaign: `examples/zrn_k12_diag.yaml`
-- NbN control: `examples/nbn_k12_diag.yaml` (Slice 29.5 / #72)
+- NbN control: `examples/nbn_k12_diag.yaml` (Slice 29.5 / #72; numbers + policy in #74)
 - Pilot recovery k: `siscforge.pilot._pilot_dft` / `_pilot_kpoints`
 - Atom count helper: `siscforge.soft_modes.n_atoms`
 
