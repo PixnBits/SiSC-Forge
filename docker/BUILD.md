@@ -78,7 +78,7 @@ after the next image rebuild.
 | QE | **7.3.1** at `/opt/qe/bin` (`Program PWSCF v.7.3.1`) |
 | Wannier90 | **3.1.0** at `/opt/qe/bin/wannier90.x` |
 | SiSC-Forge | `0.4.4` (`pip install -e ".[dev,qe,phonopy]"`) |
-| pytest | **647 passed**, 8 skipped (host/CI mock path, 2026-08-15; no real DFT) |
+| pytest | **727 passed**, 8 skipped (CI mock path on main, 2026-08-18; no real DFT) |
 | Dry-run | `dummy_campaign` + `nbn_epw` OK |
 | SSSP | Nb/N UPFs under `/usr/share/espresso/pseudo` |
 | Full suite | `=== ALL VERIFICATION CHECKS PASSED ===` (image build 2026-08-02) |
