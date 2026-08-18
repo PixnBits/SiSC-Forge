@@ -336,7 +336,9 @@ Soft-mode class and pilot provenance **may later** feed AL acquisition
 and the empty-shortlist messaging. Do not change default acquisition
 scores.
 
----### 2.4 Unconventional (DFT+U / DMFT) Pathway — Phase 3 software path (P3.1–P3.6)
+---
+
+### 2.4 Unconventional (DFT+U / DMFT) Pathway — Phase 3 software path (P3.1–P3.6)
 Produces `leading_pairing_eigenvalue` that feeds the common `performance_score` via documented mapping (see `docs/phase3-p34-pairing-score.md`). **Default off.**
 
 **Implemented contracts:**
