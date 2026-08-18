@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from siscforge.calculators.qe.env import QEEnvironment
 from siscforge.calculators.qe.inputs import build_nscf_wannier_input
 from siscforge.calculators.qe.wannier import (
+    SAVE_STAGE_SIDECAR,
     WANNIER_FAILURE_CLASSES,
     build_pw2wannier90_input,
     classify_wannier_failure,
@@ -18,7 +20,10 @@ from siscforge.calculators.qe.wannier import (
     operator_next_step,
     prepare_amn_mmn,
     resolve_kmesh,
+    resolve_nscf_nbnd,
     run_wannier_workflow,
+    save_stage_fingerprint,
+    save_stage_matches,
     stage_save_for_wannier,
 )
 from siscforge.export import write_synthesis_cards
@@ -347,6 +352,178 @@ def test_stage_save_does_not_delete_src(tmp_path: Path) -> None:
     # Second call reuses dest, still does not touch src
     dest2 = stage_save_for_wannier(src, tmp_path / "wannier", prefix="siscforge")
     assert dest2 == dest
+
+
+def test_stage_save_writes_sidecar_on_first_copy(tmp_path: Path) -> None:
+    src = _make_save(tmp_path / "scf")
+    wd = tmp_path / "wannier"
+    dest = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20, include_hubbard=False
+    )
+    sidecar = wd / "out" / SAVE_STAGE_SIDECAR
+    assert sidecar.is_file()
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    expected = save_stage_fingerprint(
+        src, kmesh=[2, 2, 2], nbnd=20, include_hubbard=False
+    )
+    assert payload == expected
+    assert payload["kmesh"] == [2, 2, 2]
+    assert payload["nbnd"] == 20
+    assert payload["include_hubbard"] is False
+    assert payload["src_save"] == str(src.resolve())
+    assert payload["charge_marker"] == "charge-density.dat"
+    assert payload["charge_size"] == len("SACRED_CHARGE\n")
+    assert dest.is_dir()
+    assert save_stage_matches(
+        wd, src, kmesh=[2, 2, 2], nbnd=20, include_hubbard=False
+    )
+
+
+def test_stage_save_reuses_dest_when_fingerprint_matches(tmp_path: Path) -> None:
+    src = _make_save(tmp_path / "scf")
+    wd = tmp_path / "wannier"
+    dest = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20
+    )
+    marker = dest / "reuse_marker"
+    marker.write_text("keep\n", encoding="utf-8")
+    dest2 = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20
+    )
+    assert dest2 == dest
+    assert marker.read_text(encoding="utf-8") == "keep\n"
+    assert (src / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE\n"
+
+
+@pytest.mark.parametrize(
+    "new_kwargs",
+    [
+        {"kmesh": [4, 4, 4], "nbnd": 20, "include_hubbard": False},
+        {"kmesh": [2, 2, 2], "nbnd": 32, "include_hubbard": False},
+        {"kmesh": [2, 2, 2], "nbnd": 20, "include_hubbard": True},
+    ],
+    ids=["kmesh", "nbnd", "hubbard"],
+)
+def test_stage_save_restages_isolated_copy_on_input_change(
+    tmp_path: Path, new_kwargs: dict[str, object]
+) -> None:
+    src = _make_save(tmp_path / "scf")
+    extra = src / "upstream_only.txt"
+    extra.write_text("UPSTREAM\n", encoding="utf-8")
+    wd = tmp_path / "wannier"
+    dest = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20, include_hubbard=False
+    )
+    (dest / "stale_marker").write_text("old\n", encoding="utf-8")
+    (wd / "nscf.out").write_text("     JOB DONE.\n", encoding="utf-8")
+    (wd / "nscf.in").write_text("&control\n/\n", encoding="utf-8")
+    dest2 = stage_save_for_wannier(src, wd, prefix="siscforge", **new_kwargs)  # type: ignore[arg-type]
+    assert dest2 == dest
+    assert dest2.is_dir()
+    assert not (dest2 / "stale_marker").exists()
+    assert (dest2 / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE\n"
+    assert (dest2 / "upstream_only.txt").read_text(encoding="utf-8") == "UPSTREAM\n"
+    # Isolated dest replaced; wannier-local nscf logs dropped so nscf re-runs
+    assert not (wd / "nscf.out").exists()
+    assert not (wd / "nscf.in").exists()
+    # Sacred upstream untouched
+    assert extra.read_text(encoding="utf-8") == "UPSTREAM\n"
+    assert extra.is_file()
+    assert (src / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE\n"
+    assert src.is_dir()
+    payload = json.loads((wd / "out" / SAVE_STAGE_SIDECAR).read_text(encoding="utf-8"))
+    assert payload["kmesh"] == list(new_kwargs["kmesh"])  # type: ignore[arg-type]
+    assert payload["nbnd"] == new_kwargs["nbnd"]
+    assert payload["include_hubbard"] == new_kwargs["include_hubbard"]
+
+
+def test_stage_save_restages_legacy_dest_without_sidecar(tmp_path: Path) -> None:
+    src = _make_save(tmp_path / "scf")
+    wd = tmp_path / "wannier"
+    dest = wd / "out" / "siscforge.save"
+    dest.mkdir(parents=True)
+    (dest / "stale_marker").write_text("legacy\n", encoding="utf-8")
+    dest2 = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20
+    )
+    assert dest2 == dest
+    assert not (dest / "stale_marker").exists()
+    assert (dest / "charge-density.dat").is_file()
+    assert (wd / "out" / SAVE_STAGE_SIDECAR).is_file()
+    assert (src / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE\n"
+
+
+def test_stage_save_restages_when_upstream_charge_marker_changes(
+    tmp_path: Path,
+) -> None:
+    src = _make_save(tmp_path / "scf")
+    wd = tmp_path / "wannier"
+    dest = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20
+    )
+    (dest / "reuse_marker").write_text("keep\n", encoding="utf-8")
+    (src / "charge-density.dat").write_text("SACRED_CHARGE_V2\n", encoding="utf-8")
+    dest2 = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20
+    )
+    assert dest2 == dest
+    assert not (dest2 / "reuse_marker").exists()
+    assert (dest2 / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE_V2\n"
+    assert (src / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE_V2\n"
+
+
+def test_stage_save_never_deletes_upstream_on_restage(tmp_path: Path) -> None:
+    src = _make_save(tmp_path / "scf")
+    sibling = tmp_path / "scf" / "scf.out"
+    sibling.write_text("JOB DONE\n", encoding="utf-8")
+    wd = tmp_path / "wannier"
+    stage_save_for_wannier(src, wd, prefix="siscforge", kmesh=[2, 2, 2], nbnd=20)
+    stage_save_for_wannier(src, wd, prefix="siscforge", kmesh=[8, 8, 8], nbnd=40)
+    assert src.is_dir()
+    assert (src / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE\n"
+    assert sibling.read_text(encoding="utf-8") == "JOB DONE\n"
+    # Isolated dest is under wannier/, not scf/
+    assert (wd / "out" / "siscforge.save").is_dir()
+    assert not (tmp_path / "scf").joinpath("wannier").exists()
+
+
+def test_prepare_restages_stale_save_without_touching_upstream(tmp_path: Path) -> None:
+    s = build_binary_nitride("Nb")
+    bindir = _fake_bindir(tmp_path)
+    dft = _nb_dft(tmp_path)
+    scf = tmp_path / "scf"
+    src = _make_save(scf)
+    wd = tmp_path / "wannier"
+    dest = stage_save_for_wannier(
+        src, wd, prefix="siscforge", kmesh=[1, 1, 1], nbnd=4, include_hubbard=False
+    )
+    (dest / "stale_marker").write_text("old\n", encoding="utf-8")
+    (wd / "nscf.out").write_text("     JOB DONE.\n", encoding="utf-8")
+    log: list[str] = []
+    result = prepare_amn_mmn(
+        s,
+        dft,
+        wd,
+        qe_env=_fake_env(bindir),
+        scf_work_dir=scf,
+        prefix="siscforge",
+        step_log=log,
+    )
+    assert result is None
+    assert not (dest / "stale_marker").exists()
+    assert (src / "charge-density.dat").read_text(encoding="utf-8") == "SACRED_CHARGE\n"
+    assert src.is_dir()
+    assert any("staged isolated save" in line for line in log)
+    # Stale JOB DONE was dropped so fake nscf re-ran
+    assert (wd / "siscforge.amn").is_file()
+    mesh = resolve_kmesh(dft, s)
+    assert save_stage_matches(
+        wd,
+        src,
+        kmesh=mesh,
+        nbnd=resolve_nscf_nbnd(dft),
+        include_hubbard=False,
+    )
 
 
 def test_prepare_amn_mmn_none_when_already_staged(tmp_path: Path) -> None:
