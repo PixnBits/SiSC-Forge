@@ -1002,6 +1002,57 @@ class DMFTConfig(BaseModel):
     )
     """Optional invoke timeout in seconds. ``None`` = no timeout."""
 
+    # Screening residual cutoffs for conv_imp*.dat / convergence_obs (#40).
+    # Not production CTHYB criteria. solid_dmft often ships these disabled (-1).
+    # Setting a cutoff to 0 disables that residual for the boolean decision.
+    d_imp_occ_conv: float = Field(
+        default=0.02,
+        ge=0.0,
+        description=(
+            "Screening-only residual cutoff for d_imp_occ from conv_imp*.dat "
+            "/ h5 convergence_obs (issue #40). Not a production CTHYB "
+            "criterion. Set 0 to disable this residual in the boolean "
+            "decision. solid_dmft often ships occ_conv_crit=-1 (disabled)."
+        ),
+    )
+    """Screening-only d_imp_occ residual cutoff. 0 disables this residual."""
+
+    d_Gimp_conv: float = Field(
+        default=0.05,
+        ge=0.0,
+        description=(
+            "Screening-only residual cutoff for d_Gimp from conv_imp*.dat "
+            "/ h5 convergence_obs (issue #40). Not a production CTHYB "
+            "criterion. Set 0 to disable this residual in the boolean "
+            "decision. solid_dmft often ships gimp_conv_crit=-1 (disabled)."
+        ),
+    )
+    """Screening-only d_Gimp residual cutoff. 0 disables this residual."""
+
+    d_G0_conv: float = Field(
+        default=0.05,
+        ge=0.0,
+        description=(
+            "Screening-only residual cutoff for d_G0 from conv_imp*.dat "
+            "/ h5 convergence_obs (issue #40). Not a production CTHYB "
+            "criterion. Set 0 to disable this residual in the boolean "
+            "decision. solid_dmft often ships g0_conv_crit=-1 (disabled)."
+        ),
+    )
+    """Screening-only d_G0 residual cutoff. 0 disables this residual."""
+
+    d_Sigma_conv: float = Field(
+        default=0.05,
+        ge=0.0,
+        description=(
+            "Screening-only residual cutoff for d_Sigma from conv_imp*.dat "
+            "/ h5 convergence_obs (issue #40). Not a production CTHYB "
+            "criterion. Set 0 to disable this residual in the boolean "
+            "decision. solid_dmft often ships sigma_conv_crit=-1 (disabled)."
+        ),
+    )
+    """Screening-only d_Sigma residual cutoff. 0 disables this residual."""
+
     # Wannier gate
     require_wannier_gate: bool = True
     """When True (default), non-mock solvers refuse unless Wannier is
@@ -1033,6 +1084,22 @@ class DMFTConfig(BaseModel):
     """P3.4 pairing → performance_score knobs (inert unless pairing is present)."""
 
     version: str = "0.1"
+
+    def screening_conv_cutoffs(self) -> dict[str, float]:
+        """YAML-overridable screening residual cutoffs (issue #40).
+
+        Keys match ``SCREENING_CONV_CUTOFFS`` in
+        ``siscforge.calculators.qe.dmft_observables``. A value of ``0``
+        disables that residual in ``_decide_from_residuals``. These are
+        **not** written to solid_dmft ``occ_conv_crit`` / ``gimp_conv_crit``
+        (those stay solver-owned and are typically disabled).
+        """
+        return {
+            "d_imp_occ": float(self.d_imp_occ_conv),
+            "d_Gimp": float(self.d_Gimp_conv),
+            "d_G0": float(self.d_G0_conv),
+            "d_Sigma": float(self.d_Sigma_conv),
+        }
 
     @field_validator("U_by_species", "J_by_species")
     @classmethod

@@ -18,17 +18,20 @@ from siscforge.calculators.qe.dmft import (
 from siscforge.calculators.qe.dmft_launch import LaunchOutcome
 from siscforge.calculators.qe.dmft_observables import (
     SCREENING_CONV_CUTOFFS,
+    _decide_from_residuals,
     apply_convergence_precedence,
     convergence_from_h5_tree,
     discover_convergence_signal,
     discover_dmft_metrics,
+    empty_conv_signal,
     empty_metrics,
     extract_convergence_h5,
     find_conv_dat,
     parse_conv_dat,
     parse_conv_dat_text,
+    resolve_screening_cutoffs,
 )
-from siscforge.models import DMFTConfig, WannierResult
+from siscforge.models import CampaignConfig, DMFTConfig, WannierResult
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "dmft"
 
@@ -466,3 +469,190 @@ def test_parse_json_marks_explicit_only_for_operator_drop_in() -> None:
     )
     assert bridged["converged_explicit"] is False
     assert bridged["converged"] is True
+
+
+def test_dmft_config_defaults_match_module_cutoffs() -> None:
+    cfg = DMFTConfig()
+    assert cfg.screening_conv_cutoffs() == SCREENING_CONV_CUTOFFS
+    assert cfg.d_imp_occ_conv == pytest.approx(0.02)
+    assert cfg.d_Gimp_conv == pytest.approx(0.05)
+    assert cfg.d_G0_conv == pytest.approx(0.05)
+    assert cfg.d_Sigma_conv == pytest.approx(0.05)
+    assert empty_conv_signal()["cutoffs"] == SCREENING_CONV_CUTOFFS
+    assert resolve_screening_cutoffs(None) == SCREENING_CONV_CUTOFFS
+
+
+def test_dmft_config_yaml_overrides_cutoffs() -> None:
+    cfg = CampaignConfig.model_validate(
+        {
+            "name": "dmft_cutoffs",
+            "dft": {
+                "dmft": {
+                    "d_imp_occ_conv": 0.10,
+                    "d_Gimp_conv": 0.20,
+                    "d_G0_conv": 0.0,
+                    "d_Sigma_conv": 0.08,
+                }
+            },
+        }
+    )
+    cutoffs = cfg.dft.dmft.screening_conv_cutoffs()
+    assert cutoffs["d_imp_occ"] == pytest.approx(0.10)
+    assert cutoffs["d_Gimp"] == pytest.approx(0.20)
+    assert cutoffs["d_G0"] == pytest.approx(0.0)
+    assert cutoffs["d_Sigma"] == pytest.approx(0.08)
+
+
+def test_dmft_config_rejects_negative_cutoff() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        DMFTConfig(d_imp_occ_conv=-0.01)
+
+
+def test_decide_from_residuals_override_loosens_and_tightens() -> None:
+    """A residual that fails the default cutoff can pass with a looser override."""
+    residuals = {
+        "d_imp_occ": 0.03,  # default cutoff 0.02 → fail
+        "d_Gimp": 0.01,
+        "d_G0": 0.01,
+        "d_Sigma": 0.01,
+    }
+    default_cfg = DMFTConfig()
+    decided, note = _decide_from_residuals(
+        residuals, cutoffs=default_cfg.screening_conv_cutoffs()
+    )
+    assert decided is False
+    assert "d_imp_occ" in note
+
+    loose = DMFTConfig(d_imp_occ_conv=0.05)
+    decided, _ = _decide_from_residuals(
+        residuals, cutoffs=loose.screening_conv_cutoffs()
+    )
+    assert decided is True
+
+    tight = DMFTConfig(d_Gimp_conv=0.005)
+    residuals_gimp = {
+        "d_imp_occ": 0.001,
+        "d_Gimp": 0.01,  # default 0.05 would pass; tight 0.005 fails
+        "d_G0": 0.001,
+        "d_Sigma": 0.001,
+    }
+    decided_default, _ = _decide_from_residuals(
+        residuals_gimp, cutoffs=default_cfg.screening_conv_cutoffs()
+    )
+    assert decided_default is True
+    decided_tight, note_tight = _decide_from_residuals(
+        residuals_gimp, cutoffs=tight.screening_conv_cutoffs()
+    )
+    assert decided_tight is False
+    assert "d_Gimp" in note_tight
+
+
+def test_cutoff_zero_disables_residual() -> None:
+    residuals = {"d_imp_occ": 9.0, "d_Gimp": 0.01, "d_G0": 0.01, "d_Sigma": 0.01}
+    decided, _ = _decide_from_residuals(residuals)
+    assert decided is False
+    decided, note = _decide_from_residuals(
+        residuals, cutoffs={"d_imp_occ": 0.0}
+    )
+    assert decided is True
+    assert "d_imp_occ" not in note
+
+
+def test_parse_conv_dat_respects_cutoffs() -> None:
+    """Offline parse helpers keep module defaults unless cutoffs are passed."""
+    default = parse_conv_dat_text(_UNCONVERGED_CONV)
+    assert default["usable"] is True
+    assert default["converged"] is False
+    assert default["cutoffs"] == SCREENING_CONV_CUTOFFS
+
+    loose = {
+        "d_imp_occ": 0.30,
+        "d_Gimp": 0.30,
+        "d_G0": 0.30,
+        "d_Sigma": 0.30,
+    }
+    overridden = parse_conv_dat_text(_UNCONVERGED_CONV, cutoffs=loose)
+    assert overridden["usable"] is True
+    assert overridden["converged"] is True
+    assert overridden["cutoffs"]["d_imp_occ"] == pytest.approx(0.30)
+
+
+def test_discover_metrics_uses_override_cutoffs(tmp_path: Path) -> None:
+    wd = tmp_path / "dmft"
+    _write_obs(wd)
+    (wd / "conv_imp0.dat").write_text(_UNCONVERGED_CONV, encoding="utf-8")
+
+    default_metrics, _, _ = discover_dmft_metrics(wd, write_json=False)
+    assert default_metrics["converged"] is False
+    assert default_metrics["converged_source"] == "conv_dat"
+
+    loose = DMFTConfig(
+        d_imp_occ_conv=0.30,
+        d_Gimp_conv=0.30,
+        d_G0_conv=0.30,
+        d_Sigma_conv=0.30,
+    )
+    loose_metrics, _, _ = discover_dmft_metrics(
+        wd, write_json=False, cutoffs=loose.screening_conv_cutoffs()
+    )
+    assert loose_metrics["converged"] is True
+    assert loose_metrics["converged_source"] == "conv_dat"
+    assert loose_metrics["convergence"]["cutoffs"]["d_imp_occ"] == pytest.approx(0.30)
+
+
+def test_apply_precedence_redecides_with_override_cutoffs() -> None:
+    usable = empty_metrics()
+    usable["filling"] = 8.0
+    usable["occupancy_summary"] = {"imp0": 8.0}
+    live_false = {
+        "converged": False,
+        "source": "conv_dat",
+        "usable": True,
+        "residuals": {
+            "d_imp_occ": 0.03,
+            "d_Gimp": 0.01,
+            "d_G0": 0.01,
+            "d_Sigma": 0.01,
+        },
+        "notes": "d_imp_occ exceeds screening cutoff",
+        "path": "conv_imp0.dat",
+        "cutoffs": dict(SCREENING_CONV_CUTOFFS),
+    }
+    out = apply_convergence_precedence(dict(usable), signal=dict(live_false))
+    assert out["converged"] is False
+
+    loose = {"d_imp_occ": 0.05}
+    out = apply_convergence_precedence(
+        dict(usable), signal=dict(live_false), cutoffs=loose
+    )
+    assert out["converged"] is True
+    assert out["converged_source"] == "conv_dat"
+
+
+def test_auto_launch_loose_cutoffs_accepts_residuals(tmp_path: Path) -> None:
+    obs = (FIXTURES / "observables_imp0.dat").read_text(encoding="utf-8")
+
+    def _launcher(_cmd, work_dir: Path, _timeout):
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        (Path(work_dir) / "observables_imp0.dat").write_text(obs, encoding="utf-8")
+        (Path(work_dir) / "conv_imp0.dat").write_text(_UNCONVERGED_CONV, encoding="utf-8")
+        return LaunchOutcome(returncode=0, command=list(_cmd), source="fake_conv")
+
+    result = run_solid_dmft(
+        cfg=_cfg(
+            d_imp_occ_conv=0.30,
+            d_Gimp_conv=0.30,
+            d_G0_conv=0.30,
+            d_Sigma_conv=0.30,
+        ),
+        wannier=_ready_wannier(tmp_path),
+        work_dir=tmp_path / "dmft",
+        quality_tag="screening",
+        formula="NdNiO2",
+        launcher=_launcher,
+    )
+    assert result.status == "ok"
+    assert result.converged is True
+    assert result.raw.get("convergence", {}).get("source") == "conv_dat"
