@@ -732,11 +732,13 @@ def run_solid_dmft(
 
     obs_path = find_observables_file(work_dir)
     seedname = (cfg.seedname or "siscforge").strip() or "siscforge"
+    conv_cutoffs = cfg.screening_conv_cutoffs()
     metrics, src_kind, src_path = discover_dmft_metrics(
         work_dir,
         parse_json=parse_dmft_observables,
         write_json=True,
         seedname=seedname,
+        cutoffs=conv_cutoffs,
     )
     launch_meta["observables_kind"] = src_kind
     launch_meta["observables_path"] = str(src_path) if src_path is not None else None
@@ -879,6 +881,7 @@ def run_solid_dmft(
             parse_json=parse_dmft_observables,
             write_json=True,
             seedname=seedname,
+            cutoffs=conv_cutoffs,
         )
         launch_meta["observables_kind"] = src_kind
         launch_meta["observables_path"] = (

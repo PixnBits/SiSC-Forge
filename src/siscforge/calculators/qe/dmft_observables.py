@@ -86,11 +86,13 @@ _CONV_KEYS: tuple[str, ...] = ("converged", "success", "job_done")
 
 _SPIN_KEYS = frozenset({"up", "down", "ud", "tot", "total"})
 
-# Screening-only residual cutoffs (issue #37). solid_dmft ships
+# Screening-only residual cutoffs (issue #37 / #40). solid_dmft ships
 # occ_conv_crit / gimp_conv_crit / g0_conv_crit / sigma_conv_crit = -1
 # (disabled). These values let a last-row conv table set
 # DMFTResult.converged when no explicit flag is present. They are
-# **not** production CTHYB criteria.
+# **not** production CTHYB criteria. Operators override via
+# ``DMFTConfig.d_*_conv`` (campaign YAML); we do **not** ingest
+# solid_dmft's own (typically disabled) solver criteria.
 SCREENING_CONV_CUTOFFS: dict[str, float] = {
     "d_imp_occ": 0.02,
     "d_Gimp": 0.05,
@@ -847,14 +849,36 @@ def find_h5_archives(work_dir: Path, *, seedname: str | None = None) -> list[Pat
 # ---------------------------------------------------------------------------
 
 
-def empty_conv_signal() -> dict[str, Any]:
+def resolve_screening_cutoffs(
+    cutoffs: Mapping[str, float] | None = None,
+) -> dict[str, float]:
+    """Merge *cutoffs* onto :data:`SCREENING_CONV_CUTOFFS`.
+
+    Unknown keys are kept (``_decide_from_residuals`` only judges keys
+    that also appear in the residual table). Non-numeric values are
+    skipped. ``None`` / empty → module defaults unchanged.
+    """
+    used = dict(SCREENING_CONV_CUTOFFS)
+    if not cutoffs:
+        return used
+    for key, value in cutoffs.items():
+        try:
+            used[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return used
+
+
+def empty_conv_signal(
+    cutoffs: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
     """Structured convergence extract (``converged`` is bool or None)."""
     return {
         "converged": None,
         "source": None,
         "path": None,
         "residuals": {},
-        "cutoffs": dict(SCREENING_CONV_CUTOFFS),
+        "cutoffs": resolve_screening_cutoffs(cutoffs),
         "notes": "",
         "usable": False,
     }
@@ -968,11 +992,11 @@ def _decide_from_residuals(
     """Return ``(converged, note)`` from last-iteration residual norms.
 
     Uses documented screening cutoffs. ``d_mu`` is recorded but not
-    used for the boolean (chemical potential can wander).
+    used for the boolean (chemical potential can wander). A cutoff
+    ``<= 0`` disables that residual (same convention as solid_dmft
+    ``*_conv_crit = -1``).
     """
-    used = dict(SCREENING_CONV_CUTOFFS)
-    if cutoffs:
-        used.update({k: float(v) for k, v in cutoffs.items()})
+    used = resolve_screening_cutoffs(cutoffs)
     checked: list[str] = []
     for key, cutoff in used.items():
         if cutoff <= 0.0:
@@ -987,9 +1011,13 @@ def _decide_from_residuals(
     return True, "all present residuals within screening cutoffs (" + ", ".join(checked) + ")"
 
 
-def parse_conv_dat_text(text: str) -> dict[str, Any]:
+def parse_conv_dat_text(
+    text: str,
+    *,
+    cutoffs: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
     """Parse a solid_dmft ``conv_imp*.dat`` body into a conv-signal dict."""
-    out = empty_conv_signal()
+    out = empty_conv_signal(cutoffs)
     if not text or not str(text).strip():
         return out
 
@@ -1069,7 +1097,7 @@ def parse_conv_dat_text(text: str) -> dict[str, Any]:
         out["usable"] = True
         out["notes"] = "explicit converged column in conv_imp*.dat"
         return out
-    decided, note = _decide_from_residuals(residuals)
+    decided, note = _decide_from_residuals(residuals, cutoffs=cutoffs)
     out["notes"] = note
     if decided is not None:
         out["converged"] = decided
@@ -1077,26 +1105,38 @@ def parse_conv_dat_text(text: str) -> dict[str, Any]:
     return out
 
 
-def parse_conv_dat(source: str | Path) -> dict[str, Any]:
+def parse_conv_dat(
+    source: str | Path,
+    *,
+    cutoffs: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
     """Read a ``conv_imp*.dat`` path. Never raises."""
     path = Path(source)
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return empty_conv_signal()
-    signal = parse_conv_dat_text(text)
+        return empty_conv_signal(cutoffs)
+    signal = parse_conv_dat_text(text, cutoffs=cutoffs)
     signal["path"] = str(path)
     return signal
 
 
-def _merge_conv_signals(signals: list[dict[str, Any]]) -> dict[str, Any]:
+def _merge_conv_signals(
+    signals: list[dict[str, Any]],
+    *,
+    cutoffs: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
     """Combine per-impurity conv tables: any False wins; else True if any True."""
     if not signals:
-        return empty_conv_signal()
+        return empty_conv_signal(cutoffs)
     usable = [s for s in signals if s.get("usable")]
     if not usable:
         return signals[0]
-    merged = empty_conv_signal()
+    merged = empty_conv_signal(cutoffs)
+    if cutoffs is None:
+        first_cut = usable[0].get("cutoffs")
+        if first_cut:
+            merged["cutoffs"] = dict(first_cut)
     merged["source"] = usable[0].get("source") or "conv_dat"
     merged["path"] = usable[0].get("path")
     residuals: dict[str, float] = {}
@@ -1123,8 +1163,15 @@ def _merge_conv_signals(signals: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def parse_conv_dat_group(paths: list[Path]) -> dict[str, Any]:
-    return _merge_conv_signals([parse_conv_dat(p) for p in paths])
+def parse_conv_dat_group(
+    paths: list[Path],
+    *,
+    cutoffs: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    return _merge_conv_signals(
+        [parse_conv_dat(p, cutoffs=cutoffs) for p in paths],
+        cutoffs=cutoffs,
+    )
 
 
 def _last_residual_from_obj(obj: Any) -> float | None:
@@ -1132,9 +1179,13 @@ def _last_residual_from_obj(obj: Any) -> float | None:
     return _worst_abs(vals) if vals else None
 
 
-def convergence_from_h5_tree(tree: Any) -> dict[str, Any]:
+def convergence_from_h5_tree(
+    tree: Any,
+    *,
+    cutoffs: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
     """Extract a conv-signal dict from an h5py File / nested mapping."""
-    out = empty_conv_signal()
+    out = empty_conv_signal(cutoffs)
     if tree is None or not _is_mapping(tree):
         return out
 
@@ -1227,7 +1278,7 @@ def convergence_from_h5_tree(tree: Any) -> dict[str, Any]:
                 out["notes"] = "explicit converged flag on DMFT_results/convergence_obs"
                 return out
 
-    decided, note = _decide_from_residuals(residuals)
+    decided, note = _decide_from_residuals(residuals, cutoffs=cutoffs)
     out["notes"] = note
     if decided is not None:
         out["converged"] = decided
@@ -1239,20 +1290,21 @@ def extract_convergence_h5(
     source: str | Path | Mapping[str, Any] | None,
     *,
     opener: Callable[[Path], Any] | None = None,
+    cutoffs: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Best-effort h5 convergence extract. Soft on h5py — never raises."""
     if source is None:
-        return empty_conv_signal()
+        return empty_conv_signal(cutoffs)
     if _is_mapping(source) and not isinstance(source, (str, Path)):
         try:
-            return convergence_from_h5_tree(source)
+            return convergence_from_h5_tree(source, cutoffs=cutoffs)
         except Exception:  # noqa: BLE001
             _LOG.debug("in-memory convergence tree parse failed", exc_info=True)
-            return empty_conv_signal()
+            return empty_conv_signal(cutoffs)
 
     path = Path(source)
     if not path.is_file():
-        return empty_conv_signal()
+        return empty_conv_signal(cutoffs)
 
     handle: Any = None
     close = False
@@ -1266,15 +1318,15 @@ def extract_convergence_h5(
             try:
                 import h5py
             except ImportError:
-                return empty_conv_signal()
+                return empty_conv_signal(cutoffs)
             handle = h5py.File(path, "r")
             close = True
-        signal = convergence_from_h5_tree(handle)
+        signal = convergence_from_h5_tree(handle, cutoffs=cutoffs)
         signal["path"] = str(path)
         return signal
     except Exception:  # noqa: BLE001
         _LOG.debug("h5 convergence extract skipped for %s", path, exc_info=True)
-        return empty_conv_signal()
+        return empty_conv_signal(cutoffs)
     finally:
         if close and handle is not None:
             try:
@@ -1295,20 +1347,21 @@ def discover_convergence_signal(
     *,
     seedname: str | None = None,
     h5_opener: Callable[[Path], Any] | None = None,
+    cutoffs: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Find the first usable conv signal: ``conv_imp*.dat`` then h5."""
     work_dir = Path(work_dir)
     dats = find_conv_dat(work_dir)
     if dats:
-        signal = parse_conv_dat_group(dats)
+        signal = parse_conv_dat_group(dats, cutoffs=cutoffs)
         if signal.get("usable"):
             return signal
 
     for h5 in find_h5_archives(work_dir, seedname=seedname):
-        signal = extract_convergence_h5(h5, opener=h5_opener)
+        signal = extract_convergence_h5(h5, opener=h5_opener, cutoffs=cutoffs)
         if signal.get("usable"):
             return signal
-    return empty_conv_signal()
+    return empty_conv_signal(cutoffs)
 
 
 def apply_convergence_precedence(
@@ -1318,6 +1371,7 @@ def apply_convergence_precedence(
     seedname: str | None = None,
     h5_opener: Callable[[Path], Any] | None = None,
     signal: dict[str, Any] | None = None,
+    cutoffs: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Set ``metrics['converged']`` from the documented precedence.
 
@@ -1328,13 +1382,39 @@ def apply_convergence_precedence(
     3. Stored native-bridge verdict (resume when live files are gone)
     4. Last-row / occupancy heuristic (missing conv never hard-fails)
     5. Otherwise conservative ``False``
+
+    *cutoffs* overrides screening residual thresholds (issue #40). When
+    omitted, module :data:`SCREENING_CONV_CUTOFFS` (or the values already
+    stamped on *signal*) are used. Precedence order is unchanged from #37.
     """
     if signal is None and work_dir is not None:
         signal = discover_convergence_signal(
-            work_dir, seedname=seedname, h5_opener=h5_opener
+            work_dir, seedname=seedname, h5_opener=h5_opener, cutoffs=cutoffs
         )
     if signal is None:
-        signal = empty_conv_signal()
+        signal = empty_conv_signal(cutoffs)
+
+    # Re-apply operator cutoffs onto a residual-based signal so a pre-parsed
+    # table can be re-judged without re-reading files. Explicit converged
+    # flags (JSON / conv column / h5) stay authoritative.
+    if (
+        cutoffs is not None
+        and signal.get("usable")
+        and signal.get("residuals")
+        and "explicit" not in str(signal.get("notes") or "").lower()
+    ):
+        decided_r, note_r = _decide_from_residuals(
+            dict(signal.get("residuals") or {}), cutoffs=cutoffs
+        )
+        signal = dict(signal)
+        signal["cutoffs"] = resolve_screening_cutoffs(cutoffs)
+        signal["notes"] = note_r
+        if decided_r is not None:
+            signal["converged"] = decided_r
+            signal["usable"] = True
+        else:
+            signal["converged"] = None
+            signal["usable"] = False
 
     explicit = bool(metrics.get("converged_explicit"))
     stored_source = metrics.get("converged_source")
@@ -1370,7 +1450,9 @@ def apply_convergence_precedence(
         "source": source,
         "path": signal.get("path"),
         "residuals": dict(signal.get("residuals") or {}),
-        "cutoffs": dict(signal.get("cutoffs") or SCREENING_CONV_CUTOFFS),
+        "cutoffs": resolve_screening_cutoffs(
+            cutoffs if cutoffs is not None else signal.get("cutoffs")
+        ),
         "notes": notes,
         "usable": bool(signal.get("usable")) if not explicit else True,
     }
@@ -1480,6 +1562,7 @@ def discover_dmft_metrics(
     write_json: bool = True,
     seedname: str | None = None,
     h5_opener: Callable[[Path], Any] | None = None,
+    cutoffs: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, Any], str | None, Path | None]:
     """Walk JSON → ``.dat`` → h5. Return ``(metrics, kind, path)``.
 
@@ -1487,6 +1570,9 @@ def discover_dmft_metrics(
     (empty JSON, input-only seed h5, missing h5py) are skipped. On a
     successful native parse, optionally materializes ``observables.json``
     so resume does not need TRIQS / h5py again.
+
+    *cutoffs* is the optional screening residual mapping (issue #40).
+    Offline helpers that omit it keep module defaults.
     """
     work_dir = Path(work_dir)
     if parse_json is None:
@@ -1498,7 +1584,11 @@ def discover_dmft_metrics(
         metrics: dict[str, Any], kind: str, path: Path
     ) -> tuple[dict[str, Any], str, Path]:
         apply_convergence_precedence(
-            metrics, work_dir, seedname=seedname, h5_opener=h5_opener
+            metrics,
+            work_dir,
+            seedname=seedname,
+            h5_opener=h5_opener,
+            cutoffs=cutoffs,
         )
         if write_json and kind != "json":
             materialize_observables_json(work_dir, metrics, source=str(path.name))

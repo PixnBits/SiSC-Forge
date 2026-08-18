@@ -146,6 +146,26 @@ def test_dmft_config_enable_yaml_knobs() -> None:
     assert cfg.dft.dmft.n_cycles == 8000
 
 
+def test_dmft_config_screening_cutoffs_yaml() -> None:
+    cfg = CampaignConfig.model_validate(
+        {
+            "name": "nickelate_dmft_cutoffs",
+            "dft": {
+                "do_dmft": True,
+                "dmft": {
+                    "enabled": True,
+                    "d_imp_occ_conv": 0.03,
+                    "d_Gimp_conv": 0.08,
+                },
+            },
+        }
+    )
+    assert cfg.dft.dmft.d_imp_occ_conv == pytest.approx(0.03)
+    assert cfg.dft.dmft.d_Gimp_conv == pytest.approx(0.08)
+    assert cfg.dft.dmft.d_G0_conv == pytest.approx(0.05)
+    assert cfg.dft.dmft.d_Sigma_conv == pytest.approx(0.05)
+
+
 def test_dmft_config_rejects_negative_u() -> None:
     with pytest.raises(ValidationError):
         DMFTConfig(U_by_species={"Ni": -1.0})

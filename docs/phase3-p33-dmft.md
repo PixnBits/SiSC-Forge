@@ -69,6 +69,14 @@ dft:
     n_loops: 4                   # written to dmft_config.toml as n_iter_dmft
     auto_launch: true            # invoke when stack present; mock unaffected
     # launch_timeout_s: 3600     # optional wall-clock cap; default none
+    # Screening residual cutoffs for conv_imp*.dat / convergence_obs (#40).
+    # Defaults unchanged from #37. Set a cutoff to 0 to disable that residual.
+    # These are **not** production CTHYB criteria and are **not** written
+    # to solid_dmft occ_conv_crit / gimp_conv_crit (those stay solver-owned).
+    # d_imp_occ_conv: 0.02
+    # d_Gimp_conv: 0.05
+    # d_G0_conv: 0.05
+    # d_Sigma_conv: 0.05
     # Gate — see “Will this run or refuse?” below
     allow_without_wannier_gate: false
     mock_bypass_gate: true       # documented dry-run bypass (solver=mock)
@@ -159,9 +167,14 @@ Defaults are conservative for real solvers and convenient for dry-run.
    2. Real solid_dmft signals when usable: `conv_imp*.dat` (also
       `out/`) then h5 `DMFT_results/convergence_obs` (soft `h5py`).
       Screening residual cutoffs (documented, **not** production
-      CTHYB): `d_imp_occ=0.02`, `d_Gimp=d_G0=d_Sigma=0.05`. `d_mu`
-      is recorded but informational. Present residuals above cutoff
-      → `converged=False` (`status=failed`) is intended.
+      CTHYB): `d_imp_occ=0.02`, `d_Gimp=d_G0=d_Sigma=0.05` by
+      default. Override from campaign YAML via `dft.dmft.d_imp_occ_conv`
+      / `d_Gimp_conv` / `d_G0_conv` / `d_Sigma_conv` (issue #40). Set a
+      cutoff to `0` to disable that residual. `d_mu` is recorded but
+      informational. Present residuals above cutoff → `converged=False`
+      (`status=failed`) is intended. We do **not** ingest solid_dmft
+      `occ_conv_crit` / `gimp_conv_crit` (typically `-1` / disabled);
+      YAML is the operator knob.
    3. Stored native-bridge verdict if those files are gone on resume.
    4. Last-row / occupancy heuristic — occupancy-only parses stay
       **non-failed** when conv diagnostics are missing. Do not

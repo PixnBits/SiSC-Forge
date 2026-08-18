@@ -254,8 +254,12 @@ Precedence (first matching row wins):
 5. Otherwise conservative `false`.
 
 Screening residual cutoffs (documented, not production CTHYB):
-`d_imp_occ=0.02`, `d_Gimp=d_G0=d_Sigma=0.05`. `d_mu` is recorded
-but informational. Missing conv files never invent a hard failure.
+`d_imp_occ=0.02`, `d_Gimp=d_G0=d_Sigma=0.05` by default. Override
+via campaign YAML `dft.dmft.d_imp_occ_conv` / `d_Gimp_conv` /
+`d_G0_conv` / `d_Sigma_conv` (set `0` to disable a residual).
+`d_mu` is recorded but informational. Missing conv files never
+invent a hard failure. These knobs are **not** written to
+solid_dmft `occ_conv_crit` (typically disabled in the solver).
 
 Pairing keys (`leading_pairing_eigenvalue`, `pairing_symmetry`) flow
 into P3.4 when present. Exotic solid_dmft layouts can still drop a
