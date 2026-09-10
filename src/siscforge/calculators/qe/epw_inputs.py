@@ -796,6 +796,9 @@ def build_epw_input(
             f"  nqf3        = {int(nqf[2])}",
         ]
     )
+    # QE EPW/examples/mgb2 control path uses mp_mesh_k=.true. with nk=nq=6.
+    if bool(getattr(epw, "mp_mesh_k", False)):
+        lines.extend(["", "  mp_mesh_k   = .true."])
 
     if epw.eliashberg:
         # Isotropic-oriented flags; anisotropic laniso left off for screening

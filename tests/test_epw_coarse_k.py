@@ -26,7 +26,9 @@ from siscforge.calculators.qe.epw_recipes import (
     is_remediable_kmesh_failure,
     load_epw_remediation_state,
     plan_kmesh_remediation,
+    resolve_epw_launch_topology,
     run_relax_scf_phonon_epw,
+    sym_mismatch_remediation,
 )
 from siscforge.models.config import DFTConfig, EPWConfig
 from siscforge.refine import default_refine_dft
@@ -224,6 +226,80 @@ def test_diagnose_gmap_sym_mismatch_not_nbndsub() -> None:
     assert classify_epw_failure(_GMAP_SYM_ABORT + "\nnbndsub too small\n") == (
         "sym_mismatch"
     )
+
+
+def test_sym_mismatch_remediation_when_nosym_already_on() -> None:
+    """When dft.nosym is already set, do not suggest enabling it again."""
+    enable = sym_mismatch_remediation(nosym_already=False)
+    assert "dft.nosym" in enable.lower()
+    assert "set dft.nosym" in enable.lower() or "true" in enable.lower()
+    assert "nbndsub" in enable.lower()
+
+    already = sym_mismatch_remediation(
+        nosym_already=True, nproc=16, npool=16
+    )
+    assert "already on" in already.lower()
+    assert "do not re-enable" in already.lower()
+    assert "nproc=1" in already and "npool=1" in already
+    assert "16" in already  # current topology echoed
+    assert "re-enable" in already.lower()
+    assert "set dft.nosym: true" not in already.lower()
+    assert "qe 7.3.1" in already.lower() or "heap" in already.lower()
+
+    cfg = DFTConfig(
+        nosym=True,
+        nproc=8,
+        epw=EPWConfig(enabled=True, npool=8),
+    )
+    from_cfg = sym_mismatch_remediation(cfg)
+    assert "already on" in from_cfg.lower()
+    assert "nproc=1" in from_cfg
+    assert "set dft.nosym: true" not in from_cfg.lower()
+
+    reason = extract_primary_failure_reason(
+        _GMAP_SYM_ABORT, step_name="epw", config=cfg
+    )
+    assert "nproc=1" in reason.lower() or "npool=1" in reason.lower()
+    assert "enable dft.nosym" not in reason.lower()
+
+    diag = diagnose_epw_failure(
+        _GMAP_SYM_ABORT,
+        work_dir="/tmp/fake",
+        include_tail=False,
+        config=cfg,
+    )
+    assert "class: sym_mismatch" in diag
+    assert "nosym_path: on" in diag
+    assert "already on" in diag.lower()
+    assert "nproc=1" in diag and "npool=1" in diag
+    assert "set dft.nosym: true" not in diag.lower()
+    # Without config, still suggest enabling nosym
+    diag_off = diagnose_epw_failure(
+        _GMAP_SYM_ABORT, work_dir="/tmp/fake", include_tail=False
+    )
+    assert "set dft.nosym: true" in diag_off.lower()
+
+
+def test_resolve_epw_topology_warns_nosym_npool_gt1() -> None:
+    """Cheap safe default: warn when dft.nosym + npool>1 (gmap_sym heap)."""
+    cfg = DFTConfig(
+        nosym=True,
+        nproc=8,
+        epw=EPWConfig(enabled=True, npool=8),
+    )
+    out, msg = resolve_epw_launch_topology(cfg)
+    assert out.epw.npool == 8
+    assert "WARN" in msg
+    assert "npool" in msg.lower()
+    assert "gmap_sym" in msg.lower()
+
+    serial = DFTConfig(
+        nosym=True,
+        nproc=1,
+        epw=EPWConfig(enabled=True, npool=1),
+    )
+    _, msg1 = resolve_epw_launch_topology(serial)
+    assert "WARN" not in msg1
 
 
 def test_retry_policy_sequence_6_8_12_and_stops() -> None:

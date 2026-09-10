@@ -116,6 +116,21 @@ Default `pytest` never requires EPW binaries.
 - Cell: 3-atom hexagonal AlB₂-type (P6/mmm), a = 3.086 Å, c = 3.524 Å
 - Enumerated via `material_families: [mgb2_boride]`
 
+## QE example control grids
+
+Sibling YAML ``examples/mgb2_epw_validation_qe_control.yaml`` mirrors
+QE 7.3.1 ``EPW/examples/mgb2`` coarse/fine intent (`nk = nq = 6`,
+`mp_mesh_k = .true.`, fine ~20³) while keeping SiSC-Forge
+``dft.nosym`` from #90. It does **not** replace
+``examples/mgb2_epw_validation.yaml`` (screening golden).
+
+After pipeline nosym, if EPW still dies in ``gmap_sym`` /
+``free(): invalid pointer`` (`rotate.f90`) with
+``Symmetries of crystal: 24`` printed, try ``nproc=1`` /
+``epw.npool=1`` — ops have seen this under ``npool>1`` (possible
+QE 7.3.1 heap corruption; not an nbndsub issue). Diagnostics suggest
+that path when ``dft.nosym`` is already on.
+
 ## Limitations
 
 - Isotropic average only (no two-gap anisotropic Eliashberg)

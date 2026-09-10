@@ -403,25 +403,31 @@ _EPW_ONLY_NEEDLES: frozenset[str] = frozenset(
 # Common EPW / Wannier failure fingerprints → (short CLI label, remediation)
 # Order matters: more specific patterns first.
 _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
-    # nosym-NSCF vs symmetry-DFPT mismatch (after Wannier) — not nbndsub
+    # gmap_sym / rotate.f90 heap abort after Wannier — not nbndsub.
+    # Two regimes: (1) nosym-NSCF vs symmetry-DFPT → enable dft.nosym;
+    # (2) after pipeline nosym already on, ops still see free(): invalid pointer
+    # under npool>1 (possible QE 7.3.1 gmap_sym bug) → try nproc=npool=1.
+    # Config-aware remediation is in sym_mismatch_remediation() / diagnose.
     (
         "gmap_sym",
-        "EPW: gmap_sym / nosym-NSCF vs symmetry-DFPT mismatch",
-        "elphon_shuffle_wrap→gmap_sym (rotate.f90) after nosym NSCF on "
-        "symmetry-aware DFPT. Enable dft.nosym (pipeline-wide SCF+PH+NSCF "
-        "nosym/noinv; ph.x search_sym forced off). Do NOT raise nbndsub.",
+        "EPW: gmap_sym / rotate.f90 abort (symmetry map or QE heap)",
+        "elphon_shuffle_wrap→gmap_sym (rotate.f90). Often nosym-NSCF vs "
+        "symmetry-DFPT (fix: dft.nosym). If dft.nosym already on, try "
+        "nproc=1/npool=1 — possible QE 7.3.1 gmap_sym heap corruption under "
+        "npool>1. Do NOT raise nbndsub.",
     ),
     (
         "free(): invalid pointer",
-        "EPW: free(): invalid pointer (often gmap_sym symmetry mismatch)",
-        "After Wannier, usually nosym electronic vs symmetrized DFPT. Set "
-        "dft.nosym: true (and keep EPW NSCF nosym). Not an nbndsub issue.",
+        "EPW: free(): invalid pointer (often gmap_sym)",
+        "After Wannier: either nosym electronic vs symmetrized DFPT "
+        "(dft.nosym: true) or, with nosym already on, npool>1 heap corruption "
+        "in gmap_sym (try nproc=1/npool=1). Not an nbndsub issue.",
     ),
     (
         "elphon_shuffle_wrap",
         "EPW: elphon_shuffle_wrap abort (symmetry map / gmap_sym)",
-        "Phonon↔electronic symmetry mismatch. Enable pipeline-wide dft.nosym "
-        "so SCF+DFPT match nosym NSCF. Do not bump nbndsub.",
+        "Phonon↔electronic symmetry map abort. Prefer pipeline-wide dft.nosym; "
+        "if already on, try nproc=1/npool=1. Do not bump nbndsub.",
     ),
     # Symmetry-analysis crashes (QE 7.3.1) MUST beat broad k-mesh / k-point needles:
     # segfault backtraces list k-points earlier in epw.out and used to be labeled
@@ -667,10 +673,21 @@ def is_divide_class_sym_failure(text: str | None) -> bool:
 
 
 def is_gmap_sym_mismatch_failure(text: str | None) -> bool:
-    """True if EPW aborted in gmap_sym after nosym NSCF vs symmetry DFPT.
+    """True if EPW aborted in gmap_sym / rotate.f90 heap path after Wannier.
 
-    Typical: Wannier OK, then ``Symmetries of crystal: N`` + ``free(): invalid
-    pointer`` in ``rotate.f90`` / ``elphon_shuffle_wrap``. Not nbndsub.
+    Typical fingerprints: Wannier OK, then ``Symmetries of crystal: N`` +
+    ``free(): invalid pointer`` in ``rotate.f90`` / ``elphon_shuffle_wrap``.
+    Not nbndsub.
+
+    Two observed regimes (fingerprint is the same):
+
+    1. **Symmetry mismatch** — nosym-only EPW NSCF on symmetry-aware DFPT
+       (#89→#90). Remediation: pipeline-wide ``dft.nosym``.
+    2. **Post-nosym / npool>1** — SCF+PH+NSCF already nosym (``search_sym``
+       off) and EPW still aborts in ``gmap_sym`` under ``npool>1`` (ops:
+       MgB₂ USPP golden). Possible QE 7.3.1 heap corruption in
+       ``gmap_sym``; try ``nproc=1`` / ``epw.npool=1``. Do **not** invent a
+       speculative QE patch here — see :func:`sym_mismatch_remediation`.
     """
     if not text:
         return False
@@ -689,6 +706,60 @@ def is_gmap_sym_mismatch_failure(text: str | None) -> bool:
     ):
         return True
     return False
+
+
+def pipeline_nosym_path_on(config: DFTConfig | None) -> bool:
+    """True when config already enables pipeline-wide ``dft.nosym`` (#90).
+
+    ``dft.nosym`` forces SCF nosym/noinv and ph.x ``search_sym=.false.``.
+    """
+    if config is None:
+        return False
+    return bool(getattr(config, "nosym", False))
+
+
+def sym_mismatch_remediation(
+    config: DFTConfig | None = None,
+    *,
+    nosym_already: bool | None = None,
+    npool: int | None = None,
+    nproc: int | None = None,
+) -> str:
+    """Authoritative next-step text for ``sym_mismatch`` / gmap_sym aborts.
+
+    When ``dft.nosym`` (pipeline path) is already on, do **not** suggest
+    enabling it again — point at nproc/npool=1 and a possible QE 7.3.1
+    ``gmap_sym`` heap bug under ``npool>1``.
+    """
+    if nosym_already is None:
+        nosym_already = pipeline_nosym_path_on(config)
+    if config is not None:
+        if nproc is None:
+            nproc = max(1, int(getattr(config, "nproc", 1) or 1))
+        if npool is None:
+            epw = getattr(config, "epw", None)
+            npool = max(1, int(getattr(epw, "npool", 1) or 1)) if epw is not None else None
+    if nosym_already:
+        cur = ""
+        if nproc is not None and npool is not None:
+            cur = f" (current nproc={nproc} npool={npool})"
+        elif npool is not None:
+            cur = f" (current npool={npool})"
+        elif nproc is not None:
+            cur = f" (current nproc={nproc})"
+        return (
+            "dft.nosym / search_sym-off path already on — do not re-enable "
+            f"dft.nosym. Next: try nproc=1 and epw.npool=1{cur}; MgB₂ full "
+            "nosym still dies in gmap_sym (rotate.f90 free(): invalid pointer) "
+            "under npool>1 after Wannier (possible QE 7.3.1 gmap_sym heap "
+            "corruption; geometric Symmetries of crystal may still print). "
+            "Do NOT raise nbndsub."
+        )
+    return (
+        "set dft.nosym: true so SCF + PH + EPW NSCF share nosym/noinv "
+        "(ph.x: search_sym forced off). Do NOT raise nbndsub. Re-run "
+        "SCF+DFPT+NSCF+EPW — phonon from symmetry SCF is incompatible."
+    )
 
 
 def is_kgrid_inconsistency(text: str | None) -> bool:
@@ -959,6 +1030,7 @@ def extract_primary_failure_reason(
     *,
     step_name: str = "epw",
     max_len: int = 120,
+    config: DFTConfig | None = None,
 ) -> str:
     """One-line primary reason for CLI progress (no file open required).
 
@@ -979,9 +1051,15 @@ def extract_primary_failure_reason(
         )
         return msg[:max_len] + ("…" if len(msg) > max_len else "")
     if is_gmap_sym_mismatch_failure(text):
-        msg = (
-            "EPW: gmap_sym mismatch (enable dft.nosym; not nbndsub)"
-        )
+        if pipeline_nosym_path_on(config):
+            msg = (
+                "EPW: gmap_sym abort with dft.nosym on "
+                "(try nproc=1/npool=1; not nbndsub)"
+            )
+        else:
+            msg = (
+                "EPW: gmap_sym mismatch (enable dft.nosym; not nbndsub)"
+            )
         return msg[:max_len] + ("…" if len(msg) > max_len else "")
     if is_wrong_niter_ph(text):
         msg = "phonon: phq_readin — Wrong niter_ph (use QE ≥ 7.2 / QE_BIN)"
@@ -1053,17 +1131,28 @@ def diagnose_epw_failure(
     step_name: str = "epw",
     include_tail: bool = True,
     tail_lines: int = 30,
+    config: DFTConfig | None = None,
 ) -> str:
     """Return a multi-line diagnostic string for failed Wannier/EPW steps.
 
     Scans *text* (typically ``epw.out`` or a step message) for known fingerprints
     and appends workdir / quality_tag guidance. Safe for missing files.
+
+    When *config* is provided, ``sym_mismatch`` remediation respects whether
+    ``dft.nosym`` is already on (suggest nproc/npool=1 instead of re-enabling).
     """
     parts: list[str] = [f"[{step_name}] EPW/Wannier diagnostic"]
-    primary = extract_primary_failure_reason(text, step_name=step_name)
+    primary = extract_primary_failure_reason(
+        text, step_name=step_name, config=config
+    )
     parts.append(f"  primary: {primary}")
     cls = classify_epw_failure(text)
     parts.append(f"  class: {cls}")
+    if config is not None and cls == "sym_mismatch":
+        parts.append(
+            "  nosym_path: "
+            + ("on (dft.nosym)" if pipeline_nosym_path_on(config) else "off")
+        )
 
     if work_dir is not None:
         wd = Path(work_dir)
@@ -1110,9 +1199,7 @@ def diagnose_epw_failure(
         )
     if cls == "sym_mismatch":
         parts.append(
-            "  · remediation: set dft.nosym: true so SCF + PH + EPW NSCF share "
-            "nosym/noinv (ph.x: search_sym forced off). Do NOT raise nbndsub. "
-            "Re-run SCF+DFPT+NSCF+EPW — phonon from symmetry SCF is incompatible."
+            "  · remediation: " + sym_mismatch_remediation(config)
         )
     if cls not in {"sym_mismatch", "sym_analysis"}:
         parts.append(
@@ -1150,6 +1237,12 @@ def resolve_epw_launch_topology(
 
     Auto-sets ``epw.npool = nproc`` (nimage=1) when needed unless
     ``epw.strict_parallel`` is True (then raises ``ValueError``).
+
+    When ``dft.nosym`` is on and the resolved ``npool`` is > 1, append a
+    soft warning: MgB₂-class goldens have hit ``gmap_sym`` /
+    ``free(): invalid pointer`` under ``npool>1`` even after pipeline nosym
+    (possible QE 7.3.1 heap corruption). Does not change topology — ops may
+    still want parallel EPW; suggest trying ``nproc=1`` / ``npool=1``.
     """
     from siscforge.calculators.qe.epw_parallel import resolve_epw_parallel
 
@@ -1171,7 +1264,15 @@ def resolve_epw_launch_topology(
         cfg = config.model_copy(
             update={"epw": config.epw.model_copy(update={"npool": plan.npool})}
         )
-    return cfg, plan.message
+    msg = plan.message
+    if pipeline_nosym_path_on(cfg) and int(plan.npool) > 1:
+        msg = (
+            f"{msg}; WARN: dft.nosym + npool={plan.npool}>1 — MgB₂ goldens "
+            "have hit gmap_sym free(): invalid pointer under npool>1 after "
+            "full nosym (possible QE 7.3.1 rotate.f90 heap corruption); "
+            "if EPW dies there, retry with nproc=1 / epw.npool=1"
+        )
+    return cfg, msg
 
 
 # ---------------------------------------------------------------------------
@@ -1622,7 +1723,11 @@ def _run_epw_once(
 
     ok = rc == 0 and out_path.is_file()
     qtag = config.quality_tag
-    primary = extract_primary_failure_reason(full_text, step_name="epw") if not ok else "ok"
+    primary = (
+        extract_primary_failure_reason(full_text, step_name="epw", config=config)
+        if not ok
+        else "ok"
+    )
     msg = (
         f"epw.x rc={rc}; quality_tag={qtag}; "
         f"nproc={config.nproc} npool={npool} nbndsub={nbndsub}; {parallel_msg}"
@@ -1635,6 +1740,7 @@ def _run_epw_once(
             step_name="epw",
             include_tail=True,
             tail_lines=30,
+            config=config,
         )
 
     step = QEStepResult(
@@ -1675,7 +1781,7 @@ def _run_epw_once(
         if eph is not None and not ok and eph.status != "ok":
             summary = dict(eph.alpha2F_summary or {})
             summary["failure_diagnostic"] = diagnose_epw_failure(
-                full_text, work_dir=work_dir, step_name="epw"
+                full_text, work_dir=work_dir, step_name="epw", config=config
             )
             summary["primary_failure"] = primary
             summary["failure_class"] = classify_epw_failure(full_text)
@@ -2614,7 +2720,9 @@ def run_relax_scf_phonon_epw(
             result.message = step_msg
     else:
         result.success = False
-        primary = extract_primary_failure_reason(step_msg, step_name="epw")
+        primary = extract_primary_failure_reason(
+            step_msg, step_name="epw", config=config
+        )
         fail_cls = classify_epw_failure(step_msg)
         if fail_cls == "sym_analysis" or is_divide_class_sym_failure(step_msg):
             next_step = (
@@ -2626,12 +2734,10 @@ def run_relax_scf_phonon_epw(
                 "Wannier b-vector failure. Phonon/DFPT may already be intact."
             )
         elif fail_cls == "sym_mismatch" or is_gmap_sym_mismatch_failure(step_msg):
+            rem = sym_mismatch_remediation(config)
             next_step = (
                 "Human next step: EPW gmap_sym / free(): invalid pointer after "
-                "Wannier — nosym NSCF vs symmetrized DFPT mismatch. Set "
-                "dft.nosym: true (SCF+PH+NSCF nosym/noinv; ph search_sym off) "
-                "and re-run from SCF. Do NOT raise nbndsub. Do not keep "
-                "EPW-only nosym NSCF on symmetry-DFPT."
+                f"Wannier. {rem}"
             )
         elif is_kmesh_bvector_failure(step_msg):
             next_step = (
