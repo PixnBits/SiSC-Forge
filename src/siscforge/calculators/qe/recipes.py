@@ -29,6 +29,7 @@ from siscforge.calculators.qe.env import QEEnvironment, detect_qe_environment, r
 from siscforge.calculators.qe.inputs import (
     build_ph_input,
     build_pw_input,
+    effective_ph_search_sym,
     write_ph_input,
     write_pw_input,
 )
@@ -456,7 +457,7 @@ def run_ph(
         nmix_ph=config.ph_nmix,
         niter_ph=config.ph_niter,
         recover=recover,
-        search_sym=bool(getattr(config, "ph_search_sym", True)),
+        search_sym=effective_ph_search_sym(config),
     )
     in_path = work_dir / "ph.in"
     out_path = work_dir / "ph.out"

@@ -7,6 +7,7 @@
 #   siscforge run --calculator qe-epw examples/mgb2_epw.yaml
 #
 # See docs/examples/mgb2_epw.md
+# Requires dft.nosym: true (SCF+PH+NSCF) for EPW after #89 nosym NSCF.
 
 name: mgb2_epw_validation
 description: >
@@ -44,8 +45,12 @@ dft:
   do_phonon: true
   phonon_retry_on_d_matrix: true
   phonon_retry_on_fft_symmetry: true
+  # Pipeline-wide nosym: SCF + PH + EPW NSCF (avoids gmap_sym after Wannier
+  # when nosym-only NSCF meets symmetry-DFPT). ph.x has no nosym namelist —
+  # dft.nosym forces search_sym=.false. and pw.x nosym/noinv on SCF.
+  nosym: true
   # QE 7.3.1 segfaults in divide_class/prepare_sym_analysis on this cell;
-  # search_sym=.false. skips that path (validated manually).
+  # search_sym=.false. skips that path (also forced by nosym above).
   ph_search_sym: false
   do_epw: true
   phonon_method: dfpt

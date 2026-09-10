@@ -21,6 +21,7 @@ from siscforge.calculators.qe.epw_recipes import (
     diagnose_epw_failure,
     extract_primary_failure_reason,
     is_divide_class_sym_failure,
+    is_gmap_sym_mismatch_failure,
     is_kmesh_bvector_failure,
     is_remediable_kmesh_failure,
     load_epw_remediation_state,
@@ -185,6 +186,44 @@ def test_diagnose_divide_class_segfault_not_kmesh() -> None:
     primary = extract_primary_failure_reason(contaminated, step_name="epw")
     assert "kmesh" not in primary.lower()
     assert "DFPT" in diag or "nkc" in diag.lower()
+
+
+_GMAP_SYM_ABORT = """
+     No symmetry!
+     Running Wannier90
+     Wannier Function centers (cartesian, alat) and spreads (ang):
+     Calculating kgmap
+     Symmetries of Bravais lattice:  24
+     Symmetries of crystal:          24
+free(): invalid pointer
+free(): invalid pointer
+Program received signal SIGABRT: Process abort signal.
+#10  0x60799c89520b in __rotate_MOD_gmap_sym
+	at /opt/qe-src/EPW/src/rotate.f90:679
+#11  0x5a0b68b79c93 in elphon_shuffle_wrap_
+	at /opt/qe-src/EPW/src/elphon_shuffle_wrap.f90:540
+     nbndsub = 5
+"""
+
+
+def test_diagnose_gmap_sym_mismatch_not_nbndsub() -> None:
+    """gmap_sym / free(): invalid pointer is sym_mismatch, not nbndsub."""
+    assert is_gmap_sym_mismatch_failure(_GMAP_SYM_ABORT)
+    assert classify_epw_failure(_GMAP_SYM_ABORT) == "sym_mismatch"
+    reason = extract_primary_failure_reason(_GMAP_SYM_ABORT, step_name="epw")
+    assert "gmap_sym" in reason.lower() or "nosym" in reason.lower()
+    assert "not nbndsub" in reason.lower() or "nosym" in reason.lower()
+    assert "raise nbndsub" not in reason.lower()
+    diag = diagnose_epw_failure(
+        _GMAP_SYM_ABORT, work_dir="/tmp/fake", include_tail=False
+    )
+    assert "class: sym_mismatch" in diag
+    assert "dft.nosym" in diag.lower() or "pipeline" in diag.lower()
+    assert "nbndsub" not in diag.lower() or "Do NOT raise nbndsub" in diag
+    # Contaminated with nbndsub echo must stay sym_mismatch
+    assert classify_epw_failure(_GMAP_SYM_ABORT + "\nnbndsub too small\n") == (
+        "sym_mismatch"
+    )
 
 
 def test_retry_policy_sequence_6_8_12_and_stops() -> None:

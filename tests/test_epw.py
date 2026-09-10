@@ -370,6 +370,59 @@ def test_build_nscf_epw_nosym_noinv() -> None:
     assert "noinv" in text.lower()
 
 
+def test_dft_nosym_emits_scf_ph_nscf() -> None:
+    """dft.nosym → SCF nosym/noinv, PH search_sym off, NSCF nosym/noinv."""
+    from siscforge.calculators.qe.inputs import (
+        build_nscf_epw_input,
+        build_ph_input,
+        build_pw_input,
+        effective_ph_search_sym,
+    )
+
+    s = build_binary_nitride("Nb")
+    pdir = Path("/tmp/fake_pseudo")
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "Nb.upf").touch()
+    (pdir / "N.upf").touch()
+    cfg = DFTConfig(
+        pseudo_dir=str(pdir),
+        pseudopotentials={"Nb": "Nb.upf", "N": "N.upf"},
+        nosym=True,
+        ph_search_sym=True,  # nosym must still force search_sym off
+        epw=EPWConfig(enabled=True, nkc=[2, 2, 2]),
+    )
+    scf = str(build_pw_input(s, cfg, calculation="scf")).lower()
+    assert "nosym" in scf and "noinv" in scf
+    assert effective_ph_search_sym(cfg) is False
+    ph = build_ph_input(prefix="t", search_sym=effective_ph_search_sym(cfg))
+    assert "search_sym = .false." in ph
+    nscf = build_nscf_epw_input(s, cfg, prefix="t", outdir="./").lower()
+    assert "nosym" in nscf and "noinv" in nscf
+
+
+def test_epw_nscf_nosym_opt_out() -> None:
+    """epw.nscf_nosym=False opts out of NSCF nosym even when dft.nosym."""
+    from siscforge.calculators.qe.inputs import build_nscf_epw_input
+
+    s = build_binary_nitride("Nb")
+    pdir = Path("/tmp/fake_pseudo")
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "Nb.upf").touch()
+    (pdir / "N.upf").touch()
+    cfg = DFTConfig(
+        pseudo_dir=str(pdir),
+        pseudopotentials={"Nb": "Nb.upf", "N": "N.upf"},
+        nosym=True,
+        epw=EPWConfig(enabled=True, nkc=[2, 2, 2], nscf_nosym=False),
+    )
+    text = build_nscf_epw_input(s, cfg, prefix="t", outdir="./").lower()
+    # Explicit false must appear (overrides dft.nosym setdefault)
+    assert "nosym" in text
+    assert ".false." in text or "false" in text
+    # SYSTEM should not force true — check nosym line
+    assert "nosym = .true." not in text and "nosym=.true." not in text
+
+
 def test_build_epw_input_emits_configured_projections() -> None:
     """epw.wannier_projections must become proj(i) lines (not proj=random)."""
     from siscforge.calculators.qe.epw_inputs import build_epw_input
