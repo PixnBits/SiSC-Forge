@@ -11,7 +11,10 @@ from siscforge.calculators import get, list_calculators
 from siscforge.calculators.qe.eliashberg import allen_dynes_tc, isotropic_eliashberg_tc_from_moments
 from siscforge.calculators.qe.env import epw_available
 from siscforge.calculators.qe.epw_parser import parse_epw_output
-from siscforge.calculators.qe.epw_recipes import electron_phonon_from_lambda_omega
+from siscforge.calculators.qe.epw_recipes import (
+    _find_epw_pp_py,
+    electron_phonon_from_lambda_omega,
+)
 from siscforge.calculators.qe.epw_references import (
     MGB2_FIXTURE_LAMBDA,
     MGB2_FIXTURE_MU_STAR,
@@ -35,6 +38,37 @@ from siscforge.structure.mgb2 import build_mgb2
 from siscforge.structure.nitrides import build_binary_nitride
 
 FIXTURES = Path(__file__).parent / "fixtures" / "qe"
+
+
+def test_find_epw_pp_from_qe_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Docker/QE_BIN layout: EPW pp.py lives next to epw.x under QE_BIN."""
+    qe_bin = tmp_path / "bin"
+    qe_bin.mkdir()
+    pp = qe_bin / "pp.py"
+    pp.write_text("#!/usr/bin/env python3\n# EPW preprocessor stub\n")
+    monkeypatch.setenv("QE_BIN", str(qe_bin))
+    monkeypatch.setattr(
+        "siscforge.calculators.qe.epw_recipes.shutil.which",
+        lambda _name: None,
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "no-home"))
+    assert _find_epw_pp_py() == pp
+
+
+def test_find_epw_pp_from_epw_source_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Source-tree fallback: QE_BIN/../EPW/bin/pp.py when not copied beside binaries."""
+    qe_bin = tmp_path / "bin"
+    qe_bin.mkdir()
+    epw_pp = tmp_path / "EPW" / "bin" / "pp.py"
+    epw_pp.parent.mkdir(parents=True)
+    epw_pp.write_text("#!/usr/bin/env python3\n# EPW preprocessor stub\n")
+    monkeypatch.setenv("QE_BIN", str(qe_bin))
+    monkeypatch.setattr(
+        "siscforge.calculators.qe.epw_recipes.shutil.which",
+        lambda _name: None,
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "no-home"))
+    assert _find_epw_pp_py() == epw_pp
 
 
 def test_qe_epw_registered() -> None:

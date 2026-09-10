@@ -87,7 +87,7 @@ The script checks:
 
 | Step | What |
 |------|------|
-| **(a)** | `pw.x`, `ph.x`, `epw.x`, `wannier90.x`, `siscforge` on `PATH`; QE version ≥ 7.2 |
+| **(a)** | `pw.x`, `ph.x`, `epw.x`, `wannier90.x`, `siscforge` on `PATH`; EPW `pp.py` at `$QE_BIN/pp.py`; QE version ≥ 7.2 |
 | **(b)** | `detect_qe_environment()` finds pw/ph/epw |
 | **(c)** | `pytest -q` (mock path only; no `SISCFORGE_RUN_QE` / `SISCFORGE_RUN_EPW`) |
 | **(d)** | `siscforge run --dry-run` for `dummy_campaign` and `nbn_epw` |
@@ -96,7 +96,8 @@ The script checks:
 Manual one-liners (same checks):
 
 ```bash
-docker run --rm siscforge:latest bash -lc 'which pw.x ph.x epw.x wannier90.x; pw.x -v | head -3; siscforge --version'
+docker run --rm siscforge:latest bash -lc 'which pw.x ph.x epw.x wannier90.x; test -f /opt/qe/bin/pp.py; pw.x -v | head -3; siscforge --version'
+docker run --rm siscforge:latest test -f /opt/qe/bin/pp.py
 docker run --rm siscforge:latest bash -lc 'python -c "from siscforge.calculators.qe.env import detect_qe_environment as d; e=d(); print(e); assert e.pw and e.ph and e.epw"'
 docker run --rm -w /app siscforge:latest pytest -q --tb=no
 docker run --rm siscforge:latest bash -lc 'siscforge run --dry-run /app/examples/dummy_campaign.yaml -o /tmp/d; siscforge run --dry-run /app/examples/nbn_epw.yaml -o /tmp/n'
@@ -107,7 +108,7 @@ docker run --rm siscforge:latest bash -lc 'ls /usr/share/espresso/pseudo/Nb*.UPF
 
 | Path | Contents |
 |------|----------|
-| `/opt/qe/bin` | `pw.x`, `ph.x`, `pp.x`, `epw.x` (QE 7.3.1), `wannier90.x` (3.1.0) |
+| `/opt/qe/bin` | `pw.x`, `ph.x`, `pp.x`, `epw.x` (QE 7.3.1), `wannier90.x` (3.1.0), EPW `pp.py` (Python preprocessor; not `pp.x`) |
 | `/opt/siscforge-venv` | Python venv + editable SiSC-Forge |
 | `/app` | Source tree, tests, examples, docs |
 | `/workspace` | Default workdir (mount host projects/outputs here) |
