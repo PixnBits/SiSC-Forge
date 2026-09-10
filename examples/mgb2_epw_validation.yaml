@@ -1,13 +1,13 @@
-# Bulk MgB₂ EPW + isotropic Tc (Phase 1 golden)
+# Bulk MgB₂ EPW + isotropic Tc (Phase 1 workstation validation)
 #
 # Dry-run (mock e-ph moments, no QE/EPW):
-#   siscforge run --dry-run examples/mgb2_epw.yaml
+#   siscforge run --dry-run examples/mgb2_epw_validation.yaml
 #
 # Real EPW (requires pw.x, ph.x, epw.x, Wannier90, UPF for Mg+B):
-#   siscforge run --calculator qe-epw examples/mgb2_epw.yaml
+#   siscforge run --calculator qe-epw examples/mgb2_epw_validation.yaml
 #
 # See docs/examples/mgb2_epw.md
-# Requires dft.nosym: true (SCF+PH+NSCF) for EPW after #89 nosym NSCF.
+# Requires dft.nosym: true (SCF+PH+NSCF) for EPW after #89/#90.
 
 name: mgb2_epw_validation
 description: >
@@ -41,7 +41,7 @@ dft:
   kpoints: [6, 6, 4]
   qpoints: [2, 2, 2]
   # Experimental lattice is stable; skip expensive vc-relax for the golden dry path
-  do_relax: true
+  do_relax: false
   do_phonon: true
   phonon_retry_on_d_matrix: true
   phonon_retry_on_fft_symmetry: true
@@ -64,12 +64,15 @@ dft:
   # Label only — denser grids: docs/examples/mgb2_epw.md "Tightening grids"
   quality_tag: screening
   nproc: 16
-  # Override on your machine (SSSP or similar for Mg, B)
+  # Override on your machine (SSSP PBE efficiency for Mg and B — same library).
+  # Explicit pins for reproducibility. Auto-resolve is safe for B vs Ba after
+  # the prefix-boundary fix; do not mix PAW + USPP on this cell.
   pseudo_dir: /usr/share/espresso/pseudo
-  # Explicit: auto-resolve wrongly maps B → Ba.*.UPF (prefix match).
+  # GBRV B (b_pbe_v1.4.uspp.F.UPF) + PAW Mg was the mix seen in the QE 7.3.1
+  # divide_class crash. Prefer a consistent SSSP pair:
   pseudopotentials:
     Mg: Mg.pbe-n-kjpaw_psl.0.3.0.UPF
-    B: b_pbe_v1.4.uspp.F.UPF
+    B: B.pbe-n-kjpaw_psl.0.1.UPF
   epw:
     enabled: true
     # Screening; workstation denser: nkf/nqf [16,16,12], nqc/qpoints [4,4,2]

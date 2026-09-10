@@ -42,6 +42,11 @@ dft:
   # Experimental lattice is stable; skip expensive vc-relax for the golden dry path
   do_relax: false
   do_phonon: true
+  # QE 7.3.1: hexagonal MgB2 can segfault in divide_class / prepare_sym_analysis
+  # (ph.x mode-symmetry) and later in EPW epw_setup. Pipeline-wide nosym (#90)
+  # also forces search_sym=.false. Keep both explicit on the documented path.
+  nosym: true
+  ph_search_sym: false
   do_epw: true
   phonon_method: dfpt
   # Empty bands for B-p / Wannier (screening)
@@ -53,8 +58,13 @@ dft:
   degauss: 0.02
   # Label only — denser grids: docs/examples/mgb2_epw.md "Tightening grids"
   quality_tag: screening
-  # Override on your machine (SSSP or similar for Mg, B)
+  # SSSP PBE efficiency names (PAW). Override if your pseudo_dir differs.
+  # Do not mix PAW + USPP on this cell — that mix was implicated in the
+  # QE 7.3.1 divide_class crash. Explicit pins also survive a dirty pseudo_dir.
   pseudo_dir: /usr/share/espresso/pseudo
+  pseudopotentials:
+    Mg: Mg.pbe-n-kjpaw_psl.0.3.0.UPF
+    B: B.pbe-n-kjpaw_psl.0.1.UPF
   epw:
     enabled: true
     # Screening; workstation denser: nkf/nqf [16,16,12], nqc/qpoints [4,4,2]

@@ -65,9 +65,10 @@ dft:
   # Default serial for gmap_sym bisect; raise nproc only after nproc=1 is green
   nproc: 1
   pseudo_dir: /usr/share/espresso/pseudo
+  # Consistent SSSP PBE efficiency pair (do not mix PAW Mg + USPP B).
   pseudopotentials:
     Mg: Mg.pbe-n-kjpaw_psl.0.3.0.UPF
-    B: b_pbe_v1.4.uspp.F.UPF
+    B: B.pbe-n-kjpaw_psl.0.1.UPF
   epw:
     enabled: true
     # QE EPW/examples/mgb2: nk=nq=6, mp_mesh_k, fine 20³
