@@ -84,6 +84,7 @@ def test_list_upf_and_match(tmp_path: Path) -> None:
 def test_phonopy_available_is_bool() -> None:
     assert isinstance(phonopy_available(), bool)
 
+
 def test_match_upf_boron_not_barium(tmp_path: Path) -> None:
     """Element B must not prefix-match Ba.*.UPF (MgB2 auto-resolve bug)."""
     (tmp_path / "Ba.pbe-spn-kjpaw_psl.1.0.0.UPF").write_text("x")
@@ -100,3 +101,42 @@ def test_match_upf_boron_rejects_ba_only(tmp_path: Path) -> None:
     files = list_upf_files(tmp_path)
     assert match_upf_for_element("B", files) is None
     assert match_upf_for_element("Ba", files) == "Ba.pbe.UPF"
+
+
+@pytest.mark.parametrize(
+    ("element", "keep", "reject"),
+    [
+        ("C", "C.pbe-n-kjpaw_psl.1.0.0.UPF", "Ca.pbe-spn-kjpaw_psl.1.0.0.UPF"),
+        ("N", "N.pbe-n-kjpaw_psl.1.0.0.UPF", "Nb.pbe-spn-kjpaw_psl.1.0.0.UPF"),
+        ("S", "S.pbe-n-kjpaw_psl.1.0.0.UPF", "Si.pbe-n-kjpaw_psl.1.0.0.UPF"),
+        ("F", "F.pbe-n-rrkjus_psl.1.0.0.UPF", "Fe.pbe-spn-kjpaw_psl.1.0.0.UPF"),
+        ("P", "P.pbe-n-kjpaw_psl.1.0.0.UPF", "Pd.pbe-n-kjpaw_psl.1.0.0.UPF"),
+    ],
+)
+def test_match_upf_short_symbol_not_longer_prefix(
+    tmp_path: Path, element: str, keep: str, reject: str
+) -> None:
+    (tmp_path / keep).write_text("x")
+    (tmp_path / reject).write_text("x")
+    files = list_upf_files(tmp_path)
+    assert match_upf_for_element(element, files) == keep
+
+
+def test_match_upf_nitrogen_not_pslibrary_n_token(tmp_path: Path) -> None:
+    """pslibrary pbe-n-kjpaw is a config token, not element N."""
+    (tmp_path / "Mg.pbe-n-kjpaw_psl.0.3.0.UPF").write_text("x")
+    (tmp_path / "Nb.pbe-n-kjpaw_psl.1.0.0.UPF").write_text("x")
+    (tmp_path / "B.pbe-n-kjpaw_psl.0.1.UPF").write_text("x")
+    files = list_upf_files(tmp_path)
+    assert match_upf_for_element("N", files) is None
+    (tmp_path / "N.pbe-n-kjpaw_psl.1.0.0.UPF").write_text("x")
+    files = list_upf_files(tmp_path)
+    assert match_upf_for_element("N", files) == "N.pbe-n-kjpaw_psl.1.0.0.UPF"
+
+
+def test_match_upf_fluorine_not_gbrv_f_suffix(tmp_path: Path) -> None:
+    """GBRV uspp.F.UPF scalar-rel flag is not fluorine."""
+    (tmp_path / "b_pbe_v1.4.uspp.F.UPF").write_text("x")
+    files = list_upf_files(tmp_path)
+    assert match_upf_for_element("F", files) is None
+    assert match_upf_for_element("B", files) == "b_pbe_v1.4.uspp.F.UPF"

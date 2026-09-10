@@ -50,6 +50,35 @@ Aliases: `--calculator epw` → `qe-epw`.
 
 If `epw.x` is missing, the CLI exits with `QENotAvailableError` (no silent mock).
 
+### QE 7.3.1 symmetry crash (divide_class)
+
+Hexagonal MgB₂ (and some other cells) can segfault in
+`divide_class` / `prepare_sym_analysis` during `ph.x` mode-symmetry
+analysis, then again in EPW `epw_setup`. QE's `search_sym` flag only
+classifies mode irreps — disabling it does **not** change the q-grid
+or skip physical perturbations, so dyn + dvscf for EPW stay valid.
+
+The documented golden YAML sets:
+
+```yaml
+dft:
+  nosym: true            # SCF + PH + EPW NSCF (also forces search_sym off)
+  ph_search_sym: false   # explicit; redundant with nosym but documents intent
+```
+
+Campaigns that omit those flags get **one** automatic `ph.x` retry with
+`search_sym=.false.` when the log/CRASH matches `divide_class`
+(`dft.phonon_retry_on_search_sym`, default true). That does not re-SCF.
+
+EPW can still hit the same class after a successful phonon; `dft.nosym`
+is the pipeline-wide fix (#89/#90). If EPW then dies in `gmap_sym` with
+nosym already on, try `nproc=1` / `epw.npool=1`.
+
+Workstation validation sibling: `examples/mgb2_epw_validation.yaml`
+(same flags, explicit SSSP Mg/B pins, Wannier projections from the QE
+MgB₂ example). Prefer a **consistent SSSP PBE efficiency pair** — do
+not mix PAW Mg with USPP B; that mix was implicated in the crash.
+
 ### Screening grids in the example
 
 | Step | Setting |

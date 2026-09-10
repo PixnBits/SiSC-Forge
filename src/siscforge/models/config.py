@@ -1178,6 +1178,12 @@ class DFTConfig(BaseModel):
     do_phonon: bool = True
     phonon_retry_on_d_matrix: bool = True
     phonon_retry_on_fft_symmetry: bool = True
+    phonon_retry_on_search_sym: bool = True
+    """One ph.x retry with ``search_sym=.false.`` on divide_class crashes.
+
+    Default True. Fires only when the failed run still had search_sym on
+    (``dft.ph_search_sym`` True and ``dft.nosym`` False). Does not re-SCF.
+    """
     ph_search_sym: bool = True
     """If False, ph.x gets ``search_sym = .false.`` (skip mode-symmetry analysis).
 

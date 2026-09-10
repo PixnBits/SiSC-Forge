@@ -169,3 +169,35 @@ def test_nbn_k12_diag_example_loads() -> None:
     assert list(nbn.dft.qpoints) == list(zrn.dft.qpoints)
     assert nbn.dft.ecutwfc == zrn.dft.ecutwfc
     assert nbn.dft.do_epw is zrn.dft.do_epw
+
+
+def test_mgb2_epw_yaml_wires_ph_search_sym() -> None:
+    """Documented golden + validation YAML parse ph_search_sym into ph.x decks."""
+    from siscforge.calculators.qe.inputs import (
+        build_ph_input,
+        effective_ph_search_sym,
+    )
+
+    root = Path(__file__).resolve().parents[1]
+    golden = CampaignConfig.from_yaml(root / "examples" / "mgb2_epw.yaml")
+    validation = CampaignConfig.from_yaml(
+        root / "examples" / "mgb2_epw_validation.yaml"
+    )
+    assert golden.dft.ph_search_sym is False
+    assert golden.dft.nosym is True
+    assert golden.dft.do_relax is False
+    assert golden.dft.pseudopotentials["B"].startswith("B.")
+    assert golden.dft.pseudopotentials["Mg"].startswith("Mg.")
+    assert effective_ph_search_sym(golden.dft) is False
+    deck = build_ph_input(
+        prefix="s", search_sym=effective_ph_search_sym(golden.dft)
+    )
+    assert "search_sym = .false." in deck
+
+    assert validation.dft.ph_search_sym is False
+    assert validation.dft.nosym is True
+    assert validation.dft.do_relax is False
+    assert validation.dft.pseudopotentials["B"].startswith("B.")
+    assert "uspp" not in validation.dft.pseudopotentials["B"].lower()
+    assert effective_ph_search_sym(validation.dft) is False
+

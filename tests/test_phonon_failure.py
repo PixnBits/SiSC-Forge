@@ -12,6 +12,7 @@ from siscforge.calculators.qe.epw_recipes import (
     diagnose_qe_step_failure,
     extract_primary_failure_reason,
     is_d_matrix_failure,
+    is_divide_class_sym_failure,
     is_kgrid_inconsistency,
     is_phq_readin_failure,
     is_phq_setup_fft_symmetry_failure,
@@ -122,9 +123,15 @@ def test_phonon_retry_config_default() -> None:
     dft = DFTConfig()
     assert dft.phonon_retry_on_d_matrix is True
     assert dft.phonon_retry_on_fft_symmetry is True
-    dft2 = DFTConfig(phonon_retry_on_d_matrix=False, phonon_retry_on_fft_symmetry=False)
+    assert dft.phonon_retry_on_search_sym is True
+    dft2 = DFTConfig(
+        phonon_retry_on_d_matrix=False,
+        phonon_retry_on_fft_symmetry=False,
+        phonon_retry_on_search_sym=False,
+    )
     assert dft2.phonon_retry_on_d_matrix is False
     assert dft2.phonon_retry_on_fft_symmetry is False
+    assert dft2.phonon_retry_on_search_sym is False
 
 
 def test_fft_symmetry_fingerprint_not_epw_kgrid() -> None:
@@ -576,3 +583,148 @@ def test_phq_readin_recover_does_not_wipe_dyn(tmp_path: Path) -> None:
     assert dyn.is_file()
     assert dyn.read_text() == "partial dyn — keep me\n"
     assert any("leaving DFPT artefacts" in line for line in log)
+
+
+_DIVIDE_CLASS_PH = """
+     Program PHONON v.7.3.1 starts on ...
+     Calculation of q =    0.0000000   0.0000000   0.0000000
+
+Program received signal SIGSEGV: Segmentation fault - invalid memory reference.
+
+Backtrace for this error:
+#0  0x... in divide_class_
+        at /opt/qe-src/PHonon/PH/divide_class.f90:75
+#1  0x... in prepare_sym_analysis_
+"""
+
+
+def test_divide_class_phonon_primary_reason_not_epw() -> None:
+    assert is_divide_class_sym_failure(_DIVIDE_CLASS_PH) is True
+    reason = extract_primary_failure_reason(_DIVIDE_CLASS_PH, step_name="phonon")
+    assert "divide_class" in reason.lower()
+    assert not reason.startswith("EPW:")
+    diag = diagnose_qe_step_failure(
+        _DIVIDE_CLASS_PH, work_dir="/tmp/fake", step_name="phonon"
+    )
+    assert "phonon_retry_on_search_sym" in diag or "search_sym" in diag.lower()
+
+
+def test_search_sym_retry_once_no_scf(tmp_path: Path) -> None:
+    """divide_class in ph.out → one ph.x with search_sym off; no nosym SCF."""
+    from siscforge.calculators.qe.recipes import (
+        QEStepResult,
+        QEWorkflowResult,
+        _maybe_retry_phonon_setup,
+    )
+    from siscforge.structure.nitrides import build_binary_nitride
+
+    s = build_binary_nitride("Nb")
+    work = tmp_path / "cand"
+    scf = work / "02_scf"
+    scf.mkdir(parents=True)
+    (scf / "ph.out").write_text(_DIVIDE_CLASS_PH, encoding="utf-8")
+
+    cfg = DFTConfig(
+        nproc=1,
+        do_phonon=True,
+        do_epw=False,
+        ph_search_sym=True,
+        nosym=False,
+        phonon_retry_on_search_sym=True,
+        pseudo_dir=str(tmp_path),
+    )
+    fail_step = QEStepResult(
+        name="ph",
+        work_dir=scf,
+        returncode=139,
+        stdout_path=scf / "ph.out",
+        input_path=scf / "ph.in",
+        success=False,
+        message="ph.x rc=139",
+    )
+    log: list[str] = []
+    ph_cfgs: list[bool] = []
+
+    def fake_run_pw(*_a, **_k):
+        raise AssertionError("search_sym retry must not re-SCF")
+
+    def fake_run_ph(config, work_dir, **kwargs):
+        ph_cfgs.append(bool(config.ph_search_sym))
+        out = Path(work_dir) / "ph.out"
+        out.write_text("     JOB DONE.\n     freq (    1) = 5.0 [THz]\n")
+        return QEStepResult(
+            name="ph",
+            work_dir=Path(work_dir),
+            returncode=0,
+            stdout_path=out,
+            input_path=Path(work_dir) / "ph.in",
+            success=True,
+            message="ph.x rc=0",
+        )
+
+    with (
+        patch("siscforge.calculators.qe.recipes.run_pw", side_effect=fake_run_pw),
+        patch("siscforge.calculators.qe.recipes.run_ph", side_effect=fake_run_ph),
+        patch(
+            "siscforge.calculators.qe.qe_checkpoint.clean_step_outputs",
+            return_value=[],
+        ),
+    ):
+        step2, _body = _maybe_retry_phonon_setup(
+            cfg,
+            structure=s,
+            work_dir=work,
+            scf_dir=scf,
+            prefix="siscforge",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log,
+            step=fail_step,
+            result=QEWorkflowResult(work_dir=work, structure=s),
+        )
+
+    assert any("search_sym=.false." in line for line in log)
+    assert ph_cfgs == [False]
+    assert step2.success is True
+
+    (scf / "ph.out").write_text(_DIVIDE_CLASS_PH, encoding="utf-8")
+    log_off: list[str] = []
+    cfg_off = cfg.model_copy(update={"phonon_retry_on_search_sym": False})
+    with patch("siscforge.calculators.qe.recipes.run_ph") as mock_ph:
+        step3, _ = _maybe_retry_phonon_setup(
+            cfg_off,
+            structure=s,
+            work_dir=work,
+            scf_dir=scf,
+            prefix="siscforge",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log_off,
+            step=fail_step,
+            result=QEWorkflowResult(work_dir=work, structure=s),
+        )
+        mock_ph.assert_not_called()
+    assert any("retry disabled" in line for line in log_off)
+    assert step3.success is False
+
+    (scf / "ph.out").write_text(_DIVIDE_CLASS_PH, encoding="utf-8")
+    log_already: list[str] = []
+    cfg_nosym = cfg.model_copy(update={"nosym": True})
+    with patch("siscforge.calculators.qe.recipes.run_ph") as mock_ph:
+        _maybe_retry_phonon_setup(
+            cfg_nosym,
+            structure=s,
+            work_dir=work,
+            scf_dir=scf,
+            prefix="siscforge",
+            qe_env=None,
+            for_epw=False,
+            outdir=None,
+            log=log_already,
+            step=fail_step,
+            result=QEWorkflowResult(work_dir=work, structure=s),
+        )
+        mock_ph.assert_not_called()
+    assert any("already off" in line for line in log_already)

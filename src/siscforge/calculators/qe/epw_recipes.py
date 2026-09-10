@@ -315,6 +315,19 @@ def _fermi_from_work_dir(work_dir: Path) -> float | None:
 # and mislabeling FFT/symmetry setup crashes as "EPW: k-grid inconsistency".
 _PHONON_FAILURE_HINTS: list[tuple[str, str, str]] = [
     (
+        "divide_class",
+        "phonon: divide_class / prepare_sym_analysis (mode symmetry)",
+        "QE 7.3.1 mode-symmetry crash in ph.x. Auto-retry once with "
+        "search_sym=.false. when dft.phonon_retry_on_search_sym. Or set "
+        "dft.ph_search_sym=false / dft.nosym. Not dynamical instability.",
+    ),
+    (
+        "prepare_sym_analysis",
+        "phonon: prepare_sym_analysis (mode symmetry)",
+        "Same class as divide_class. Retry with search_sym=.false. "
+        "(dft.phonon_retry_on_search_sym).",
+    ),
+    (
         "wrong niter_ph",
         "phonon: phq_readin — Wrong niter_ph",
         "QE rejected niter_ph before DFPT. Ubuntu/distro ph.x 6.7 allows "
@@ -395,8 +408,6 @@ _EPW_ONLY_NEEDLES: frozenset[str] = frozenset(
         "number of pools and number of images",
         "nbndsub",
         "wannier",
-        "divide_class",
-        "prepare_sym_analysis",
     }
 )
 
@@ -1015,6 +1026,12 @@ def diagnose_qe_step_failure(
             "  · FFT/symmetry remediation: dft.phonon_retry_on_fft_symmetry "
             "(auto nosym SCF+ph once). Setup failure — not dynamically unstable."
         )
+    if is_divide_class_sym_failure(text):
+        parts.append(
+            "  · search_sym remediation: dft.phonon_retry_on_search_sym "
+            "(auto ph.x once with search_sym=.false.) or dft.ph_search_sym=false "
+            "/ dft.nosym."
+        )
     if include_tail and text:
         lines = str(text).splitlines()
         tail = lines[-tail_lines:] if len(lines) > tail_lines else lines
@@ -1045,10 +1062,13 @@ def extract_primary_failure_reason(
 
     # Explicit high-signal classes first (order independent of substring tables)
     if is_divide_class_sym_failure(text):
-        msg = (
-            "EPW: divide_class / prepare_sym_analysis segfault "
-            "(nosym NSCF / ph_search_sym)"
-        )
+        if phonon_step:
+            msg = "phonon: divide_class / prepare_sym_analysis (search_sym)"
+        else:
+            msg = (
+                "EPW: divide_class / prepare_sym_analysis segfault "
+                "(nosym NSCF / ph_search_sym)"
+            )
         return msg[:max_len] + ("…" if len(msg) > max_len else "")
     if is_gmap_sym_mismatch_failure(text):
         if pipeline_nosym_path_on(config):

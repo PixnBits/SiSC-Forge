@@ -232,6 +232,7 @@ Triggered after **successful DFPT** when EPW fails with remediable classes.
 |------|-------------|--------|
 | `dft.phonon_retry_on_fft_symmetry` | FFT grid incompatible with symmetry | One SCF+PH with `nosym=.true.` `noinv=.true.` |
 | `dft.phonon_retry_on_d_matrix` | d_matrix / D_S not orthogonal | Same nosym recovery |
+| `dft.phonon_retry_on_search_sym` | `divide_class` / `prepare_sym_analysis` in ph.x | One `ph.x` with `search_sym=.false.` (no SCF redo); skipped if search_sym already off |
 
 - Log: `phonon failed (FFT grid incompatible with symmetry) — retrying once with nosym+noinv SCF/PH`.
 - Success notes that recovery was used; failure remains **setup failure**, not dynamical instability.
@@ -609,6 +610,7 @@ dft:
   qpoints: [2, 2, 2]           # DFPT mesh; nqc must match when EPW on
   phonon_retry_on_d_matrix: true
   phonon_retry_on_fft_symmetry: true
+  phonon_retry_on_search_sym: true  # divide_class → one ph.x with search_sym=.false.
   epw:
     enabled: false
     nkc: [8, 8, 8]             # coarse electronic k (Wannier)

@@ -732,14 +732,18 @@ def _maybe_retry_phonon_setup(
       (``dft.phonon_retry_on_d_matrix``, default True)
     * ``phq_setup`` / ``FFT grid incompatible with symmetry``
       (``dft.phonon_retry_on_fft_symmetry``, default True)
+    * ``divide_class`` / ``prepare_sym_analysis`` (mode-symmetry analysis)
+      (``dft.phonon_retry_on_search_sym``, default True) — re-runs ph.x
+      once with ``search_sym=.false.``; no SCF redo.
 
     Policy:
     1. Classify failure from ``ph.out`` **and** sibling ``CRASH``
        (QE often writes ``d_matrix`` only to ``CRASH`` and ``MPI_ABORT``
        to stdout).
-    2. Clean phonon partials only for this candidate; re-run SCF with
-       ``nosym=.true.`` + ``noinv=.true.``.
-    3. Re-run phonon once (no recover from the broken DFPT).
+    2. For d_matrix / FFT: clean phonon partials; re-run SCF with
+       ``nosym=.true.`` + ``noinv=.true.``; re-run phonon once.
+    3. For divide_class: clean phonon partials only; re-run ph.x with
+       ``search_sym=.false.`` if the failed run still had it on.
     4. Cap = 1 attempt; never invent geometry hacks; never mark success
        without JOB DONE. Setup failure is **not** dynamical instability.
 
@@ -747,6 +751,7 @@ def _maybe_retry_phonon_setup(
     """
     from siscforge.calculators.qe.epw_recipes import (
         is_d_matrix_failure,
+        is_divide_class_sym_failure,
         is_phq_setup_fft_symmetry_failure,
     )
     from siscforge.calculators.qe.qe_checkpoint import (
@@ -777,8 +782,52 @@ def _maybe_retry_phonon_setup(
             )
             return step, body
         reason = "d_matrix"
+    elif is_divide_class_sym_failure(body):
+        if not config.phonon_retry_on_search_sym:
+            log.append(
+                "phonon divide_class / search_sym failure — retry disabled "
+                "(dft.phonon_retry_on_search_sym=false)"
+            )
+            return step, body
+        if not effective_ph_search_sym(config):
+            log.append(
+                "phonon divide_class / prepare_sym_analysis but search_sym "
+                "already off (dft.ph_search_sym=false or dft.nosym) — no retry"
+            )
+            return step, body
+        reason = "search_sym"
     else:
         return step, body
+
+    if reason == "search_sym":
+        log.append(
+            "phonon failed (divide_class / prepare_sym_analysis) — "
+            "retrying once with search_sym=.false."
+        )
+        clean_step_outputs(work_dir, "phonon", prefix=prefix)
+        retry_cfg = config.model_copy(update={"ph_search_sym": False})
+        step2 = run_ph(
+            retry_cfg,
+            scf_dir,
+            prefix=prefix,
+            qe_env=qe_env,
+            for_epw=for_epw,
+            outdir=outdir,
+            recover=False,
+        )
+        result.steps.append(step2)
+        body2 = _read_step_log(step2.stdout_path)
+        if step2.success:
+            log.append(
+                "search_sym retry: phonon succeeded after search_sym=.false. "
+                "(setup recovery used; not a default physics change for other cells)"
+            )
+        else:
+            log.append(
+                "search_sym retry: phonon still failed after search_sym=.false. "
+                "(setup failure — not a dynamical-stability conclusion)"
+            )
+        return step2, body2
 
     if reason == "fft_symmetry":
         cli = (

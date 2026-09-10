@@ -137,9 +137,9 @@ def effective_ph_search_sym(config: DFTConfig) -> bool:
     ``dft.nosym`` forces ``search_sym=.false.`` (ph.x has no nosym namelist;
     crystal symmetries follow the nosym SCF save).
     """
-    if bool(getattr(config, "nosym", False)):
+    if config.nosym:
         return False
-    return bool(getattr(config, "ph_search_sym", True))
+    return config.ph_search_sym
 
 
 def candidate_to_structure(candidate: StructureCandidate) -> Structure:
@@ -463,6 +463,11 @@ def build_ph_input(
     When *recover* is True, set QE ``recover=.true.`` so ``ph.x`` resumes an
     interrupted DFPT run from on-disk restart files (dyn / ``_ph0`` / outdir).
     Do not combine with ``reduce_io=.true.`` (not set in this builder).
+
+    When *search_sym* is False, emit ``search_sym = .false.`` (skip mode-symmetry
+    analysis). Default True omits the card so QE keeps its default ``.true.``.
+    Use False for cells that segfault in ``divide_class`` /
+    ``prepare_sym_analysis`` (QE 7.3.1; observed on MgB₂).
 
     Soft metals often need reduced ``alpha_mix`` and extra empty bands on the
     prior SCF (see ``DFTConfig.nbnd``); otherwise Broyden can diverge
