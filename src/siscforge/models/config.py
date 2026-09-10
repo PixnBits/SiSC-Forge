@@ -513,6 +513,14 @@ class EPWConfig(BaseModel):
             "(gmap_sym / free(): invalid pointer)."
         ),
     )
+    mp_mesh_k: bool = Field(
+        default=False,
+        description=(
+            "Emit EPW ``mp_mesh_k = .true.`` (Monkhorst–Pack irreducible k). "
+            "QE ``EPW/examples/mgb2`` uses this with nk=nq=6. Default False "
+            "keeps the full crystal mesh matching nosym NSCF goldens."
+        ),
+    )
 
 
 class DFTUConfig(BaseModel):

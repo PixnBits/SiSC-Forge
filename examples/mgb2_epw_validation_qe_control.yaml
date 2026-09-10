@@ -1,0 +1,108 @@
+# MgB₂ EPW control sibling — QE EPW/examples/mgb2 grids (not the main golden)
+#
+# Matches QE 7.3.1 ``EPW/examples/mgb2/epw/epw.in`` coarse/fine intent:
+#   nk = nq = 6, mp_mesh_k = .true., fine ~20³
+# Keeps SiSC-Forge pipeline ``dft.nosym`` (SCF+PH+NSCF) from #90 so this is a
+# *grid* control, not a symmetry-on replay of the upstream tutorial.
+#
+# Prefer ``examples/mgb2_epw_validation.yaml`` for the workstation golden.
+# Use this when bisecting gmap_sym / comparing to upstream EPW grids.
+#
+# Ops tip after #90: if gmap_sym still aborts with nosym on, try nproc=1 /
+# epw.npool=1 (possible QE 7.3.1 gmap_sym heap corruption under npool>1).
+#
+#   siscforge run --calculator qe-epw examples/mgb2_epw_validation_qe_control.yaml
+#
+# See docs/examples/mgb2_epw.md § "QE example control grids".
+
+name: mgb2_epw_validation_qe_control
+description: >
+  MgB2 EPW control path with QE EPW/examples/mgb2 grids (nk=nq=6, mp_mesh_k)
+  plus pipeline-wide dft.nosym. Sibling of mgb2_epw_validation — does not
+  replace the screening golden.
+version: "0.1"
+dry_run: false
+
+enumeration:
+  material_families:
+    - mgb2_boride
+  formulas:
+    - MgB2
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+  max_candidates: 1
+
+calculators:
+  - name: qe-epw
+
+formation_filter:
+  enabled: false
+
+dft:
+  engine: qe-epw
+  ecutwfc: 50.0
+  ecutrho: 400.0
+  # SCF denser than screening golden so DFPT/EPW 6³ is not under-sampled
+  kpoints: [6, 6, 6]
+  qpoints: [6, 6, 6]
+  do_relax: true
+  do_phonon: true
+  phonon_retry_on_d_matrix: true
+  phonon_retry_on_fft_symmetry: true
+  nosym: true
+  ph_search_sym: false
+  do_epw: true
+  phonon_method: dfpt
+  nbnd: 20
+  tr2_ph: 1.0e-10
+  ph_alpha_mix: 0.2
+  ph_nmix: 8
+  ph_niter: 100
+  degauss: 0.02
+  quality_tag: production
+  # Default serial for gmap_sym bisect; raise nproc only after nproc=1 is green
+  nproc: 1
+  pseudo_dir: /usr/share/espresso/pseudo
+  pseudopotentials:
+    Mg: Mg.pbe-n-kjpaw_psl.0.3.0.UPF
+    B: b_pbe_v1.4.uspp.F.UPF
+  epw:
+    enabled: true
+    # QE EPW/examples/mgb2: nk=nq=6, mp_mesh_k, fine 20³
+    nkc: [6, 6, 6]
+    nqc: [6, 6, 6]  # must match dft.qpoints
+    nkf: [20, 20, 20]
+    nqf: [20, 20, 20]
+    mp_mesh_k: true
+    npool: 1
+    auto_nbndsub: false
+    nbndsub: 5
+    wannier_projections: "B:pz;f=0.5,1.0,0.5:s;f=0.0,0.5,0.5:s;f=0.5,0.5,0.5:s"
+    mu_star: 0.10
+    eliashberg: true
+    allen_dynes_fallback: true
+    fsthick: 0.4
+    degaussw: 0.10
+    degaussq: 0.5
+    eps_acustic: 2.0
+
+ranking:
+  performance_weight: 0.70
+  si_feasibility_weight: 0.30
+  prefer_dynamically_stable: true
+
+run:
+  resume: true
+  continue_on_error: true
+  force_rerun: false
+  resume_qe_steps: true
+  heartbeat_seconds: 900
+  estimate_walltime: true
+
+output_dir: outputs/mgb2_epw_validation_qe_control
+export_formats:
+  - json
+  - csv
+  - markdown

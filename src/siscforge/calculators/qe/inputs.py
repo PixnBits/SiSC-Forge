@@ -219,7 +219,9 @@ def build_nscf_epw_input(
     Default on (``epw.nscf_nosym`` None/True). Opt out with ``epw.nscf_nosym:
     false``. For MgB₂-class goldens also set ``dft.nosym`` so SCF+DFPT match;
     nosym-only NSCF on symmetry-DFPT triggers ``gmap_sym`` /
-    ``free(): invalid pointer`` after Wannier.
+    ``free(): invalid pointer`` after Wannier. After pipeline nosym, the same
+    fingerprint under ``npool>1`` may be QE 7.3.1 ``gmap_sym`` heap corruption
+    — try ``nproc=1`` / ``epw.npool=1`` (see ``sym_mismatch_remediation``).
     """
     nkc = list(nk) if nk is not None else list(config.epw.nkc or config.kpoints)
     nkc = (list(nkc) + [4, 4, 4])[:3]

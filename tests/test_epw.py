@@ -423,6 +423,26 @@ def test_epw_nscf_nosym_opt_out() -> None:
     assert "nosym = .true." not in text and "nosym=.true." not in text
 
 
+def test_build_epw_input_emits_mp_mesh_k() -> None:
+    """epw.mp_mesh_k emits QE control-path flag; default omits it."""
+    from siscforge.calculators.qe.epw_inputs import build_epw_input
+
+    s = build_mgb2()
+    off = DFTConfig(
+        epw=EPWConfig(enabled=True, nkc=[6, 6, 6], nqc=[6, 6, 6], mp_mesh_k=False),
+    )
+    text_off = build_epw_input(off, structure=s).lower()
+    assert "mp_mesh_k" not in text_off
+
+    on = DFTConfig(
+        epw=EPWConfig(enabled=True, nkc=[6, 6, 6], nqc=[6, 6, 6], mp_mesh_k=True),
+    )
+    text_on = build_epw_input(on, structure=s).lower()
+    assert "mp_mesh_k" in text_on
+    assert ".true." in text_on
+    assert "nk1" in text_on and "6" in text_on
+
+
 def test_build_epw_input_emits_configured_projections() -> None:
     """epw.wannier_projections must become proj(i) lines (not proj=random)."""
     from siscforge.calculators.qe.epw_inputs import build_epw_input
