@@ -476,7 +476,15 @@ class EPWConfig(BaseModel):
     eliashberg: bool = True
     allen_dynes_fallback: bool = True
     wdata_prefix: str = "siscforge"
-    npool: int = 1
+    npool: int | None = Field(
+        default=None,
+        description=(
+            "EPW k-point pools (epw.x -npool). None (default) → auto-set to "
+            "dft.nproc for fine-grid. An explicit value is honored and never "
+            "silently inflated; fully serial EPW needs dft.nproc: 1 and "
+            "epw.npool: 1 (or omit npool with nproc: 1)."
+        ),
+    )
     strict_parallel: bool = False
     allow_on_soft: bool = Field(
         default=False,

@@ -88,29 +88,34 @@ siscforge run --calculator qe-epw examples/nbti_n_al_broad_shortlist.yaml
 
 ### EPW parallel (nproc / npool) — desktop one-liner
 
-Fine-grid EPW requires **`nproc == npool`** (nimage=1). If you set
-`dft.nproc: 8` but leave `epw.npool: 1`, EPW aborts after DFPT with:
+Fine-grid EPW requires **`nproc == npool`** (nimage=1). Omitting
+`epw.npool` (default `null`) auto-sets `npool = nproc`. An **explicit**
+`epw.npool` is honored and never silently inflated — a mismatch refuses
+launch (or raises under `epw.strict_parallel: true`).
 
-```text
-Number of processes must be equal to product of number of pools and number of images
-```
-
-**Fix (or rely on auto-set):**
+**Recommended:**
 
 ```yaml
 dft:
   nproc: 8
   epw:
+    # omit npool → auto-set to 8
+    # or set explicitly:
     npool: 8   # must equal nproc for fine-grid EPW
 ```
 
-SiSC-Forge **auto-sets** `npool = nproc` when inconsistent and logs:
+When `epw.npool` is omitted, SiSC-Forge logs:
 
 ```text
 EPW parallel: auto-set npool=8 to match nproc=8 (nimage=1)
 ```
 
-Set `epw.strict_parallel: true` to refuse launch instead of auto-fix.
+**Fully serial EPW** (e.g. gmap_sym bisect): set **both** `dft.nproc: 1`
+and `epw.npool: 1`. YAML-only `epw.npool: 1` with `nproc: 16` is no longer
+rewritten to 16 — set `nproc: 1` for a true serial probe.
+
+Set `epw.strict_parallel: true` to refuse launch when topology is invalid
+(also refuses auto-fill when npool is omitted).
 
 ### Wannier screening defaults (supercells)
 

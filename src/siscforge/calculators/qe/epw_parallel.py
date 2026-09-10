@@ -165,7 +165,7 @@ def validate_epw_parallel(
 
 def resolve_epw_parallel(
     nproc: int,
-    npool: int = 1,
+    npool: int | None = None,
     nimage: int = 1,
     *,
     nbgrp: int = 1,
@@ -174,20 +174,27 @@ def resolve_epw_parallel(
 ) -> EPWParallelPlan:
     """Validate and optionally auto-correct EPW parallel topology.
 
-    Desktop default (``auto_fix=True``, fine-grid):
-    - Force ``nimage=1`` if needed (with note) only when auto_fix and nimage!=1
-      would otherwise fail — actually for nimage!=1 we fail even with auto_fix
-      unless we can set nimage=1; we set nimage=1 and npool=nproc.
-    - When ``nproc > 1`` and ``npool * nimage * nbgrp != nproc``, set
-      ``npool = nproc`` (with nimage=1, nbgrp=1).
+    ``npool=None`` (config default) + ``auto_fix=True`` (fine-grid): set
+    ``npool = nproc`` (nimage=1). That is the only silent auto-fill.
 
-    When ``auto_fix=False`` (strict), return the raw validation error.
+    An **explicit** ``npool`` is never silently inflated to ``nproc``. Invalid
+    topologies return ``ok=False`` with a message that points at matching
+    ``epw.npool`` to ``nproc``, or fully serial ``dft.nproc: 1`` +
+    ``epw.npool: 1``.
+
+    When ``auto_fix=False`` (strict), return the raw validation error
+    (still never inflate an explicit npool).
     """
     nproc = max(1, int(nproc))
-    npool = int(npool) if int(npool) >= 1 else 1
+    explicit_npool = npool is not None
+    if npool is None:
+        # Provisional for validate; auto_fix may replace with nproc.
+        npool = 1
+    else:
+        npool = int(npool) if int(npool) >= 1 else 1
     nimage = int(nimage) if int(nimage) >= 1 else 1
     nbgrp = int(nbgrp) if int(nbgrp) >= 1 else 1
-    original_npool = npool
+    original_npool = npool if explicit_npool else None
     original_nimage = nimage
 
     plan = validate_epw_parallel(
@@ -196,11 +203,30 @@ def resolve_epw_parallel(
     if plan.ok:
         return plan
 
-    if not auto_fix:
-        return plan
+    def _with_explicit_hint(base: EPWParallelPlan) -> EPWParallelPlan:
+        if not explicit_npool:
+            return base
+        hint = (
+            f" Explicit epw.npool={npool} is honored (not auto-inflated). "
+            f"Set epw.npool={nproc} to match nproc, or for fully serial EPW "
+            f"set dft.nproc: 1 and epw.npool: 1."
+        )
+        return EPWParallelPlan(
+            nproc=base.nproc,
+            npool=base.npool,
+            nimage=base.nimage,
+            nbgrp=base.nbgrp,
+            ok=False,
+            message=base.message + hint,
+            auto_fixed=False,
+            original_npool=original_npool,
+        )
 
-    # Auto-fix for fine-grid desktop path: nimage=1, npool=nproc, nbgrp=1
-    if fine_grid:
+    if not auto_fix:
+        return _with_explicit_hint(plan)
+
+    # Auto-fix only when npool was omitted (None): fine-grid → npool=nproc
+    if fine_grid and not explicit_npool:
         fixed_npool = nproc
         fixed_nimage = 1
         fixed_nbgrp = 1
@@ -217,9 +243,8 @@ def resolve_epw_parallel(
         notes: list[str] = []
         if original_nimage != 1:
             notes.append(f"nimage {original_nimage}→1 (fine-grid)")
-        if original_npool != fixed_npool:
-            notes.append(f"npool {original_npool}→{fixed_npool}")
-        detail = "; ".join(notes) if notes else "topology adjusted"
+        notes.append(f"npool default→{fixed_npool}")
+        detail = "; ".join(notes)
         return EPWParallelPlan(
             nproc=nproc,
             npool=fixed_npool,
@@ -231,10 +256,11 @@ def resolve_epw_parallel(
                 f"nproc={nproc} (nimage=1) [{detail}]"
             ),
             auto_fixed=True,
-            original_npool=original_npool,
+            original_npool=None,
         )
 
-    return plan
+    # Explicit npool that does not match nproc: never inflate
+    return _with_explicit_hint(plan)
 
 
 def epw_npool_cli_args(npool: int) -> list[str]:

@@ -183,7 +183,7 @@ Run Quantum ESPRESSO relaxation, SCF, multi-q DFPT (phonon), optional EPW + isot
 #### 2.3.2 Pre-DFPT EPW preflight (when `do_epw` / EPW enabled)
 | Check | Rule |
 |-------|------|
-| Parallel | `epw.npool` must satisfy EPW topology with `dft.nproc` (typically `npool == nproc`, nimage=1); auto-set unless strict |
+| Parallel | `epw.npool` must satisfy EPW topology with `dft.nproc` (typically `npool == nproc`, nimage=1); `null` default auto-sets to nproc; explicit npool never silently inflated; serial needs `nproc=1` |
 | Coarse k (`epw.nkc`) | **Tier minima:** `workstation_dense` / `production` and `n_atoms ≥ 8` → **minimum 8³**; never emit default **nk=6** for those cells when auto-raise is on |
 | Coarse q (`epw.nqc`) | **Must** match `dft.qpoints` (DFPT mesh); auto-align nqc → qpoints before DFPT |
 | Strict mode | `epw.strict_coarse_k: true` hard-fails instead of auto-raising nkc |

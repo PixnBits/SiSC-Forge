@@ -29,7 +29,10 @@ from siscforge.calculators.qe.epw_inputs import (
     write_epw_input,
 )
 from siscforge.calculators.qe.epw_parser import parse_epw_output
-from siscforge.calculators.qe.inputs import build_nscf_epw_input
+from siscforge.calculators.qe.inputs import (
+    build_nscf_epw_input,
+    effective_epw_nscf_nosym,
+)
 from siscforge.calculators.qe.parser import parse_ph_output, parse_pw_output
 from siscforge.calculators.qe.recipes import (
     QEStepResult,
@@ -411,23 +414,26 @@ _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
     (
         "gmap_sym",
         "EPW: gmap_sym / rotate.f90 abort (symmetry map or QE heap)",
-        "elphon_shuffle_wrap→gmap_sym (rotate.f90). Often nosym-NSCF vs "
-        "symmetry-DFPT (fix: dft.nosym). If dft.nosym already on, try "
+        "elphon_shuffle_wrap→gmap_sym (rotate.f90). Often #89 default "
+        "epw.nscf_nosym NSCF vs sym SCF/PH (fix: dft.nosym OR "
+        "epw.nscf_nosym: false). If dft.nosym already on, try "
         "nproc=1/npool=1 — possible QE 7.3.1 gmap_sym heap corruption under "
         "npool>1. Do NOT raise nbndsub.",
     ),
     (
         "free(): invalid pointer",
         "EPW: free(): invalid pointer (often gmap_sym)",
-        "After Wannier: either nosym electronic vs symmetrized DFPT "
-        "(dft.nosym: true) or, with nosym already on, npool>1 heap corruption "
-        "in gmap_sym (try nproc=1/npool=1). Not an nbndsub issue.",
+        "After Wannier: either nosym NSCF vs symmetrized DFPT "
+        "(dft.nosym: true OR epw.nscf_nosym: false) or, with nosym already on, "
+        "npool>1 heap corruption in gmap_sym (try nproc=1/npool=1). Not an "
+        "nbndsub issue.",
     ),
     (
         "elphon_shuffle_wrap",
         "EPW: elphon_shuffle_wrap abort (symmetry map / gmap_sym)",
-        "Phonon↔electronic symmetry map abort. Prefer pipeline-wide dft.nosym; "
-        "if already on, try nproc=1/npool=1. Do not bump nbndsub.",
+        "Phonon↔electronic symmetry map abort. Prefer pipeline-wide "
+        "dft.nosym or upstream epw.nscf_nosym: false; if dft.nosym already "
+        "on, try nproc=1/npool=1. Do not bump nbndsub.",
     ),
     # Symmetry-analysis crashes (QE 7.3.1) MUST beat broad k-mesh / k-point needles:
     # segfault backtraces list k-points earlier in epw.out and used to be labeled
@@ -681,8 +687,9 @@ def is_gmap_sym_mismatch_failure(text: str | None) -> bool:
 
     Two observed regimes (fingerprint is the same):
 
-    1. **Symmetry mismatch** — nosym-only EPW NSCF on symmetry-aware DFPT
-       (#89→#90). Remediation: pipeline-wide ``dft.nosym``.
+    1. **Symmetry mismatch** — #89 default nosym-only EPW NSCF on
+       symmetry-aware SCF/PH (#89→#90). Remediation: pipeline-wide
+       ``dft.nosym`` **or** upstream ``epw.nscf_nosym: false``.
     2. **Post-nosym / npool>1** — SCF+PH+NSCF already nosym (``search_sym``
        off) and EPW still aborts in ``gmap_sym`` under ``npool>1`` (ops:
        MgB₂ USPP golden). Possible QE 7.3.1 heap corruption in
@@ -730,6 +737,10 @@ def sym_mismatch_remediation(
     When ``dft.nosym`` (pipeline path) is already on, do **not** suggest
     enabling it again — point at nproc/npool=1 and a possible QE 7.3.1
     ``gmap_sym`` heap bug under ``npool>1``.
+
+    When ``dft.nosym`` is false, do **not** only say "enable dft.nosym":
+    #89 default ``epw.nscf_nosym``→True forces nosym NSCF against sym
+    SCF/PH — also suggest ``epw.nscf_nosym: false`` (upstream path).
     """
     if nosym_already is None:
         nosym_already = pipeline_nosym_path_on(config)
@@ -738,7 +749,12 @@ def sym_mismatch_remediation(
             nproc = max(1, int(getattr(config, "nproc", 1) or 1))
         if npool is None:
             epw = getattr(config, "epw", None)
-            npool = max(1, int(getattr(epw, "npool", 1) or 1)) if epw is not None else None
+            if epw is not None:
+                raw = getattr(epw, "npool", None)
+                if raw is None:
+                    npool = nproc  # default → will resolve to nproc
+                else:
+                    npool = max(1, int(raw))
     if nosym_already:
         cur = ""
         if nproc is not None and npool is not None:
@@ -755,10 +771,23 @@ def sym_mismatch_remediation(
             "corruption; geometric Symmetries of crystal may still print). "
             "Do NOT raise nbndsub."
         )
+    # dft.nosym false — usually #89 default nosym NSCF vs sym SCF/PH
+    nscf_nosym_on = True
+    if config is not None:
+        nscf_nosym_on = bool(effective_epw_nscf_nosym(config))
+    if nscf_nosym_on:
+        return (
+            "symmetry mismatch: #89 default epw.nscf_nosym forces nosym NSCF "
+            "against sym SCF/PH. Fix: set dft.nosym: true (pipeline-wide "
+            "nosym) OR epw.nscf_nosym: false (upstream path — keep sym "
+            "SCF/PH and match NSCF). Do NOT raise nbndsub. Re-run "
+            "SCF+DFPT+NSCF+EPW."
+        )
     return (
         "set dft.nosym: true so SCF + PH + EPW NSCF share nosym/noinv "
-        "(ph.x: search_sym forced off). Do NOT raise nbndsub. Re-run "
-        "SCF+DFPT+NSCF+EPW — phonon from symmetry SCF is incompatible."
+        "(ph.x: search_sym forced off). epw.nscf_nosym is already false. "
+        "Do NOT raise nbndsub. Re-run SCF+DFPT+NSCF+EPW — phonon from "
+        "symmetry SCF may still be incompatible."
     )
 
 
@@ -1058,7 +1087,8 @@ def extract_primary_failure_reason(
             )
         else:
             msg = (
-                "EPW: gmap_sym mismatch (enable dft.nosym; not nbndsub)"
+                "EPW: gmap_sym mismatch "
+                "(dft.nosym or epw.nscf_nosym:false; not nbndsub)"
             )
         return msg[:max_len] + ("…" if len(msg) > max_len else "")
     if is_wrong_niter_ph(text):
@@ -1235,8 +1265,9 @@ def resolve_epw_launch_topology(
 ) -> tuple[DFTConfig, str]:
     """Return config with a valid EPW (nproc, npool) topology and a log line.
 
-    Auto-sets ``epw.npool = nproc`` (nimage=1) when needed unless
-    ``epw.strict_parallel`` is True (then raises ``ValueError``).
+    When ``epw.npool`` is ``None`` (default), auto-sets ``epw.npool = nproc``
+    (nimage=1) unless ``epw.strict_parallel`` is True (then raises
+    ``ValueError``). An explicit ``epw.npool`` is never silently inflated.
 
     When ``dft.nosym`` is on and the resolved ``npool`` is > 1, append a
     soft warning: MgB₂-class goldens have hit ``gmap_sym`` /
@@ -1247,7 +1278,8 @@ def resolve_epw_launch_topology(
     from siscforge.calculators.qe.epw_parallel import resolve_epw_parallel
 
     nproc = max(1, int(config.nproc))
-    npool = max(1, int(config.epw.npool))
+    raw_npool = getattr(config.epw, "npool", None)
+    npool = None if raw_npool is None else max(1, int(raw_npool))
     strict = bool(getattr(config.epw, "strict_parallel", False))
     plan = resolve_epw_parallel(
         nproc,
@@ -1691,7 +1723,7 @@ def _run_epw_once(
     out_path = work_dir / "epw.out"
     write_epw_input(epw_text, in_path)
 
-    npool = max(1, int(config.epw.npool))
+    npool = max(1, int(config.epw.npool if config.epw.npool is not None else config.nproc))
     nbndsub = default_nbndsub_screening(
         nbnd=config.nbnd,
         structure=structure,
