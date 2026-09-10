@@ -1525,9 +1525,11 @@ def run_cmd(
                 resolve_epw_launch_topology,
             )
 
+            _np = dft.epw.npool
+            _nproc = max(1, int(dft.nproc))
             raw = validate_epw_parallel(
-                max(1, int(dft.nproc)),
-                max(1, int(dft.epw.npool)),
+                _nproc,
+                max(1, int(_np)) if _np is not None else _nproc,
                 nimage=1,
                 fine_grid=True,
             )

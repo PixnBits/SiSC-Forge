@@ -228,11 +228,48 @@ def test_diagnose_gmap_sym_mismatch_not_nbndsub() -> None:
     )
 
 
+def test_sym_mismatch_remediation_when_dft_nosym_false_suggests_nscf_nosym() -> None:
+    """When dft.nosym is false, also suggest epw.nscf_nosym: false (#89 default)."""
+    enable = sym_mismatch_remediation(nosym_already=False)
+    assert "dft.nosym" in enable.lower()
+    assert "epw.nscf_nosym" in enable.lower() or "nscf_nosym" in enable.lower()
+    assert "false" in enable.lower()
+    assert "nbndsub" in enable.lower()
+
+    cfg = DFTConfig(
+        nosym=False,
+        nproc=16,
+        epw=EPWConfig(enabled=True, nscf_nosym=None),  # #89 default → True
+    )
+    from_cfg = sym_mismatch_remediation(cfg)
+    assert "nscf_nosym" in from_cfg.lower()
+    assert "false" in from_cfg.lower()
+    assert "dft.nosym" in from_cfg.lower()
+    assert "set dft.nosym: true" in from_cfg.lower() or "pipeline" in from_cfg.lower()
+
+    reason = extract_primary_failure_reason(
+        _GMAP_SYM_ABORT, step_name="epw", config=cfg
+    )
+    assert "nscf_nosym" in reason.lower() or "dft.nosym" in reason.lower()
+    assert "enable dft.nosym" not in reason.lower() or "nscf_nosym" in reason.lower()
+    assert "not nbndsub" in reason.lower()
+
+    diag = diagnose_epw_failure(
+        _GMAP_SYM_ABORT,
+        work_dir="/tmp/fake",
+        include_tail=False,
+        config=cfg,
+    )
+    assert "class: sym_mismatch" in diag
+    assert "nscf_nosym" in diag.lower()
+    assert "false" in diag.lower()
+
+
 def test_sym_mismatch_remediation_when_nosym_already_on() -> None:
     """When dft.nosym is already set, do not suggest enabling it again."""
     enable = sym_mismatch_remediation(nosym_already=False)
     assert "dft.nosym" in enable.lower()
-    assert "set dft.nosym" in enable.lower() or "true" in enable.lower()
+    assert "nscf_nosym" in enable.lower() or "set dft.nosym" in enable.lower()
     assert "nbndsub" in enable.lower()
 
     already = sym_mismatch_remediation(
@@ -273,11 +310,12 @@ def test_sym_mismatch_remediation_when_nosym_already_on() -> None:
     assert "already on" in diag.lower()
     assert "nproc=1" in diag and "npool=1" in diag
     assert "set dft.nosym: true" not in diag.lower()
-    # Without config, still suggest enabling nosym
+    # Without config, suggest pipeline nosym and/or nscf_nosym opt-out
     diag_off = diagnose_epw_failure(
         _GMAP_SYM_ABORT, work_dir="/tmp/fake", include_tail=False
     )
-    assert "set dft.nosym: true" in diag_off.lower()
+    assert "dft.nosym" in diag_off.lower()
+    assert "nscf_nosym" in diag_off.lower() or "set dft.nosym: true" in diag_off.lower()
 
 
 def test_resolve_epw_topology_warns_nosym_npool_gt1() -> None:

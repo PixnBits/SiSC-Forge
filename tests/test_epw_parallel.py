@@ -45,27 +45,40 @@ def test_validate_fine_grid_rejects_nimage() -> None:
     assert "image" in plan.message.lower() or "nimage" in plan.message.lower()
 
 
-def test_resolve_auto_fix_npool_to_nproc() -> None:
-    plan = resolve_epw_parallel(8, 1, 1, fine_grid=True, auto_fix=True)
+def test_resolve_auto_fix_default_npool_none_to_nproc() -> None:
+    """npool=None (config default) auto-sets to nproc."""
+    plan = resolve_epw_parallel(8, None, 1, fine_grid=True, auto_fix=True)
     assert plan.ok
     assert plan.npool == 8
     assert plan.nproc == 8
     assert plan.auto_fixed is True
-    assert plan.original_npool == 1
+    assert plan.original_npool is None
     assert "auto-set" in plan.message.lower()
     assert "npool=8" in plan.message
 
 
-def test_resolve_auto_fix_npool3_to_nproc8() -> None:
+def test_resolve_honors_explicit_npool_no_silent_inflate() -> None:
+    """Explicit epw.npool:1 with nproc:16 must not be rewritten to 16."""
+    plan = resolve_epw_parallel(16, 1, 1, fine_grid=True, auto_fix=True)
+    assert not plan.ok
+    assert plan.npool == 1
+    assert plan.auto_fixed is False
+    assert "not auto-inflated" in plan.message.lower() or "honored" in plan.message.lower()
+    assert "nproc: 1" in plan.message or "fully serial" in plan.message.lower()
+
+
+def test_resolve_honors_explicit_npool3_no_inflate() -> None:
     plan = resolve_epw_parallel(8, 3, 1, fine_grid=True, auto_fix=True)
-    assert plan.ok
-    assert plan.npool == 8
-    assert plan.auto_fixed is True
+    assert not plan.ok
+    assert plan.npool == 3
+    assert plan.auto_fixed is False
 
 
 def test_resolve_strict_no_auto_fix() -> None:
-    plan = resolve_epw_parallel(8, 1, 1, fine_grid=True, auto_fix=False)
+    plan = resolve_epw_parallel(8, None, 1, fine_grid=True, auto_fix=False)
     assert not plan.ok
+    plan_ex = resolve_epw_parallel(8, 1, 1, fine_grid=True, auto_fix=False)
+    assert not plan_ex.ok
 
 
 def test_resolve_already_ok_no_auto() -> None:
@@ -81,11 +94,11 @@ def test_epw_npool_cli_args_always_present() -> None:
     assert epw_npool_cli_args(0) == ["-npool", "1"]
 
 
-def test_resolve_epw_launch_topology_mutates_npool() -> None:
+def test_resolve_epw_launch_topology_mutates_default_npool() -> None:
     cfg = DFTConfig(
         nproc=8,
         do_epw=True,
-        epw=EPWConfig(enabled=True, npool=1),
+        epw=EPWConfig(enabled=True, npool=None),
     )
     fixed, msg = resolve_epw_launch_topology(cfg)
     assert fixed.epw.npool == 8
@@ -93,11 +106,22 @@ def test_resolve_epw_launch_topology_mutates_npool() -> None:
     assert "auto-set" in msg.lower()
 
 
+def test_resolve_epw_launch_topology_honors_explicit_npool1() -> None:
+    """npool=1 + nproc=16 must not silently become npool=16."""
+    cfg = DFTConfig(
+        nproc=16,
+        do_epw=True,
+        epw=EPWConfig(enabled=True, npool=1),
+    )
+    with pytest.raises(ValueError, match=r"honored|auto-inflated|nproc"):
+        resolve_epw_launch_topology(cfg)
+
+
 def test_resolve_epw_launch_topology_strict_raises() -> None:
     cfg = DFTConfig(
         nproc=8,
         do_epw=True,
-        epw=EPWConfig(enabled=True, npool=1, strict_parallel=True),
+        epw=EPWConfig(enabled=True, npool=None, strict_parallel=True),
     )
     with pytest.raises(ValueError, match="nproc"):
         resolve_epw_launch_topology(cfg)
@@ -109,7 +133,7 @@ def test_run_epw_command_includes_npool_matching_nproc(tmp_path: Path) -> None:
     cfg = DFTConfig(
         nproc=8,
         do_epw=True,
-        epw=EPWConfig(enabled=True, npool=1, eliashberg=True),
+        epw=EPWConfig(enabled=True, npool=None, eliashberg=True),
     )
     captured: dict = {}
 

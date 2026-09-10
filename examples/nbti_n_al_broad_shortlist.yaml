@@ -418,7 +418,7 @@ dft:
     eliashberg: true
     allen_dynes_fallback: true
     wdata_prefix: siscforge
-    npool: 1
+    # npool omitted → auto-set to nproc (explicit 1 is honored, not inflated)
   quality_tag: screening
 formation_filter:
   enabled: false
