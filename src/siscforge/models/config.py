@@ -417,8 +417,27 @@ class EnumerationConfig(BaseModel):
         description="Supercell used for patterns that need one (inplane_vacancy).",
     )
     """Supercell used for patterns that need one (``inplane_vacancy``)."""
+    # --- Nitride N-vacancy (opt-in; empty metals → feature off) ---
+    nitride_nvac_metals: list[str] = Field(default_factory=list)
+    """Metals for ordered rocksalt N-vacancy supercells (e.g. Nb, Zr).
+    Empty → feature off. When set under ``tm_nitride``, emits curated
+    MN₁₋δ cells (P3.5-style; not a combinatorial engine)."""
+    nitride_nvac_counts: list[int] = Field(default_factory=list)
+    """N atoms to remove per supercell. Empty → [1, 2] when metals are set.
+    Use 0 for a stoichiometric supercell control at the same cell size."""
+    nitride_nvac_supercell: list[int] = Field(
+        default_factory=lambda: [2, 2, 2],
+        min_length=3,
+        max_length=3,
+        description=(
+            "Expansion of the *primitive* rocksalt cell for N-vacancy "
+            "screening (default 2×2×2 → 8 formula units)."
+        ),
+    )
+    nitride_nvac_include_stoichiometric: bool = False
+    """If true, also emit the stoichiometric supercell control (δ=0)."""
 
-    @field_validator("supercell", "bsi_supercell", "nickelate_supercell")
+    @field_validator("supercell", "bsi_supercell", "nickelate_supercell", "nitride_nvac_supercell")
     @classmethod
     def _supercell_components_positive(cls, v: list[int], info) -> list[int]:
         out = [int(n) for n in v]

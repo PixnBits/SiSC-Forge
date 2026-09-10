@@ -19,8 +19,10 @@ from siscforge.structure.nickelates import (
 )
 from siscforge.structure.nitrides import (
     composition_fractions,
+    enumerate_n_vacancy_nitrides,
     enumerate_nitrides,
     formula_from_structure,
+    structure_from_nitride_nvac_metadata,
 )
 from siscforge.structure.strain import apply_biaxial_strain, apply_epitaxial_strain
 
@@ -195,11 +197,23 @@ def _candidates_from_specs(enum: EnumerationConfig) -> list[StructureCandidate]:
                 )
                 meta = {**nmeta, **meta}
             else:
-                structure, nmeta = _structure_from_formula(
-                    spec.formula,
-                    supercell=_as_tuple3(enum.supercell),
-                    seed=enum.seed,
-                )
+                # Ordered N-vacancy shortlist rows carry vacancy_pattern /
+                # n_vacancies metadata (same idea as nickelate rebuild).
+                if meta.get("vacancy_pattern") or meta.get("n_vacancies") is not None:
+                    structure, nmeta = structure_from_nitride_nvac_metadata(
+                        formula=spec.formula,
+                        metadata=meta,
+                        supercell=_as_tuple3(
+                            getattr(enum, "nitride_nvac_supercell", None)
+                            or enum.supercell
+                        ),
+                    )
+                else:
+                    structure, nmeta = _structure_from_formula(
+                        spec.formula,
+                        supercell=_as_tuple3(enum.supercell),
+                        seed=enum.seed,
+                    )
                 meta = {**nmeta, **meta}
             strained, tensor, applied_eps, biaxial_fallback = _apply_campaign_strain(
                 structure,
@@ -253,16 +267,48 @@ def enumerate_from_config(enum: EnumerationConfig) -> list[StructureCandidate]:
     families = enum.material_families or ["tm_nitride"]
     for family in families:
         if family == "tm_nitride":
-            pairs = enumerate_nitrides(
-                metals=enum.metals or None,
-                ternary_metals=enum.ternary_metals or None,
-                x_values=enum.x_values or None,
-                formulas=enum.formulas or None,
-                supercell=_as_tuple3(enum.supercell),
-                seed=enum.seed,
+            nvac_metals = list(getattr(enum, "nitride_nvac_metals", None) or [])
+            has_nvac = bool(nvac_metals)
+            has_stoich_grid = bool(
+                enum.metals or enum.formulas or enum.ternary_metals
             )
-            for structure, meta in pairs:
-                bulk_items.append((structure, meta, "tm_nitride"))
+            # When only N-vacancy knobs are set, skip the default binary grid
+            # (empty metals would otherwise expand to Nb/Ti/Zr/Hf).
+            if has_stoich_grid or not has_nvac:
+                pairs = enumerate_nitrides(
+                    metals=enum.metals or None,
+                    ternary_metals=enum.ternary_metals or None,
+                    x_values=enum.x_values or None,
+                    formulas=enum.formulas or None,
+                    supercell=_as_tuple3(enum.supercell),
+                    seed=enum.seed,
+                )
+                for structure, meta in pairs:
+                    bulk_items.append((structure, meta, "tm_nitride"))
+            if has_nvac:
+                # Curated ordered N-vacancy rocksalt cells (P3.5-style).
+                # Hypothesis (unverified): N deficiency may heal soft modes
+                # on stoichiometric NbN — check with DFPT; do not overclaim.
+                nvac_counts = list(getattr(enum, "nitride_nvac_counts", None) or [])
+                pairs = enumerate_n_vacancy_nitrides(
+                    metals=nvac_metals,
+                    n_vacancies=nvac_counts or None,
+                    supercell=_as_tuple3(
+                        getattr(enum, "nitride_nvac_supercell", None)
+                        or [2, 2, 2]
+                    ),
+                    include_stoichiometric=bool(
+                        getattr(enum, "nitride_nvac_include_stoichiometric", False)
+                    ),
+                    seed=enum.seed,
+                )
+                if not pairs:
+                    raise ValueError(
+                        "nitride_nvac_metals set but no N-vacancy cells were "
+                        "generated; check metals / nitride_nvac_counts"
+                    )
+                for structure, meta in pairs:
+                    bulk_items.append((structure, meta, "tm_nitride"))
         elif family == "b_doped_si":
             conc = enum.b_concentrations or [0.05, 0.10]
             pairs = enumerate_b_doped_si(

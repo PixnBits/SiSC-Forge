@@ -17,9 +17,11 @@ from siscforge.structure.nickelates import (
 from siscforge.structure.nitrides import (
     ROCKSALT_LATTICE_CONSTANTS,
     build_binary_nitride,
+    build_n_vacancy_rocksalt,
     build_rocksalt_conventional,
     build_rocksalt_primitive,
     build_ternary_nitride,
+    enumerate_n_vacancy_nitrides,
     enumerate_nitrides,
 )
 from siscforge.structure.strain import (
@@ -41,6 +43,7 @@ __all__ = [
     "build_apical_oxygen",
     "build_b_doped_si",
     "build_binary_nitride",
+    "build_n_vacancy_rocksalt",
     "build_infinite_layer",
     "build_inplane_vacancy",
     "build_mgb2",
@@ -52,6 +55,7 @@ __all__ = [
     "enumerate_nickelates",
     "mgb2_metadata",
     "enumerate_from_config",
+    "enumerate_n_vacancy_nitrides",
     "enumerate_nitrides",
     "generate_candidates",
     "lattice_mismatch_percent",
