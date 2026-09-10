@@ -184,6 +184,11 @@ def build_nscf_epw_input(
 
     EPW Wannierization requires ``K_POINTS crystal`` with ``nk1*nk2*nk3`` points
     matching ``nk1/nk2/nk3`` in ``epw.in`` (not an automatic reduced mesh).
+
+    ``nosym`` / ``noinv`` mirror :func:`build_nscf_wannier_input` so the unreduced
+    mesh matches EPW ``nk1–nk3``. On QE 7.3.1 this also avoids the
+    ``divide_class`` / ``prepare_sym_analysis`` segfault in ``epw_setup`` that
+    otherwise follows a symmetry-reduced charge density (same class as ph.x).
     """
     nkc = list(nk) if nk is not None else list(config.epw.nkc or config.kpoints)
     nkc = (list(nkc) + [4, 4, 4])[:3]
@@ -198,13 +203,15 @@ def build_nscf_epw_input(
     else:
         n_bands = max(24, nbndsub + 8)
 
+    # Mirror Wannier NSCF intent (nosym/noinv for unreduced mesh / EPW setup).
+    # Place in SYSTEM — QE expects them there (same as phonon nosym retry).
     pw = build_pw_input(
         structure,
         config,
         calculation="nscf",
         prefix=prefix,
         outdir=outdir,
-        extra_system={"nbnd": n_bands},
+        extra_system={"nbnd": n_bands, "nosym": True, "noinv": True},
     )
     return apply_crystal_kpoints(str(pw), nk1, nk2, nk3)
 

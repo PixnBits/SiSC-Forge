@@ -20,6 +20,7 @@ from siscforge.calculators.qe.epw_recipes import (
     classify_epw_failure,
     diagnose_epw_failure,
     extract_primary_failure_reason,
+    is_divide_class_sym_failure,
     is_kmesh_bvector_failure,
     is_remediable_kmesh_failure,
     load_epw_remediation_state,
@@ -29,6 +30,27 @@ from siscforge.calculators.qe.epw_recipes import (
 from siscforge.models.config import DFTConfig, EPWConfig
 from siscforge.refine import default_refine_dft
 from siscforge.structure.nitrides import build_ternary_nitride
+
+
+_DIVIDE_CLASS_SEGFAULT = """
+     Program EPW v.7.3.1
+
+     Reading Wannier90 input...
+     Using k-points from nscf
+
+Program received signal SIGSEGV: Segmentation fault - invalid memory reference.
+
+Backtrace for this error:
+#3  0x5da12bc92a92 in divide_class_
+        at /opt/qe-src/PW/src/divide_class.f90:75
+#4  0x5da12bac83d0 in prepare_sym_analysis_
+        at /opt/qe-src/PHonon/PH/prepare_sym_analysis.f90:34
+#5  0x5a933b1b9bf5 in epw_setup_
+        at /opt/qe-src/EPW/src/epw_setup.f90:159
+#6  0x5a933b16630f in epw
+        at /opt/qe-src/EPW/src/epw.f90:106
+mpirun noticed that process rank 5 exited on signal 11 (Segmentation fault).
+"""
 
 _BVECTOR_FAIL = """
      Program EPW
@@ -136,6 +158,32 @@ def test_diagnose_maps_kmesh_get_bvector() -> None:
     assert "bvector" in reason.lower() or "kmesh" in reason.lower()
     diag = diagnose_epw_failure(_BVECTOR_FAIL, work_dir="/tmp/fake", include_tail=True)
     assert "class: kmesh_bvector" in diag
+
+
+def test_diagnose_divide_class_segfault_not_kmesh() -> None:
+    """SIGSEGV in divide_class/epw_setup must not be labeled kmesh_get_bvector."""
+    assert is_divide_class_sym_failure(_DIVIDE_CLASS_SEGFAULT)
+    assert not is_kmesh_bvector_failure(_DIVIDE_CLASS_SEGFAULT)
+    assert not is_remediable_kmesh_failure(_DIVIDE_CLASS_SEGFAULT)
+    assert classify_epw_failure(_DIVIDE_CLASS_SEGFAULT) == "sym_analysis"
+    reason = extract_primary_failure_reason(_DIVIDE_CLASS_SEGFAULT, step_name="epw")
+    assert "divide_class" in reason.lower() or "sym" in reason.lower()
+    assert "kmesh" not in reason.lower()
+    assert "bvector" not in reason.lower()
+    diag = diagnose_epw_failure(
+        _DIVIDE_CLASS_SEGFAULT, work_dir="/tmp/fake", include_tail=False
+    )
+    assert "class: sym_analysis" in diag
+    assert "divide_class" in diag.lower()
+    # Contaminated message with remediation prose still stays sym_analysis
+    contaminated = (
+        _DIVIDE_CLASS_SEGFAULT
+        + "\nDo not re-run DFPT for kmesh_get_bvector — phonon is intact.\n"
+    )
+    assert classify_epw_failure(contaminated) == "sym_analysis"
+    assert not is_kmesh_bvector_failure(contaminated)
+    primary = extract_primary_failure_reason(contaminated, step_name="epw")
+    assert "kmesh" not in primary.lower()
     assert "DFPT" in diag or "nkc" in diag.lower()
 
 

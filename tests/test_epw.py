@@ -345,6 +345,66 @@ def test_build_nscf_epw_crystal_mesh() -> None:
     assert "K_POINTS crystal" in text
     assert "\n8\n" in text or text.count("0.00000000") >= 1
     assert "nbnd" in text.lower()
+    # EPW NSCF must disable symmetry (QE 7.3.1 divide_class / epw_setup)
+    low = text.lower()
+    assert "nosym" in low
+    assert "noinv" in low
+
+
+def test_build_nscf_epw_nosym_noinv() -> None:
+    """Dedicated assert: EPW nscf.in carries nosym/noinv like Wannier NSCF."""
+    from siscforge.calculators.qe.inputs import build_nscf_epw_input
+
+    s = build_binary_nitride("Nb")
+    pdir = Path("/tmp/fake_pseudo")
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "Nb.upf").touch()
+    (pdir / "N.upf").touch()
+    cfg = DFTConfig(
+        pseudo_dir=str(pdir),
+        pseudopotentials={"Nb": "Nb.upf", "N": "N.upf"},
+        epw=EPWConfig(enabled=True, nkc=[4, 4, 4]),
+    )
+    text = build_nscf_epw_input(s, cfg, prefix="t", outdir="./")
+    assert "nosym" in text.lower()
+    assert "noinv" in text.lower()
+
+
+def test_build_epw_input_emits_configured_projections() -> None:
+    """epw.wannier_projections must become proj(i) lines (not proj=random)."""
+    from siscforge.calculators.qe.epw_inputs import build_epw_input
+
+    # QE 7.3.1 EPW/examples/mgb2 projections
+    projs = "B:pz;f=0.5,1.0,0.5:s;f=0.0,0.5,0.5:s;f=0.5,0.5,0.5:s"
+    cfg = DFTConfig(
+        epw=EPWConfig(
+            enabled=True,
+            nkc=[6, 6, 6],
+            nqc=[2, 2, 2],
+            auto_nbndsub=False,
+            nbndsub=5,
+            wannier_projections=projs,
+            strict_coarse_k=True,
+        ),
+        quality_tag="screening",
+    )
+    text = build_epw_input(cfg, prefix="MgB2", structure=build_mgb2())
+    assert "proj(1)" in text and "B:pz" in text
+    assert "proj(2)" in text and "f=0.5,1.0,0.5:s" in text
+    assert "proj(3)" in text and "f=0.0,0.5,0.5:s" in text
+    assert "proj(4)" in text and "f=0.5,0.5,0.5:s" in text
+    assert "proj(1)     = 'random'" not in text
+    assert "nbndsub     = 5" in text
+
+
+def test_build_epw_input_default_proj_random() -> None:
+    from siscforge.calculators.qe.epw_inputs import build_epw_input
+
+    cfg = DFTConfig(
+        epw=EPWConfig(enabled=True, nkc=[6, 6, 6], strict_coarse_k=True),
+    )
+    text = build_epw_input(cfg, prefix="t")
+    assert "proj(1)     = 'random'" in text
 
 
 def test_isotropic_eliashberg_factor() -> None:
