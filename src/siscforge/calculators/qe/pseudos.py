@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pymatgen.core import Structure
@@ -23,6 +24,15 @@ _PREFERENCE_TOKENS: list[tuple[str, int]] = [
     ("efficiency", 0),
     ("precision", 2),
 ]
+
+# pslibrary / SSSP config token, e.g. pbe-n-kjpaw, pbe-spn-kjpaw, pbe-dn-rrkjus.
+# The bare ``-n-`` would otherwise look like element N to infix matching.
+_PSLIBRARY_CONFIG_RE = re.compile(
+    r"(?:pbe|pbesol|pz|pw91|blyp)-(?:nlcc|spn|dn|n)-",
+    re.IGNORECASE,
+)
+# GBRV scalar-relativistic flag: b_pbe_v1.4.uspp.F.UPF must not look like fluorine.
+_GBRV_F_SUFFIX_RE = re.compile(r"\.f\.upf$", re.IGNORECASE)
 
 
 class PseudoResolutionError(FileNotFoundError):
@@ -48,6 +58,14 @@ def list_upf_files(pseudo_dir: str | Path) -> list[Path]:
     return files
 
 
+def _species_haystack(name: str) -> str:
+    """Filename with non-species tokens stripped so infix match is safe."""
+    s = name.lower()
+    s = _PSLIBRARY_CONFIG_RE.sub("", s)
+    s = _GBRV_F_SUFFIX_RE.sub(".upf", s)
+    return s
+
+
 def _score_upf(name: str, element: str) -> tuple[int, int, str]:
     """Sort key: lower is better."""
     lower = name.lower()
@@ -57,11 +75,12 @@ def _score_upf(name: str, element: str) -> tuple[int, int, str]:
     starts_with_el = lower.startswith(el) and (
         len(lower) == len(el) or not lower[len(el)].isalpha()
     )
+    hay = _species_haystack(name)
     if not (
         starts_with_el
-        or f"_{el}_" in lower
-        or f".{el}." in lower
-        or f"-{el}-" in lower
+        or f"_{el}_" in hay
+        or f".{el}." in hay
+        or f"-{el}-" in hay
     ):
         return (999, 999, name)
 
