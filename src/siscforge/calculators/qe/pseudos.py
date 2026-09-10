@@ -52,11 +52,13 @@ def _score_upf(name: str, element: str) -> tuple[int, int, str]:
     """Sort key: lower is better."""
     lower = name.lower()
     el = element.lower()
-    # Must look related to element
+    # Must look related to element. Require a non-letter boundary after the
+    # symbol so short names (e.g. B) do not match longer ones (Ba.*.UPF).
+    starts_with_el = lower.startswith(el) and (
+        len(lower) == len(el) or not lower[len(el)].isalpha()
+    )
     if not (
-        lower.startswith(el)
-        or lower.startswith(f"{el}_")
-        or lower.startswith(f"{el}.")
+        starts_with_el
         or f"_{el}_" in lower
         or f".{el}." in lower
         or f"-{el}-" in lower

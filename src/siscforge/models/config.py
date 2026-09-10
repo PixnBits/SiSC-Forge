@@ -1140,6 +1140,13 @@ class DFTConfig(BaseModel):
     do_phonon: bool = True
     phonon_retry_on_d_matrix: bool = True
     phonon_retry_on_fft_symmetry: bool = True
+    ph_search_sym: bool = True
+    """If False, ph.x gets ``search_sym = .false.`` (skip mode-symmetry analysis).
+
+    Default True preserves stock QE behavior. Set False for cells that segfault
+    in ``divide_class`` / ``prepare_sym_analysis`` (observed on MgB₂ with some
+    PAW/USPP mixes under QE 7.3.1).
+    """
     do_epw: bool = False
     epw: EPWConfig = Field(default_factory=EPWConfig)
     # --- P3.1 DFT+U (disabled by default; inert for conventional campaigns) ---
