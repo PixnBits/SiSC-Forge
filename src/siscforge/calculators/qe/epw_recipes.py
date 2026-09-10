@@ -52,6 +52,7 @@ EPWFailureClass = Literal[
     "fermi",
     "d_matrix",
     "sym_analysis",
+    "sym_mismatch",
     "soft_modes",
     "other",
 ]
@@ -402,6 +403,26 @@ _EPW_ONLY_NEEDLES: frozenset[str] = frozenset(
 # Common EPW / Wannier failure fingerprints → (short CLI label, remediation)
 # Order matters: more specific patterns first.
 _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
+    # nosym-NSCF vs symmetry-DFPT mismatch (after Wannier) — not nbndsub
+    (
+        "gmap_sym",
+        "EPW: gmap_sym / nosym-NSCF vs symmetry-DFPT mismatch",
+        "elphon_shuffle_wrap→gmap_sym (rotate.f90) after nosym NSCF on "
+        "symmetry-aware DFPT. Enable dft.nosym (pipeline-wide SCF+PH+NSCF "
+        "nosym/noinv; ph.x search_sym forced off). Do NOT raise nbndsub.",
+    ),
+    (
+        "free(): invalid pointer",
+        "EPW: free(): invalid pointer (often gmap_sym symmetry mismatch)",
+        "After Wannier, usually nosym electronic vs symmetrized DFPT. Set "
+        "dft.nosym: true (and keep EPW NSCF nosym). Not an nbndsub issue.",
+    ),
+    (
+        "elphon_shuffle_wrap",
+        "EPW: elphon_shuffle_wrap abort (symmetry map / gmap_sym)",
+        "Phonon↔electronic symmetry mismatch. Enable pipeline-wide dft.nosym "
+        "so SCF+DFPT match nosym NSCF. Do not bump nbndsub.",
+    ),
     # Symmetry-analysis crashes (QE 7.3.1) MUST beat broad k-mesh / k-point needles:
     # segfault backtraces list k-points earlier in epw.out and used to be labeled
     # kmesh_get_bvector via boilerplate / "k-point" substring matches.
@@ -410,8 +431,9 @@ _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
         "EPW: divide_class / prepare_sym_analysis segfault (QE symmetry)",
         "QE 7.3.1 bug in epw_setup→prepare_sym_analysis→divide_class (same class "
         "as ph.x). Remediations: EPW NSCF with nosym=.true./noinv=.true. (SiSC-Forge "
-        "default for EPW NSCF); for DFPT use dft.ph_search_sym=false. Do NOT raise "
-        "nkc — this is not kmesh_get_bvector.",
+        "default for EPW NSCF); for DFPT use dft.ph_search_sym=false. Prefer "
+        "dft.nosym for pipeline-wide consistency. Do NOT raise nkc — this is not "
+        "kmesh_get_bvector.",
     ),
     (
         "prepare_sym_analysis",
@@ -612,6 +634,8 @@ def is_kmesh_bvector_failure(text: str | None) -> bool:
         return False
     if is_divide_class_sym_failure(text):
         return False
+    if is_gmap_sym_mismatch_failure(text):
+        return False
     blob = text.lower()
     return (
         "kmesh_get_bvector" in blob
@@ -637,6 +661,31 @@ def is_divide_class_sym_failure(text: str | None) -> bool:
         or "signal 11" in blob
         or "rc=139" in blob
         or "returncode=139" in blob
+    ):
+        return True
+    return False
+
+
+def is_gmap_sym_mismatch_failure(text: str | None) -> bool:
+    """True if EPW aborted in gmap_sym after nosym NSCF vs symmetry DFPT.
+
+    Typical: Wannier OK, then ``Symmetries of crystal: N`` + ``free(): invalid
+    pointer`` in ``rotate.f90`` / ``elphon_shuffle_wrap``. Not nbndsub.
+    """
+    if not text:
+        return False
+    blob = text.lower()
+    if "gmap_sym" in blob:
+        return True
+    if "elphon_shuffle" in blob and (
+        "invalid pointer" in blob or "rotate.f90" in blob
+    ):
+        return True
+    if "rotate.f90" in blob and "invalid pointer" in blob:
+        return True
+    # glibc abort after crystal-symmetry banner post-Wannier (no backtrace yet)
+    if "free(): invalid pointer" in blob and (
+        "symmetries of crystal" in blob or "elphon_shuffle" in blob
     ):
         return True
     return False
@@ -770,6 +819,8 @@ def classify_epw_failure(text: str | None) -> EPWFailureClass:
     """
     if is_divide_class_sym_failure(text):
         return "sym_analysis"
+    if is_gmap_sym_mismatch_failure(text):
+        return "sym_mismatch"
     if is_kmesh_bvector_failure(text):
         return "kmesh_bvector"
     # Phonon setup before EPW k-grid checks (ph.out often mentions k-points)
@@ -927,6 +978,11 @@ def extract_primary_failure_reason(
             "(nosym NSCF / ph_search_sym)"
         )
         return msg[:max_len] + ("…" if len(msg) > max_len else "")
+    if is_gmap_sym_mismatch_failure(text):
+        msg = (
+            "EPW: gmap_sym mismatch (enable dft.nosym; not nbndsub)"
+        )
+        return msg[:max_len] + ("…" if len(msg) > max_len else "")
     if is_wrong_niter_ph(text):
         msg = "phonon: phq_readin — Wrong niter_ph (use QE ≥ 7.2 / QE_BIN)"
         return msg[:max_len] + ("…" if len(msg) > max_len else "")
@@ -1052,10 +1108,17 @@ def diagnose_epw_failure(
             "  · remediation: invalidate/rebuild NSCF at current nkc then epw "
             "(phonon kept). No manual rm of nscf.out required."
         )
-    parts.append(
-        "  · screening: enable auto_nbndsub (default) and "
-        "wannier_retry_on_froz_overflow; raise epw.nbndsub if retry fails."
-    )
+    if cls == "sym_mismatch":
+        parts.append(
+            "  · remediation: set dft.nosym: true so SCF + PH + EPW NSCF share "
+            "nosym/noinv (ph.x: search_sym forced off). Do NOT raise nbndsub. "
+            "Re-run SCF+DFPT+NSCF+EPW — phonon from symmetry SCF is incompatible."
+        )
+    if cls not in {"sym_mismatch", "sym_analysis"}:
+        parts.append(
+            "  · screening: enable auto_nbndsub (default) and "
+            "wannier_retry_on_froz_overflow; raise epw.nbndsub if retry fails."
+        )
     parts.append(
         "  · denser grids: raise epw.nkf/nqf and dft.qpoints (nqc must match DFPT)."
     )
@@ -2558,8 +2621,17 @@ def run_relax_scf_phonon_epw(
                 "Human next step: EPW hit QE divide_class/prepare_sym_analysis "
                 "(epw_setup segfault). Ensure EPW NSCF uses nosym=.true./"
                 "noinv=.true. (SiSC-Forge default); for DFPT set "
-                "dft.ph_search_sym=false. Do NOT raise nkc — this is not a "
+                "dft.ph_search_sym=false. Prefer dft.nosym for pipeline-wide "
+                "consistency. Do NOT raise nkc — this is not a "
                 "Wannier b-vector failure. Phonon/DFPT may already be intact."
+            )
+        elif fail_cls == "sym_mismatch" or is_gmap_sym_mismatch_failure(step_msg):
+            next_step = (
+                "Human next step: EPW gmap_sym / free(): invalid pointer after "
+                "Wannier — nosym NSCF vs symmetrized DFPT mismatch. Set "
+                "dft.nosym: true (SCF+PH+NSCF nosym/noinv; ph search_sym off) "
+                "and re-run from SCF. Do NOT raise nbndsub. Do not keep "
+                "EPW-only nosym NSCF on symmetry-DFPT."
             )
         elif is_kmesh_bvector_failure(step_msg):
             next_step = (

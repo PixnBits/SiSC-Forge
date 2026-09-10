@@ -504,6 +504,15 @@ class EPWConfig(BaseModel):
             "blocked fingerprint. Default False — override must be explicit."
         ),
     )
+    nscf_nosym: bool | None = Field(
+        default=None,
+        description=(
+            "EPW NSCF nosym/noinv. None (default) → True (QE 7.3.1 divide_class "
+            "guard from #89). Set False to opt out. Pair with dft.nosym for "
+            "pipeline-wide nosym so DFPT and nosym NSCF do not mismatch "
+            "(gmap_sym / free(): invalid pointer)."
+        ),
+    )
 
 
 class DFTUConfig(BaseModel):
@@ -1168,6 +1177,17 @@ class DFTConfig(BaseModel):
     in ``divide_class`` / ``prepare_sym_analysis`` (observed on MgB₂ with some
     PAW/USPP mixes under QE 7.3.1).
     """
+    nosym: bool = Field(
+        default=False,
+        description=(
+            "Pipeline-wide nosym: pw.x SCF (and other pw builds) get "
+            "nosym=.true./noinv=.true.; ph.x forces search_sym=.false. "
+            "(ph.x has no nosym namelist). Use with EPW NSCF nosym so "
+            "electronic and DFPT symmetries match — avoids EPW "
+            "elphon_shuffle_wrap→gmap_sym free(): invalid pointer after "
+            "nosym-only NSCF on symmetry-DFPT (MgB₂ golden)."
+        ),
+    )
     do_epw: bool = False
     epw: EPWConfig = Field(default_factory=EPWConfig)
     # --- P3.1 DFT+U (disabled by default; inert for conventional campaigns) ---

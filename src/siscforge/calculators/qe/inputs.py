@@ -12,6 +12,29 @@ from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import DFTConfig
 
 
+def effective_epw_nscf_nosym(config: DFTConfig) -> bool:
+    """Whether EPW NSCF should emit ``nosym`` / ``noinv``.
+
+    ``epw.nscf_nosym`` False is an explicit opt-out. None / True keep the
+    #89 default (nosym on) so divide_class/epw_setup stays guarded.
+    """
+    flag = getattr(config.epw, "nscf_nosym", None)
+    if flag is False:
+        return False
+    return True
+
+
+def effective_ph_search_sym(config: DFTConfig) -> bool:
+    """ph.x ``search_sym`` after applying pipeline ``dft.nosym``.
+
+    ``dft.nosym`` forces ``search_sym=.false.`` (ph.x has no nosym namelist;
+    crystal symmetries follow the nosym SCF save).
+    """
+    if bool(getattr(config, "nosym", False)):
+        return False
+    return bool(getattr(config, "ph_search_sym", True))
+
+
 def candidate_to_structure(candidate: StructureCandidate) -> Structure:
     """Rebuild a pymatgen Structure from CIF or lattice metadata."""
     if candidate.structure_cif:
@@ -81,6 +104,10 @@ def build_pw_input(
         n_at = len(structure)
         # ~8 bands/atom for metals with empties; floor 24 for 2-atom cells
         system["nbnd"] = max(24, min(120, 8 * n_at))
+    # Pipeline-wide nosym (SCF/relax/nscf via build_pw_input). extra_system wins.
+    if bool(getattr(config, "nosym", False)):
+        system.setdefault("nosym", True)
+        system.setdefault("noinv", True)
     if extra_system:
         system.update(extra_system)
 
@@ -187,8 +214,12 @@ def build_nscf_epw_input(
 
     ``nosym`` / ``noinv`` mirror :func:`build_nscf_wannier_input` so the unreduced
     mesh matches EPW ``nk1–nk3``. On QE 7.3.1 this also avoids the
-    ``divide_class`` / ``prepare_sym_analysis`` segfault in ``epw_setup`` that
-    otherwise follows a symmetry-reduced charge density (same class as ph.x).
+    ``divide_class`` / ``prepare_sym_analysis`` segfault in ``epw_setup``.
+
+    Default on (``epw.nscf_nosym`` None/True). Opt out with ``epw.nscf_nosym:
+    false``. For MgB₂-class goldens also set ``dft.nosym`` so SCF+DFPT match;
+    nosym-only NSCF on symmetry-DFPT triggers ``gmap_sym`` /
+    ``free(): invalid pointer`` after Wannier.
     """
     nkc = list(nk) if nk is not None else list(config.epw.nkc or config.kpoints)
     nkc = (list(nkc) + [4, 4, 4])[:3]
@@ -203,15 +234,22 @@ def build_nscf_epw_input(
     else:
         n_bands = max(24, nbndsub + 8)
 
-    # Mirror Wannier NSCF intent (nosym/noinv for unreduced mesh / EPW setup).
-    # Place in SYSTEM — QE expects them there (same as phonon nosym retry).
+    # SYSTEM nosym/noinv — epw.nscf_nosym (default on); False opts out even if
+    # dft.nosym (must clear build_pw_input setdefault).
+    extra: dict[str, Any] = {"nbnd": n_bands}
+    if effective_epw_nscf_nosym(config):
+        extra["nosym"] = True
+        extra["noinv"] = True
+    elif bool(getattr(config, "nosym", False)):
+        extra["nosym"] = False
+        extra["noinv"] = False
     pw = build_pw_input(
         structure,
         config,
         calculation="nscf",
         prefix=prefix,
         outdir=outdir,
-        extra_system={"nbnd": n_bands, "nosym": True, "noinv": True},
+        extra_system=extra,
     )
     return apply_crystal_kpoints(str(pw), nk1, nk2, nk3)
 
