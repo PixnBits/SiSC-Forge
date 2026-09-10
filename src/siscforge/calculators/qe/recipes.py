@@ -456,6 +456,7 @@ def run_ph(
         nmix_ph=config.ph_nmix,
         niter_ph=config.ph_niter,
         recover=recover,
+        search_sym=bool(getattr(config, "ph_search_sym", True)),
     )
     in_path = work_dir / "ph.in"
     out_path = work_dir / "ph.out"

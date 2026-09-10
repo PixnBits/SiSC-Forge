@@ -295,6 +295,7 @@ def build_ph_input(
     nmix_ph: int = 8,
     niter_ph: int = 100,
     recover: bool = False,
+    search_sym: bool = True,
 ) -> str:
     """Return a minimal ``ph.x`` input deck as a string.
 
@@ -324,6 +325,8 @@ def build_ph_input(
     ]
     if recover:
         lines.append("  recover = .true.")
+    if not search_sym:
+        lines.append("  search_sym = .false.")
     if fildvscf:
         lines.append(f"  fildvscf = '{fildvscf}'")
     if ldisp:

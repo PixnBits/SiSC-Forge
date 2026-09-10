@@ -641,6 +641,15 @@ def test_build_ph_input_recover_flag() -> None:
     assert "recover" not in text_off
 
 
+def test_build_ph_input_search_sym_flag() -> None:
+    from siscforge.calculators.qe.inputs import build_ph_input
+
+    text_default = build_ph_input(prefix="s")
+    assert "search_sym" not in text_default
+    text_off = build_ph_input(prefix="s", search_sym=False)
+    assert "search_sym = .false." in text_off
+
+
 def test_nscf_in_crystal_mesh_parse() -> None:
     """K_POINTS crystal N is preferred requested-mesh fingerprint."""
     text = "K_POINTS crystal\n216\n  0.0 0.0 0.0 1.0\n"
