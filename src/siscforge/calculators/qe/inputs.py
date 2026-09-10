@@ -11,6 +11,113 @@ from pymatgen.io.pwscf import PWInput
 from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import DFTConfig
 
+from siscforge.models.config import DFTConfig
+
+# QE 7.3.1 Modules/constants.f90 — BOHR_RADIUS_ANGS (CODATA).
+# celldm(1) must use the same Bohr that pw.x uses internally.
+QE_BOHR_RADIUS_ANGS: float = 0.529177210903
+
+
+def is_hexagonal_ibrav4(structure: Structure, *, tol: float = 1.0e-3) -> bool:
+    """True when *structure* matches QE ``ibrav=4`` (hexagonal P) metrics.
+
+    Requires a ≈ b, α ≈ β ≈ 90°, γ ≈ 120°. MgB₂ / AlB₂-type cells take this
+    path so pw.x gets celldm rather than ibrav=0 + CELL_PARAMETERS (matches
+    upstream EPW ``examples/mgb2``).
+    """
+    a, b, _c = (float(x) for x in structure.lattice.abc)
+    alpha, beta, gamma = (float(x) for x in structure.lattice.angles)
+    if a <= 0.0 or b <= 0.0:
+        return False
+    if abs(a - b) / max(a, b) > tol:
+        return False
+    # Angle tolerance in degrees (tol=1e-3 → 0.1°)
+    ang_tol = max(0.1, tol * 100.0)
+    if abs(alpha - 90.0) > ang_tol or abs(beta - 90.0) > ang_tol:
+        return False
+    if abs(gamma - 120.0) > ang_tol:
+        return False
+    return True
+
+
+def hexagonal_celldm(structure: Structure) -> tuple[float, float]:
+    """Return ``(celldm(1), celldm(3))`` for QE ``ibrav=4``.
+
+    ``celldm(1)`` = a / a₀ (alat in Bohr); ``celldm(3)`` = c/a.
+    """
+    if not is_hexagonal_ibrav4(structure):
+        raise ValueError(
+            "hexagonal_celldm requires an ibrav=4-compatible hexagonal cell "
+            f"(a≈b, α≈β≈90°, γ≈120°); got abc={structure.lattice.abc}, "
+            f"angles={structure.lattice.angles}"
+        )
+    a, _b, c = (float(x) for x in structure.lattice.abc)
+    return a / QE_BOHR_RADIUS_ANGS, c / a
+
+
+def resolve_ibrav_system(
+    structure: Structure,
+    config: DFTConfig,
+) -> dict[str, Any]:
+    """SYSTEM keys for ibrav / celldm, or ``{}`` for the generic path.
+
+    Default (``dft.ibrav`` is None): hexagonal → ``ibrav=4`` + celldm;
+    others stay on pymatgen's ibrav=0 + CELL_PARAMETERS. Set ``dft.ibrav=0``
+    to force CELL_PARAMETERS even for hexagonal MgB₂ (escape hatch).
+    """
+    ibrav_cfg = getattr(config, "ibrav", None)
+    if ibrav_cfg is not None and int(ibrav_cfg) == 0:
+        return {}
+    if ibrav_cfg is not None and int(ibrav_cfg) != 4:
+        raise ValueError(
+            f"dft.ibrav={ibrav_cfg!r} is not supported; use None (auto), 0 "
+            "(force CELL_PARAMETERS), or 4 (hexagonal celldm)."
+        )
+    want_hex = ibrav_cfg is None or int(ibrav_cfg) == 4
+    if not want_hex or not is_hexagonal_ibrav4(structure):
+        if ibrav_cfg is not None and int(ibrav_cfg) == 4:
+            raise ValueError(
+                "dft.ibrav=4 requires a hexagonal ibrav=4-compatible cell; "
+                f"got abc={structure.lattice.abc}, angles={structure.lattice.angles}"
+            )
+        return {}
+    celldm1, celldm3 = hexagonal_celldm(structure)
+    return {
+        "ibrav": 4,
+        "celldm(1)": celldm1,
+        "celldm(3)": celldm3,
+    }
+
+
+def strip_cell_parameters(text: str) -> str:
+    """Remove a ``CELL_PARAMETERS`` card (required when ibrav != 0)."""
+    import re
+
+    pattern = (
+        r"\n?CELL_PARAMETERS[^\n]*\n"
+        r"(?:[ \t]*[^\n]+\n){2}"
+        r"[ \t]*[^\n]+\n?"
+    )
+    cleaned, _n = re.subn(pattern, "\n", text, count=1, flags=re.IGNORECASE)
+    return cleaned.rstrip() + "\n" if cleaned.strip() else cleaned
+
+
+def pw_input_to_text(pw_input: PWInput) -> str:
+    """Serialize ``PWInput``; drop CELL_PARAMETERS when ``ibrav`` != 0.
+
+    pymatgen always appends ``CELL_PARAMETERS angstrom``; QE hexagonal
+    (ibrav=4) inputs must not include that card (upstream mgb2 layout).
+    """
+    text = str(pw_input)
+    system = pw_input.sections.get("system", {}) or {}
+    try:
+        ibrav_i = int(system.get("ibrav", 0))
+    except (TypeError, ValueError):
+        ibrav_i = 0
+    if ibrav_i != 0:
+        text = strip_cell_parameters(text)
+    return text if text.endswith("\n") else text + "\n"
+
 
 def effective_epw_nscf_nosym(config: DFTConfig) -> bool:
     """Whether EPW NSCF should emit ``nosym`` / ``noinv``.
@@ -93,6 +200,10 @@ def build_pw_input(
         "smearing": config.smearing,
         "degauss": config.degauss,
     }
+    # Hexagonal MgB₂ / AlB₂-type: ibrav=4 + celldm (QE EPW/examples/mgb2).
+    # Generic cells keep ibrav=0 + CELL_PARAMETERS via pw_input_to_text.
+    # extra_system may override; dft.ibrav=0 forces the generic path.
+    system.update(resolve_ibrav_system(structure, config))
     # Empty bands: DFPT Sternheimer / EPW Wannier need states above E_F.
     # QE default for 18 e⁻ metals is often only ~13 bands → "too few bands".
     # Ternary supercells (e.g. 8-atom NbTiN) need more than binary NbN defaults.
@@ -145,7 +256,7 @@ def write_pw_input(pw_input: PWInput, path: Path | str) -> Path:
     """Write a PWInput to disk; return the path."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(str(pw_input), encoding="utf-8")
+    path.write_text(pw_input_to_text(pw_input), encoding="utf-8")
     return path
 
 
@@ -253,7 +364,7 @@ def build_nscf_epw_input(
         outdir=outdir,
         extra_system=extra,
     )
-    return apply_crystal_kpoints(str(pw), nk1, nk2, nk3)
+    return apply_crystal_kpoints(pw_input_to_text(pw), nk1, nk2, nk3)
 
 
 def build_nscf_wannier_input(
@@ -316,7 +427,7 @@ def build_nscf_wannier_input(
         extra_system=extra_system,
         extra_control=extra_control,
     )
-    text = apply_crystal_kpoints(str(pw), nk1, nk2, nk3)
+    text = apply_crystal_kpoints(pw_input_to_text(pw), nk1, nk2, nk3)
     if include_hubbard and hubbard_dialect == "card":
         from siscforge.calculators.qe.dftu import append_hubbard_card
 
