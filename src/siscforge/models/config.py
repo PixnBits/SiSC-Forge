@@ -1196,6 +1196,16 @@ class DFTConfig(BaseModel):
             "nosym-only NSCF on symmetry-DFPT (MgB₂ golden)."
         ),
     )
+    ibrav: int | None = Field(
+        default=None,
+        description=(
+            "pw.x ibrav. None (default): auto — hexagonal cells matching QE "
+            "ibrav=4 emit celldm(1)/celldm(3) (MgB₂ / AlB₂-type, upstream "
+            "EPW/examples/mgb2 layout); other cells stay ibrav=0 + "
+            "CELL_PARAMETERS. Set 0 to force CELL_PARAMETERS even for "
+            "hexagonal cells (escape hatch). Set 4 to require hexagonal."
+        ),
+    )
     do_epw: bool = False
     epw: EPWConfig = Field(default_factory=EPWConfig)
     # --- P3.1 DFT+U (disabled by default; inert for conventional campaigns) ---

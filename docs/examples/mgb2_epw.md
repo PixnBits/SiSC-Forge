@@ -115,6 +115,19 @@ Default `pytest` never requires EPW binaries.
 - Module: `siscforge.structure.mgb2.build_mgb2`
 - Cell: 3-atom hexagonal AlB₂-type (P6/mmm), a = 3.086 Å, c = 3.524 Å
 - Enumerated via `material_families: [mgb2_boride]`
+- pw.x `&SYSTEM`: **`ibrav=4`** with `celldm(1)` / `celldm(3)` derived from
+  the lattice (alat in Bohr, c/a) — same layout as QE
+  `EPW/examples/mgb2`. Generic / non-hexagonal cells keep `ibrav=0` +
+  `CELL_PARAMETERS`; set `dft.ibrav: 0` to force that escape hatch on MgB₂.
+
+## Golden status (phonon vs EPW)
+
+| Path | Status |
+|------|--------|
+| Phonon (USPP, screening) | **Accepted** — real frequencies (ω > 0) on the workstation golden |
+| EPW on QE 7.3.1 | Was **blocked on the symmetry path** while SiSC emitted `ibrav=0` + `CELL_PARAMETERS` (fork vs upstream `EPW/examples/mgb2`). This tree now emits `ibrav=4` + celldm — re-probe with `nosym=false` / `B:pz` (`divide_class`) before relying on nosym / `gmap_sym` remediation |
+
+Prefer a symmetry-on probe after the ibrav fix; keep nosym remediation as fallback only.
 
 ## QE example control grids
 

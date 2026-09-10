@@ -350,7 +350,9 @@ def run_pw(
         from siscforge.calculators.qe.dftu import append_hubbard_card
         from siscforge.calculators.qe.inputs import write_pw_text
 
-        text = append_hubbard_card(str(pw_in), structure, dft.dftu)
+        from siscforge.calculators.qe.inputs import pw_input_to_text
+
+        text = append_hubbard_card(pw_input_to_text(pw_in), structure, dft.dftu)
         write_pw_text(text, in_path)
     else:
         # namelist dialect (default) or non-Hubbard: write PWInput as-is
