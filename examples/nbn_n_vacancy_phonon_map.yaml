@@ -1,0 +1,136 @@
+# Ordered N-vacancy NbN / ZrN phonon map (minimal diversity bet)
+#
+# Context: stoichiometric δ-NbN stayed deeply imaginary at dense k/q
+# (Slice 29.5 / #74). Stoichiometric Nb–Zr–Ti–N maps came back soft.
+# Experimental superconducting NbN is typically N-deficient.
+#
+# Hypothesis (unverified — comment only): ordered N vacancies (MN₁₋δ)
+# may heal optical soft modes on Nb mixes. This campaign is a DFPT
+# screening check. Do NOT claim healing until soft-mode numbers say so.
+# Do not launch EPW on imaginary-mode cells.
+#
+# Structure set (curated, not combinatorial — mirrors P3.5 O-vacancy style):
+#   2×2×2 of the *primitive* rocksalt cell → 8 formula units
+#   δ = 1/8 (Nb₈N₇ / Zr₈N₇) and δ = 2/8 (Nb₈N₆ / Zr₈N₆)
+#   Stoichiometric NbN omitted (already soft at denser k/q; not a gate).
+#   Optional same-cell stoich control: nitride_nvac_include_stoichiometric true.
+#
+# Shape matches nbti_n_phonon_map / nbzr_ti_n_phonon_map: phonon-only,
+# screening q=2³, do_epw false. k=8³ floor (16-atom cells; not small-binary 12³).
+#
+# Dry-run:
+#   siscforge run --dry-run examples/nbn_n_vacancy_phonon_map.yaml
+#
+# Real map:
+#   siscforge run --calculator qe examples/nbn_n_vacancy_phonon_map.yaml
+#
+# After:
+#   siscforge rank outputs/nbn_n_vacancy_phonon_map --stable-first
+#   siscforge soft-modes outputs/nbn_n_vacancy_phonon_map
+#   siscforge shortlist outputs/nbn_n_vacancy_phonon_map \
+#     -o examples/nbn_n_vacancy_phonon_map_epw.yaml --mode stable_only
+#   # If none stable: do not launch EPW.
+
+name: nbn_n_vacancy_phonon_map
+description: >
+  Minimal ordered N-vacancy rocksalt phonon map (NbN₁₋δ / ZrN₁₋δ) at
+  k=8³ / q=2³ / ecut=60. Curated 2×2×2 primitive supercells with 1–2 N
+  vacancies (δ=1/8, 2/8). Phonon-only. Soft-mode healing is a hypothesis
+  to verify, not a claim.
+version: "0.1"
+dry_run: false
+
+enumeration:
+  material_families:
+    - tm_nitride
+  # Vacancy-only: leave metals/formulas empty so the default binary grid
+  # does not fire alongside the curated N-vacancy set.
+  metals: []
+  formulas: []
+  ternary_metals: []
+  x_values: []
+  nitride_nvac_metals:
+    - Nb
+    - Zr
+  # δ = n_vac / 8 for a 2×2×2 primitive supercell
+  nitride_nvac_counts:
+    - 1
+    - 2
+  nitride_nvac_supercell: [2, 2, 2]
+  # Stoich NbN already measured denser (Slice 29.5); leave false.
+  nitride_nvac_include_stoichiometric: false
+  substrates:
+    - Si(001)
+  strain_values:
+    - 0.0
+    - -0.02
+  poisson_ratio: 0.25
+  seed: 42
+  max_candidates: 8
+  epitaxy_orientation: auto
+  use_buffers: true
+
+calculators:
+  - name: qe
+
+formation_filter:
+  enabled: true
+  max_e_hull_eV_per_atom: 0.30
+  max_strain_magnitude: 0.06
+
+surrogate:
+  tc_lambda:
+    enabled: false
+
+active_learning:
+  enabled: false
+
+dft:
+  engine: qe
+  # REQUIRED for real runs — directory of *.upf files
+  pseudo_dir: /usr/share/espresso/pseudo
+  ecutwfc: 60.0
+  ecutrho: 480.0
+  # 16-atom supercells → policy floor (not prefer-12³ small binary)
+  kpoints: [8, 8, 8]
+  # Screening q. Do not turn this into refine-tier 4³.
+  qpoints: [2, 2, 2]
+  conv_thr: 1.0e-8
+  occupations: smearing
+  smearing: mv
+  degauss: 0.02
+  # 8 formula units need empty bands for DFPT (scale above 8-atom ternaries)
+  nbnd: 96
+  do_relax: true
+  do_phonon: true
+  phonon_retry_on_d_matrix: true
+  do_epw: false
+  epw:
+    enabled: false
+  phonon_method: dfpt
+  tr2_ph: 1.0e-10
+  ph_alpha_mix: 0.1
+  ph_nmix: 12
+  ph_niter: 150
+  quality_tag: screening
+  nproc: 8
+
+ranking:
+  performance_weight: 0.35
+  si_feasibility_weight: 0.65
+  prefer_dynamically_stable: true
+  prefer_low_hull: true
+
+run:
+  resume: true
+  continue_on_error: true
+  force_rerun: false
+  resume_qe_steps: true
+  heartbeat_seconds: 900
+  estimate_walltime: true
+
+output_dir: outputs/nbn_n_vacancy_phonon_map
+export_formats:
+  - json
+  - csv
+  - markdown

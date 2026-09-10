@@ -342,3 +342,334 @@ def _structure_from_formula(
             "supercell": list(supercell),
         }
     raise ValueError(f"Only binary/ternary nitrides supported, got {formula!r}")
+
+
+# ---------------------------------------------------------------------------
+# Ordered N-vacancy rocksalt supercells (screening — not defect thermodynamics)
+# ---------------------------------------------------------------------------
+#
+# Hypothesis (unverified): ideal stoichiometric δ-NbN is often reported as
+# harmonically soft; experimental superconducting NbN is typically N-deficient.
+# Ordered N vacancies in a small rocksalt supercell *may* heal optical soft
+# modes on Nb mixes — treat that as a screening hypothesis to check with DFPT,
+# not as an established result. Do not claim healing from structure generation
+# alone. Mirrors the P3.5 nickelate O-vacancy style: curated, symmetry-reduced
+# representatives — not a combinatorial vacancy engine.
+
+PATTERN_STOICHIOMETRIC_SC = "stoichiometric_sc"
+PATTERN_N_VAC_1 = "n_vac_1"
+PATTERN_N_VAC_2 = "n_vac_2"
+
+DEFAULT_NVAC_METALS: tuple[str, ...] = ("Nb", "Zr")
+DEFAULT_NVAC_COUNTS: tuple[int, ...] = (1, 2)
+DEFAULT_NVAC_SUPERCELL: tuple[int, int, int] = (2, 2, 2)
+
+_NVAC_PATTERN_ALIASES: dict[str, str] = {
+    "stoichiometric_sc": PATTERN_STOICHIOMETRIC_SC,
+    "stoichiometric": PATTERN_STOICHIOMETRIC_SC,
+    "parent": PATTERN_STOICHIOMETRIC_SC,
+    "n_vac_1": PATTERN_N_VAC_1,
+    "nvac_1": PATTERN_N_VAC_1,
+    "single_vacancy": PATTERN_N_VAC_1,
+    "n_vacancy": PATTERN_N_VAC_1,
+    "n_vac_2": PATTERN_N_VAC_2,
+    "nvac_2": PATTERN_N_VAC_2,
+    "double_vacancy": PATTERN_N_VAC_2,
+}
+
+
+def normalize_nvac_metal(symbol: str) -> str:
+    """Return a rocksalt nitride metal with a known lattice constant."""
+    key = (symbol or "").strip()
+    key = key[:1].upper() + key[1:].lower() if key else key
+    if key not in ROCKSALT_LATTICE_CONSTANTS:
+        raise ValueError(
+            f"Unsupported metal {symbol!r} for nitride N-vacancy cells. "
+            f"Known: {sorted(ROCKSALT_LATTICE_CONSTANTS)}"
+        )
+    return key
+
+
+def nvac_count_to_pattern(n_vacancies: int) -> str:
+    """Map a vacancy count onto a canonical pattern id."""
+    n = int(n_vacancies)
+    if n < 0:
+        raise ValueError(f"n_vacancies must be ≥ 0, got {n}")
+    if n == 0:
+        return PATTERN_STOICHIOMETRIC_SC
+    if n == 1:
+        return PATTERN_N_VAC_1
+    if n == 2:
+        return PATTERN_N_VAC_2
+    return f"n_vac_{n}"
+
+
+def normalize_nvac_pattern(name: str) -> str:
+    """Map a user/alias pattern name onto a canonical N-vacancy pattern id."""
+    key = (name or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if key in _NVAC_PATTERN_ALIASES:
+        return _NVAC_PATTERN_ALIASES[key]
+    if key.startswith("n_vac_"):
+        try:
+            return nvac_count_to_pattern(int(key.split("_")[-1]))
+        except ValueError as exc:
+            raise ValueError(f"Unknown nitride N-vacancy pattern {name!r}") from exc
+    raise ValueError(
+        f"Unknown nitride N-vacancy pattern {name!r}. "
+        f"Known: {list(_NVAC_PATTERN_ALIASES)}"
+    )
+
+
+def nvac_pattern_to_count(pattern: str) -> int:
+    """Vacancy count encoded by a canonical pattern id."""
+    pat = normalize_nvac_pattern(pattern)
+    if pat == PATTERN_STOICHIOMETRIC_SC:
+        return 0
+    if pat.startswith("n_vac_"):
+        return int(pat.split("_")[-1])
+    raise ValueError(f"Unhandled N-vacancy pattern {pat!r}")
+
+
+def nvac_structure_key(
+    metal: str,
+    n_vacancies: int,
+    supercell: tuple[int, int, int] = DEFAULT_NVAC_SUPERCELL,
+) -> str:
+    """Stable identity for (metal, vacancy count, supercell) triples."""
+    sc = (int(supercell[0]), int(supercell[1]), int(supercell[2]))
+    return f"nitride_nvac:{metal}:{nvac_count_to_pattern(n_vacancies)}:{sc[0]}x{sc[1]}x{sc[2]}"
+
+
+def _nitrogen_site_indices(structure: Structure) -> list[int]:
+    return [i for i, site in enumerate(structure) if site.specie.symbol == "N"]
+
+
+def _pick_unique_site(structure: Structure, indices: list[int]) -> int:
+    """Deterministic representative: lowest rounded (x, y, z), then index."""
+    if not indices:
+        raise ValueError("no candidate sites to pick")
+
+    def _key(i: int) -> tuple[float, float, float, int]:
+        x, y, z = (round(float(v) % 1.0, 6) for v in structure[i].frac_coords)
+        return (x, y, z, i)
+
+    return min(indices, key=_key)
+
+
+def _ordered_vacancy_indices(
+    structure: Structure,
+    n_vacancies: int,
+    nitrogen_indices: list[int] | None = None,
+) -> list[int]:
+    """Symmetry-reduced ordered N sites to remove (not a combinatorial search).
+
+    * One vacancy: all N sites are equivalent in parent rocksalt → one rep.
+    * Two+ vacancies: greedily add the site that maximises the minimum
+      Cartesian distance to already chosen vacancies (deterministic tie-break).
+    """
+    n_vac = int(n_vacancies)
+    if n_vac < 0:
+        raise ValueError(f"n_vacancies must be ≥ 0, got {n_vac}")
+    n_idx = list(nitrogen_indices) if nitrogen_indices is not None else _nitrogen_site_indices(structure)
+    if n_vac > len(n_idx):
+        raise ValueError(
+            f"Cannot remove {n_vac} N sites from a cell with only {len(n_idx)} N atoms"
+        )
+    if n_vac == 0:
+        return []
+    chosen = [_pick_unique_site(structure, n_idx)]
+    remaining = [i for i in n_idx if i not in chosen]
+    while len(chosen) < n_vac:
+        def _score(i: int) -> tuple[float, float, float, float, int]:
+            # Maximise min distance to chosen; then prefer low frac coords.
+            dists = [float(structure[i].distance(structure[j])) for j in chosen]
+            min_d = min(dists) if dists else 0.0
+            x, y, z = (round(float(v) % 1.0, 6) for v in structure[i].frac_coords)
+            return (-min_d, x, y, z, i)
+
+        nxt = min(remaining, key=_score)
+        chosen.append(nxt)
+        remaining.remove(nxt)
+    return chosen
+
+
+def build_n_vacancy_rocksalt(
+    metal: str,
+    n_vacancies: int = 1,
+    *,
+    supercell: tuple[int, int, int] = DEFAULT_NVAC_SUPERCELL,
+    a: float | None = None,
+) -> Structure:
+    """Ordered N-deficient rocksalt MN₁₋δ from a primitive-cell supercell.
+
+    Expands the 2-atom primitive rocksalt cell by *supercell*, then removes
+    *n_vacancies* nitrogen sites with a deterministic ordered pattern.
+    Default ``(2, 2, 2)`` → 8 formula units (16 sites before vacancy).
+
+    Parameters
+    ----------
+    metal:
+        Transition-metal species (Nb, Zr, …).
+    n_vacancies:
+        Number of N atoms to remove (0 = stoichiometric supercell control).
+    supercell:
+        Expansion of the **primitive** rocksalt cell (not the conventional 8-atom).
+    """
+    m = normalize_nvac_metal(metal)
+    sc = (int(supercell[0]), int(supercell[1]), int(supercell[2]))
+    if any(n < 1 for n in sc):
+        raise ValueError(f"supercell components must be ≥ 1, got {sc!r}")
+    base = build_rocksalt_primitive(m, a=a)
+    structure = base * sc
+    remove = _ordered_vacancy_indices(structure, int(n_vacancies))
+    if remove:
+        structure.remove_sites(remove)
+    return structure.get_sorted_structure()
+
+
+def build_nitride_nvac_pattern(
+    metal: str,
+    pattern: str | int = PATTERN_N_VAC_1,
+    *,
+    supercell: tuple[int, int, int] = DEFAULT_NVAC_SUPERCELL,
+) -> tuple[Structure, dict[str, Any]]:
+    """Build one (structure, metadata) pair for an N-vacancy screening pattern.
+
+    *pattern* may be a canonical / alias name or an integer vacancy count.
+    """
+    m = normalize_nvac_metal(metal)
+    sc = (int(supercell[0]), int(supercell[1]), int(supercell[2]))
+    if isinstance(pattern, int):
+        n_vac = int(pattern)
+        pat = nvac_count_to_pattern(n_vac)
+    else:
+        pat = normalize_nvac_pattern(str(pattern))
+        n_vac = nvac_pattern_to_count(pat)
+
+    parent = build_rocksalt_primitive(m) * sc
+    n_parent = int(parent.composition["N"])
+    s = build_n_vacancy_rocksalt(m, n_vacancies=n_vac, supercell=sc)
+    n_n = int(s.composition["N"])
+    n_m = int(s.composition[m])
+    delta = float(n_vac) / float(n_parent) if n_parent else 0.0
+    # Hypothesis note kept in metadata for operators / exports — not a claim.
+    hypothesis = (
+        "Hypothesis only: N deficiency may heal optical soft modes seen on "
+        "ideal stoichiometric δ-NbN / Nb-rich mixes. Verify with DFPT; do not "
+        "overclaim from enumeration."
+    )
+    meta: dict[str, Any] = {
+        "formula": s.composition.reduced_formula,
+        "kind": "n_vacancy" if n_vac else "binary_supercell",
+        "material_family": "tm_nitride",
+        "prototype": "rocksalt",
+        "metals": [m],
+        "metal": m,
+        "vacancy_pattern": pat,
+        "pattern_class": "nitrogen_vacancy" if n_vac else "stoichiometric",
+        "n_vacancies": n_vac,
+        "n_nitrogen": n_n,
+        "n_nitrogen_parent": n_parent,
+        "n_metal": n_m,
+        "vacancy_fraction": delta,
+        "delta": delta,
+        "supercell": list(sc),
+        "structure_key": nvac_structure_key(m, n_vac, sc),
+        "conventional_lattice_a": rocksalt_lattice_constant(m),
+        "screening_only": True,
+        "hypothesis_soft_mode_healing": hypothesis,
+        "notes": (
+            f"Ordered {n_vac} N vacancy(ies) in a {sc[0]}x{sc[1]}x{sc[2]} "
+            f"primitive rocksalt supercell (MN₁₋δ, δ={delta:g}). "
+            "Curated screening cell — not defect formation energies. "
+            + hypothesis
+        ),
+    }
+    return s, meta
+
+
+def structure_from_nitride_nvac_metadata(
+    *,
+    metal: str | None = None,
+    formula: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    supercell: tuple[int, int, int] = DEFAULT_NVAC_SUPERCELL,
+) -> tuple[Structure, dict[str, Any]]:
+    """Rebuild an N-vacancy screening cell from metadata / shortlist fields."""
+    meta_in = dict(metadata or {})
+    m = meta_in.get("metal") or metal
+    if not m and formula:
+        from pymatgen.core import Composition
+
+        comp = Composition(formula)
+        metals = [el.symbol for el in comp.elements if el.symbol != "N"]
+        if len(metals) != 1:
+            raise ValueError(
+                f"N-vacancy rebuild needs exactly one metal in formula/metadata; "
+                f"got {formula!r}"
+            )
+        m = metals[0]
+    if not m:
+        raise ValueError("N-vacancy rebuild requires metal or formula")
+    if meta_in.get("vacancy_pattern"):
+        pattern: str | int = str(meta_in["vacancy_pattern"])
+    elif meta_in.get("n_vacancies") is not None:
+        pattern = int(meta_in["n_vacancies"])
+    else:
+        pattern = PATTERN_N_VAC_1
+    sc = meta_in.get("supercell") or list(supercell)
+    sc_t = (int(sc[0]), int(sc[1]), int(sc[2]))
+    return build_nitride_nvac_pattern(str(m), pattern, supercell=sc_t)
+
+
+def enumerate_n_vacancy_nitrides(
+    *,
+    metals: list[str] | None = None,
+    n_vacancies: list[int] | None = None,
+    patterns: list[str] | None = None,
+    supercell: tuple[int, int, int] = DEFAULT_NVAC_SUPERCELL,
+    include_stoichiometric: bool = False,
+    seed: int = 42,  # noqa: ARG001 — ordered patterns only
+) -> list[tuple[Structure, dict[str, Any]]]:
+    """Enumerate a tiny curated set of ordered N-vacancy rocksalt cells.
+
+    Default: Nb + Zr × {1, 2} vacancies in a 2×2×2 primitive supercell
+    (δ = 1/8 and 2/8). Optionally include the stoichiometric supercell
+    control (``include_stoichiometric`` or an explicit 0 / stoichiometric
+    pattern). *seed* is accepted for API parity and unused.
+    """
+    del seed
+    metals_use = [normalize_nvac_metal(m) for m in (metals or list(DEFAULT_NVAC_METALS))]
+    sc = (int(supercell[0]), int(supercell[1]), int(supercell[2]))
+
+    counts: list[int] = []
+    if patterns:
+        for name in patterns:
+            counts.append(nvac_pattern_to_count(name))
+    elif n_vacancies is not None:
+        counts = [int(n) for n in n_vacancies]
+    else:
+        counts = list(DEFAULT_NVAC_COUNTS)
+    if include_stoichiometric and 0 not in counts:
+        counts = [0, *counts]
+
+    # De-dupe while preserving order
+    seen_c: set[int] = set()
+    counts_u: list[int] = []
+    for c in counts:
+        if c in seen_c:
+            continue
+        seen_c.add(c)
+        counts_u.append(c)
+
+    results: list[tuple[Structure, dict[str, Any]]] = []
+    seen_keys: set[str] = set()
+    for m in metals_use:
+        for n_vac in counts_u:
+            structure, meta = build_nitride_nvac_pattern(m, n_vac, supercell=sc)
+            key = str(meta["structure_key"])
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            results.append((structure, meta))
+    return results
