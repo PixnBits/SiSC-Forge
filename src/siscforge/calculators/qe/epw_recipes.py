@@ -51,6 +51,7 @@ EPWFailureClass = Literal[
     "missing_files",
     "fermi",
     "d_matrix",
+    "sym_analysis",
     "soft_modes",
     "other",
 ]
@@ -385,19 +386,39 @@ _EPW_ONLY_NEEDLES: frozenset[str] = frozenset(
         "efermig",
         "error in routine dafopen",
         "k-grid",
-        "k-point",
+        "k-points do not match",
+        "k-point mesh",
         "error reading xml",
         "reading xml file",
         "number of processes must be equal",
         "number of pools and number of images",
         "nbndsub",
         "wannier",
+        "divide_class",
+        "prepare_sym_analysis",
     }
 )
 
 # Common EPW / Wannier failure fingerprints → (short CLI label, remediation)
 # Order matters: more specific patterns first.
 _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
+    # Symmetry-analysis crashes (QE 7.3.1) MUST beat broad k-mesh / k-point needles:
+    # segfault backtraces list k-points earlier in epw.out and used to be labeled
+    # kmesh_get_bvector via boilerplate / "k-point" substring matches.
+    (
+        "divide_class",
+        "EPW: divide_class / prepare_sym_analysis segfault (QE symmetry)",
+        "QE 7.3.1 bug in epw_setup→prepare_sym_analysis→divide_class (same class "
+        "as ph.x). Remediations: EPW NSCF with nosym=.true./noinv=.true. (SiSC-Forge "
+        "default for EPW NSCF); for DFPT use dft.ph_search_sym=false. Do NOT raise "
+        "nkc — this is not kmesh_get_bvector.",
+    ),
+    (
+        "prepare_sym_analysis",
+        "EPW: prepare_sym_analysis segfault (QE symmetry)",
+        "Symmetry-analysis crash in epw_setup. Use nosym/noinv on EPW NSCF and/or "
+        "ph_search_sym=.false. for phonon. Raising nkc will not fix.",
+    ),
     (
         "kmesh_get_bvector",
         "EPW Wannier: kmesh_get_bvector — not enough bvectors (coarse k / shells)",
@@ -524,7 +545,12 @@ _EPW_FAILURE_HINTS: list[tuple[str, str, str]] = [
         "SiSC-Forge invalidates stale NSCF when nkc changes and retries EPW-only.",
     ),
     (
-        "k-point",
+        "k-points do not match",
+        "EPW: k-grid inconsistency",
+        "nscf crystal mesh must match epw nk1–nk3 (nkc).",
+    ),
+    (
+        "k-point mesh",
         "EPW: k-grid inconsistency",
         "nscf crystal mesh must match epw nk1–nk3 (nkc).",
     ),
@@ -576,8 +602,15 @@ def is_frozen_window_overflow(text: str | None) -> bool:
 
 
 def is_kmesh_bvector_failure(text: str | None) -> bool:
-    """True if Wannier90 failed with kmesh_get_bvector / not enough bvectors."""
+    """True if Wannier90 failed with kmesh_get_bvector / not enough bvectors.
+
+    Returns False when the blob is a ``divide_class`` / ``prepare_sym_analysis``
+    segfault — those strings can appear alongside stale remediation prose that
+    mentions ``kmesh_get_bvector``.
+    """
     if not text:
+        return False
+    if is_divide_class_sym_failure(text):
         return False
     blob = text.lower()
     return (
@@ -585,6 +618,28 @@ def is_kmesh_bvector_failure(text: str | None) -> bool:
         or "not enough bvectors" in blob
         or ("bvector" in blob and "not enough" in blob)
     )
+
+
+def is_divide_class_sym_failure(text: str | None) -> bool:
+    """True if EPW/QE segfaulted in divide_class / prepare_sym_analysis / epw_setup.
+
+    QE 7.3.1 symmetry-analysis crash — must not be labeled ``kmesh_get_bvector``.
+    """
+    if not text:
+        return False
+    blob = text.lower()
+    if "divide_class" in blob or "prepare_sym_analysis" in blob:
+        return True
+    # epw_setup alone is common in healthy logs; require crash signal nearby
+    if "epw_setup" in blob and (
+        "segmentation" in blob
+        or "sigsegv" in blob
+        or "signal 11" in blob
+        or "rc=139" in blob
+        or "returncode=139" in blob
+    ):
+        return True
+    return False
 
 
 def is_kgrid_inconsistency(text: str | None) -> bool:
@@ -711,7 +766,10 @@ def classify_epw_failure(text: str | None) -> EPWFailureClass:
 
     Phonon-only setup classes (phq_setup / d_matrix) are returned as
     ``d_matrix`` or ``other`` — never as ``kgrid_inconsistency``.
+    Symmetry-analysis segfaults (``divide_class``) win over k-mesh needles.
     """
+    if is_divide_class_sym_failure(text):
+        return "sym_analysis"
     if is_kmesh_bvector_failure(text):
         return "kmesh_bvector"
     # Phonon setup before EPW k-grid checks (ph.out often mentions k-points)
@@ -863,6 +921,12 @@ def extract_primary_failure_reason(
     phonon_step = _step_is_phonon(step_name)
 
     # Explicit high-signal classes first (order independent of substring tables)
+    if is_divide_class_sym_failure(text):
+        msg = (
+            "EPW: divide_class / prepare_sym_analysis segfault "
+            "(nosym NSCF / ph_search_sym)"
+        )
+        return msg[:max_len] + ("…" if len(msg) > max_len else "")
     if is_wrong_niter_ph(text):
         msg = "phonon: phq_readin — Wrong niter_ph (use QE ≥ 7.2 / QE_BIN)"
         return msg[:max_len] + ("…" if len(msg) > max_len else "")
@@ -2488,13 +2552,16 @@ def run_relax_scf_phonon_epw(
     else:
         result.success = False
         primary = extract_primary_failure_reason(step_msg, step_name="epw")
-        next_step = (
-            "Human next step: raise epw.nkc further (e.g. 12³), check NSCF k "
-            "matches nk1–3, or set material-specific Wannier projections. "
-            "Do not re-run DFPT for kmesh_get_bvector — phonon is intact. "
-            "Use --force-rerun only if you intentionally want a full redo."
-        )
-        if is_kmesh_bvector_failure(step_msg):
+        fail_cls = classify_epw_failure(step_msg)
+        if fail_cls == "sym_analysis" or is_divide_class_sym_failure(step_msg):
+            next_step = (
+                "Human next step: EPW hit QE divide_class/prepare_sym_analysis "
+                "(epw_setup segfault). Ensure EPW NSCF uses nosym=.true./"
+                "noinv=.true. (SiSC-Forge default); for DFPT set "
+                "dft.ph_search_sym=false. Do NOT raise nkc — this is not a "
+                "Wannier b-vector failure. Phonon/DFPT may already be intact."
+            )
+        elif is_kmesh_bvector_failure(step_msg):
             next_step = (
                 "Human next step: automatic EPW remediation exhausted "
                 "(Phase A coarse k 6→8→12 and Phase B search_shells 36→48). "
@@ -2505,6 +2572,13 @@ def run_relax_scf_phonon_epw(
                 "Do not --force-rerun solely to re-try EPW — that redos DFPT. "
                 "Resume without --force-rerun reuses phonon; further auto "
                 "retries will not loop once the remediation sidecar is full."
+            )
+        else:
+            next_step = (
+                "Human next step: inspect epw.out primary class; check NSCF k "
+                "matches nk1–3, Wannier projections / nbndsub, or QE version. "
+                "Do not re-run DFPT unless the phonon step itself failed. "
+                "Use --force-rerun only if you intentionally want a full redo."
             )
         result.message = (
             f"EPW failed or did not converge (quality_tag={config.quality_tag}):\n"

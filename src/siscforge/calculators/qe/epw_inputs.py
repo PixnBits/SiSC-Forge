@@ -604,6 +604,40 @@ def apply_coarse_k_to_config(
     )
 
 
+
+def parse_wannier_projection_specs(raw: str | None) -> list[str]:
+    """Split ``epw.wannier_projections`` into EPW ``proj(i)`` strings.
+
+    Accepts ``;`` / newline / ``|`` separators. Empty / ``random`` → ``[]``
+    (caller emits ``proj(1)='random'``). Does not invent orbitals — only
+    forwards operator-configured specs (e.g. QE MgB₂ example::
+
+        B:pz;f=0.5,1.0,0.5:s;f=0.0,0.5,0.5:s;f=0.5,0.5,0.5:s
+    ).
+    """
+    if raw is None:
+        return []
+    s = str(raw).strip()
+    if not s or s.lower() in {"random", "none", "-"}:
+        return []
+    parts: list[str] = []
+    normalized = s.replace("|", ";")
+    for chunk in normalized.splitlines():
+        for piece in chunk.split(";"):
+            p = piece.strip().strip("'\"").strip()
+            if p and p.lower() != "random":
+                parts.append(p)
+    return parts
+
+
+def epw_proj_namelist_lines(raw: str | None) -> list[str]:
+    """Return ``proj(i) = '...'`` lines for ``&inputepw`` (always ≥1 line)."""
+    specs = parse_wannier_projection_specs(raw)
+    if not specs:
+        return ["  proj(1)     = 'random'"]
+    return [f"  proj({i})     = '{spec}'" for i, spec in enumerate(specs, start=1)]
+
+
 def build_epw_input(
     config: DFTConfig,
     *,
@@ -665,7 +699,11 @@ def build_epw_input(
         f"! Coarse k/q (nkc/nqc) = {nkc} / {nqc}  (nqc should match DFPT q-grid)",
         f"! nbndsub={nbndsub} (auto_nbndsub={auto_nbnd}; dft.nbnd={config.nbnd})",
         f"! {ss_note} (Phase B remediation may raise via wdata)",
-        "! Screening: proj=random + tight frozen window; production needs hand projs.",
+        (
+            "! Screening: proj=random + tight frozen window; production needs hand projs."
+            if not parse_wannier_projection_specs(getattr(epw, "wannier_projections", None))
+            else "! Wannier projections from epw.wannier_projections (not random)."
+        ),
         "! Coarse k auto-bump for Wannier safety; DFPT nq never redone on k-mesh fail.",
         "! Raise nkf/nqf/qpoints for denser grids (recommended_grids / docs).",
         "!",
@@ -698,12 +736,13 @@ def build_epw_input(
     lines.extend(
         wannier_window_lines(fermi_eV, screening_tight_froz=screening_tight)
     )
+    proj_raw = getattr(epw, "wannier_projections", None)
+    proj_lines = epw_proj_namelist_lines(proj_raw)
+    lines.extend(proj_lines)
     lines.extend(
         [
-            "  proj(1)     = 'random'",
             "",
             "  iverbosity  = 2",
-            # Note for quality layer: screening template uses random projs
             "",
             "  elecselfen  = .false.",
             "  phonselfen  = .true.",

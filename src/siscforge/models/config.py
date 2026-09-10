@@ -489,9 +489,11 @@ class EPWConfig(BaseModel):
     wannier_projections: str | None = Field(
         default=None,
         description=(
-            "Operator-set Wannier projection label. None = screening "
-            "proj=random. Changing this (or nqc / qpoints) lifts a "
-            "remediation-exhaustion re-EPW block (#49)."
+            "Wannier projection specs for EPW ``proj(i)`` lines. None / empty / "
+            "'random' → screening ``proj(1)='random'``. Otherwise split on "
+            "';' / newlines (e.g. QE MgB₂: "
+            "'B:pz;f=0.5,1.0,0.5:s;f=0.0,0.5,0.5:s;f=0.5,0.5,0.5:s'). "
+            "Also used as the remediation-exhaustion fingerprint (#49)."
         ),
     )
     allow_retry_exhausted: bool = Field(
