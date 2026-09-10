@@ -106,14 +106,24 @@ RUN set -eux; \
 RUN make -j"$(nproc)" pw ph pp epw \
     && ls -la bin/pw.x bin/ph.x bin/pp.x bin/epw.x
 
-# Stage install: copy real binaries (resolve symlinks into PW/PHonon/EPW trees)
+# Stage install: copy real binaries (resolve symlinks into PW/PHonon/EPW trees).
+# Also install EPW's Python preprocessor pp.py (NOT QE's pp.x post-processing binary).
+# Locator expects QE_BIN/pp.py next to epw.x for MgB2/NbN EPW prep.
 RUN mkdir -p /opt/qe/bin \
     && for x in pw.x ph.x pp.x epw.x; do \
          if [ -e "bin/$x" ]; then cp -L "bin/$x" "/opt/qe/bin/$x"; fi; \
        done \
+    && if [ -f EPW/bin/pp.py ]; then \
+         cp -f EPW/bin/pp.py /opt/qe/bin/pp.py; \
+       elif [ -f bin/pp.py ]; then \
+         cp -L bin/pp.py /opt/qe/bin/pp.py; \
+       else \
+         echo "ERROR: EPW pp.py not found under EPW/bin or bin/"; exit 1; \
+       fi \
     && chmod 755 /opt/qe/bin/* \
     && /opt/qe/bin/pw.x -v 2>&1 | head -5 || true \
     && test -x /opt/qe/bin/wannier90.x \
+    && test -f /opt/qe/bin/pp.py \
     && ls -la /opt/qe/bin
 
 # ---------------------------------------------------------------------------
@@ -180,6 +190,7 @@ RUN python3 -m venv /opt/siscforge-venv \
     && /opt/siscforge-venv/bin/pip install -e ".[dev,qe,phonopy]" \
     && /opt/siscforge-venv/bin/siscforge --version \
     && which pw.x ph.x epw.x wannier90.x \
+    && test -f /opt/qe/bin/pp.py \
     && which siscforge
 
 # Lightweight verification script (also used by docker/BUILD.md)

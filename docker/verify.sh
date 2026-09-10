@@ -31,6 +31,14 @@ for b in pw.x ph.x epw.x wannier90.x siscforge; do
   fi
 done
 
+# EPW Python preprocessor (distinct from QE pp.x)
+if [ -f "${QE_BIN:-/opt/qe/bin}/pp.py" ]; then
+  echo "OK: EPW pp.py present at ${QE_BIN:-/opt/qe/bin}/pp.py"
+else
+  echo "FAIL: EPW pp.py not found at ${QE_BIN:-/opt/qe/bin}/pp.py"
+  fail=1
+fi
+
 # Ensure private QE wins over any system packages
 if command -v pw.x >/dev/null 2>&1; then
   pw_path="$(command -v pw.x)"
