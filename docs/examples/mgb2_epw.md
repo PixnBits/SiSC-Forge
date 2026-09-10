@@ -50,6 +50,54 @@ Aliases: `--calculator epw` → `qe-epw`.
 
 If `epw.x` is missing, the CLI exits with `QENotAvailableError` (no silent mock).
 
+### Preferred golden path (ibrav=4 + sym NSCF)
+
+After #92 SiSC-Forge emits hexagonal MgB₂ as **`ibrav=4` + celldm**
+(same layout as QE `EPW/examples/mgb2`). The validated workstation
+path keeps crystal symmetry on SCF/PH and opts EPW NSCF out of the
+#89 nosym default:
+
+```yaml
+dft:
+  # nosym / ph_search_sym omitted → defaults false / true (symmetry on)
+  do_relax: false
+  epw:
+    nscf_nosym: false   # sym NSCF matching SCF/PH (upstream path)
+```
+
+Live store campaign **`mgb2_epw_validation_ibrav4_nscf_sym`**: λ≈0.46,
+Tc≈7.5 K on screening grids (isotropic average; grids may undershoot
+literature Tc).
+
+Documented goldens: `examples/mgb2_epw.yaml` and
+`examples/mgb2_epw_validation.yaml` (SSSP Mg/B pins, Wannier
+projections from the QE MgB₂ example on the validation file). Prefer a
+**consistent SSSP PBE efficiency pair** — do not mix PAW Mg with USPP B.
+
+### Fallback: divide_class / gmap_sym
+
+Hexagonal MgB₂ (and some other cells) can still segfault in
+`divide_class` / `prepare_sym_analysis` during `ph.x` mode-symmetry
+analysis, or later in EPW `epw_setup` / `gmap_sym`. QE's `search_sym`
+flag only classifies mode irreps — disabling it does **not** change
+the q-grid or skip physical perturbations, so dyn + dvscf for EPW stay
+valid.
+
+**Preferred remediation (not the golden default):**
+
+1. `dft.phonon_retry_on_search_sym` (default **true**) — one automatic
+   `ph.x` retry with `search_sym=.false.` on `divide_class` / 
+   `prepare_sym_analysis` (no SCF redo).
+2. Explicit `dft.ph_search_sym: false` if you want search_sym off from
+   the first ph.x.
+3. Pipeline `dft.nosym: true` (SCF+PH+NSCF) if divide_class / gmap_sym
+   still hit after ibrav=4 + sym NSCF.
+4. If EPW dies in `gmap_sym` with nosym already on, try `nproc=1` /
+   `epw.npool=1`.
+
+These are **fallback** knobs — do not set `dft.nosym: true` on the
+documented golden unless the sym path fails on your workstation.
+
 ### Screening grids in the example
 
 | Step | Setting |
@@ -124,25 +172,23 @@ Default `pytest` never requires EPW binaries.
 
 | Path | Status |
 |------|--------|
-| Phonon (USPP, screening) | **Accepted** — real frequencies (ω > 0) on the workstation golden |
-| EPW on QE 7.3.1 | Was **blocked on the symmetry path** while SiSC emitted `ibrav=0` + `CELL_PARAMETERS` (fork vs upstream `EPW/examples/mgb2`). This tree now emits `ibrav=4` + celldm — re-probe with `nosym=false` / `B:pz` (`divide_class`) before relying on nosym / `gmap_sym` remediation |
-
-Prefer a symmetry-on probe after the ibrav fix; keep nosym remediation as fallback only.
+| Phonon (USPP / SSSP, screening) | **Accepted** — real frequencies (ω > 0) on the workstation golden |
+| EPW on QE 7.3.1 | **Accepted on preferred path** — `ibrav=4` + `epw.nscf_nosym: false` (sym NSCF). Live campaign `mgb2_epw_validation_ibrav4_nscf_sym`: λ≈0.46, Tc≈7.5 K. Earlier block was `ibrav=0` + CELL_PARAMETERS vs upstream; nosym / `gmap_sym` remediation remains **fallback only** |
 
 ## QE example control grids
 
 Sibling YAML ``examples/mgb2_epw_validation_qe_control.yaml`` mirrors
 QE 7.3.1 ``EPW/examples/mgb2`` coarse/fine intent (`nk = nq = 6`,
-`mp_mesh_k = .true.`, fine ~20³) while keeping SiSC-Forge
-``dft.nosym`` from #90. It does **not** replace
-``examples/mgb2_epw_validation.yaml`` (screening golden).
+`mp_mesh_k = .true.`, fine ~20³) and keeps SiSC-Forge ``dft.nosym`` as
+a **fallback / gmap_sym bisect** sibling. It does **not** replace
+``examples/mgb2_epw_validation.yaml`` (screening golden:
+`ibrav=4` + `epw.nscf_nosym: false`).
 
-After pipeline nosym, if EPW still dies in ``gmap_sym`` /
-``free(): invalid pointer`` (`rotate.f90`) with
-``Symmetries of crystal: 24`` printed, try ``nproc=1`` /
+If EPW still dies in ``gmap_sym`` / ``free(): invalid pointer``
+(`rotate.f90`) with ``Symmetries of crystal: 24`` printed after the
+sym-NSCF golden, try the control YAML or ``nproc=1`` /
 ``epw.npool=1`` — ops have seen this under ``npool>1`` (possible
-QE 7.3.1 heap corruption; not an nbndsub issue). Diagnostics suggest
-that path when ``dft.nosym`` is already on.
+QE 7.3.1 heap corruption; not an nbndsub issue).
 
 ## Limitations
 

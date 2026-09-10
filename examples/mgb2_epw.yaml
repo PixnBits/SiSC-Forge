@@ -1,5 +1,9 @@
 # Bulk MgB₂ EPW + isotropic Tc (Phase 1 golden)
 #
+# Preferred path (validated): ibrav=4 hexagonal (auto from #92) + symmetry-on
+# SCF/PH + EPW NSCF via epw.nscf_nosym: false. Live store campaign
+# mgb2_epw_validation_ibrav4_nscf_sym → λ≈0.46, Tc≈7.5 K (screening grids).
+#
 # Dry-run (mock e-ph moments, no QE/EPW):
 #   siscforge run --dry-run examples/mgb2_epw.yaml
 #
@@ -42,6 +46,11 @@ dft:
   # Experimental lattice is stable; skip expensive vc-relax for the golden dry path
   do_relax: false
   do_phonon: true
+  # Golden: keep crystal symmetry (default nosym=false, ph_search_sym=true).
+  # Hexagonal MgB2 uses ibrav=4 + celldm (#92). If ph.x still hits divide_class /
+  # prepare_sym_analysis, phonon_retry_on_search_sym (default true) retries once
+  # with search_sym=.false. — do not require pipeline dft.nosym for the golden.
+  # Fallback only: dft.nosym / ph_search_sym: false / gmap_sym remediation.
   do_epw: true
   phonon_method: dfpt
   # Empty bands for B-p / Wannier (screening)
@@ -53,10 +62,18 @@ dft:
   degauss: 0.02
   # Label only — denser grids: docs/examples/mgb2_epw.md "Tightening grids"
   quality_tag: screening
-  # Override on your machine (SSSP or similar for Mg, B)
+  # SSSP PBE efficiency names (PAW). Override if your pseudo_dir differs.
+  # Do not mix PAW + USPP on this cell — that mix was implicated in the
+  # QE 7.3.1 divide_class crash. Explicit pins also survive a dirty pseudo_dir.
   pseudo_dir: /usr/share/espresso/pseudo
+  pseudopotentials:
+    Mg: Mg.pbe-n-kjpaw_psl.0.3.0.UPF
+    B: B.pbe-n-kjpaw_psl.0.1.UPF
   epw:
     enabled: true
+    # Sym NSCF matching SCF/PH (upstream EPW/examples/mgb2). Default None/True
+    # would force nosym NSCF (#89) and can trip gmap_sym after Wannier.
+    nscf_nosym: false
     # Screening; workstation denser: nkf/nqf [16,16,12], nqc/qpoints [4,4,2]
     nkf: [8, 8, 6]
     nqf: [8, 8, 6]

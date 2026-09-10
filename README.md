@@ -158,7 +158,8 @@ Real QE/EPW: see [docs/SETUP.md](docs/SETUP.md) (Tiers B–C).
 | `examples/nbn_si_45deg.yaml` | Si-feasibility v0.2 (45° / buffers) |
 | `examples/nbn_epw.yaml` | NbN EPW golden |
 | `examples/nbn_phonon_qe.yaml` | NbN phonon (real QE) |
-| `examples/mgb2_epw.yaml` | MgB₂ EPW golden |
+| `examples/mgb2_epw.yaml` | MgB₂ EPW golden (`ibrav=4` + `epw.nscf_nosym: false`) |
+| `examples/mgb2_epw_validation.yaml` | MgB₂ workstation validation (explicit SSSP Mg/B, Wannier projs) |
 | `examples/mgb2_epw_skeleton.yaml` | **Compat alias** → prefer `mgb2_epw.yaml` |
 | `examples/dummy_campaign.yaml` | Minimal CLI smoke |
 | `examples/ndnio2_dftu_mock.yaml` | P3.1 DFT+U mock (nickelate) |

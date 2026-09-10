@@ -704,8 +704,8 @@ as d_matrix), and no fake dynamical stability from setup failures.
 |------|----------|
 | Fingerprints | `is_phq_setup_fft_symmetry_failure`, `is_phq_setup_failure` |
 | Step-aware primary | `extract_primary_failure_reason(..., step_name="phonon")` skips EPW-only needles |
-| Retry | `_maybe_retry_phonon_setup` (d_matrix + FFT/symmetry) |
-| Config | `dft.phonon_retry_on_fft_symmetry` (default true) |
+| Retry | `_maybe_retry_phonon_setup` (d_matrix + FFT/symmetry + search_sym/divide_class) |
+| Config | `dft.phonon_retry_on_fft_symmetry` (default true); `dft.phonon_retry_on_search_sym` (default true, ph.x only) |
 | Stability safety | failed / empty phonon → `dynamically_stable=False`; shortlist ignores |
 | Tests | `tests/test_phonon_failure.py`, fixture `ph_fft_symmetry_error.out` |
 
@@ -725,6 +725,7 @@ fft_symmetry retry: phonon still failed after nosym SCF (setup failure — not a
 dft:
   phonon_retry_on_fft_symmetry: false
   phonon_retry_on_d_matrix: false   # independent knob
+  phonon_retry_on_search_sym: false  # divide_class → search_sym=.false. retry
 ```
 
 ### Resume failed candidates only
