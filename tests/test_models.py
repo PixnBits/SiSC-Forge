@@ -171,10 +171,11 @@ def test_nbn_k12_diag_example_loads() -> None:
     assert nbn.dft.do_epw is zrn.dft.do_epw
 
 
-def test_mgb2_epw_yaml_wires_ph_search_sym() -> None:
-    """Documented golden + validation YAML parse ph_search_sym into ph.x decks."""
+def test_mgb2_epw_yaml_wires_sym_nscf_golden() -> None:
+    """Documented golden + validation YAML: ibrav=4 path, sym NSCF, no pipeline nosym."""
     from siscforge.calculators.qe.inputs import (
         build_ph_input,
+        effective_epw_nscf_nosym,
         effective_ph_search_sym,
     )
 
@@ -183,21 +184,27 @@ def test_mgb2_epw_yaml_wires_ph_search_sym() -> None:
     validation = CampaignConfig.from_yaml(
         root / "examples" / "mgb2_epw_validation.yaml"
     )
-    assert golden.dft.ph_search_sym is False
-    assert golden.dft.nosym is True
+    # Preferred golden: symmetry on + epw.nscf_nosym: false (not dft.nosym)
+    assert golden.dft.nosym is False
+    assert golden.dft.ph_search_sym is True
+    assert golden.dft.epw.nscf_nosym is False
+    assert effective_epw_nscf_nosym(golden.dft) is False
     assert golden.dft.do_relax is False
     assert golden.dft.pseudopotentials["B"].startswith("B.")
     assert golden.dft.pseudopotentials["Mg"].startswith("Mg.")
-    assert effective_ph_search_sym(golden.dft) is False
+    assert effective_ph_search_sym(golden.dft) is True
     deck = build_ph_input(
         prefix="s", search_sym=effective_ph_search_sym(golden.dft)
     )
-    assert "search_sym = .false." in deck
+    assert "search_sym = .false." not in deck
 
-    assert validation.dft.ph_search_sym is False
-    assert validation.dft.nosym is True
+    assert validation.dft.nosym is False
+    assert validation.dft.ph_search_sym is True
+    assert validation.dft.epw.nscf_nosym is False
+    assert effective_epw_nscf_nosym(validation.dft) is False
     assert validation.dft.do_relax is False
     assert validation.dft.pseudopotentials["B"].startswith("B.")
     assert "uspp" not in validation.dft.pseudopotentials["B"].lower()
-    assert effective_ph_search_sym(validation.dft) is False
+    assert effective_ph_search_sym(validation.dft) is True
+    assert validation.dft.epw.wannier_projections
 

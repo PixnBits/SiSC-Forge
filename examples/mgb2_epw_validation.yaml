@@ -1,5 +1,9 @@
 # Bulk MgB₂ EPW + isotropic Tc (Phase 1 workstation validation)
 #
+# Preferred golden: ibrav=4 (#92 auto hex) + epw.nscf_nosym: false (sym NSCF
+# matching SCF/PH). Live campaign mgb2_epw_validation_ibrav4_nscf_sym →
+# λ≈0.46, Tc≈7.5 K on screening grids. Pipeline dft.nosym is fallback only.
+#
 # Dry-run (mock e-ph moments, no QE/EPW):
 #   siscforge run --dry-run examples/mgb2_epw_validation.yaml
 #
@@ -7,7 +11,6 @@
 #   siscforge run --calculator qe-epw examples/mgb2_epw_validation.yaml
 #
 # See docs/examples/mgb2_epw.md
-# Requires dft.nosym: true (SCF+PH+NSCF) for EPW after #89/#90.
 
 name: mgb2_epw_validation
 description: >
@@ -45,13 +48,9 @@ dft:
   do_phonon: true
   phonon_retry_on_d_matrix: true
   phonon_retry_on_fft_symmetry: true
-  # Pipeline-wide nosym: SCF + PH + EPW NSCF (avoids gmap_sym after Wannier
-  # when nosym-only NSCF meets symmetry-DFPT). ph.x has no nosym namelist —
-  # dft.nosym forces search_sym=.false. and pw.x nosym/noinv on SCF.
-  nosym: true
-  # QE 7.3.1 segfaults in divide_class/prepare_sym_analysis on this cell;
-  # search_sym=.false. skips that path (also forced by nosym above).
-  ph_search_sym: false
+  # Golden: symmetry on (defaults). ibrav=4 hex from #92. ph_search_sym stays
+  # default true — phonon_retry_on_search_sym handles divide_class without
+  # forcing pipeline nosym. Fallback: nosym / ph_search_sym: false / gmap_sym.
   do_epw: true
   phonon_method: dfpt
   # Empty bands for B-p / Wannier (screening)
@@ -75,6 +74,8 @@ dft:
     B: B.pbe-n-kjpaw_psl.0.1.UPF
   epw:
     enabled: true
+    # Sym NSCF matching SCF/PH (upstream path). Required opt-out of #89 default.
+    nscf_nosym: false
     # Screening; workstation denser: nkf/nqf [16,16,12], nqc/qpoints [4,4,2]
     nkf: [8, 8, 6]
     nqf: [8, 8, 6]

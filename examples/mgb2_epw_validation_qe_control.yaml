@@ -2,13 +2,15 @@
 #
 # Matches QE 7.3.1 ``EPW/examples/mgb2/epw/epw.in`` coarse/fine intent:
 #   nk = nq = 6, mp_mesh_k = .true., fine ~20³
-# Keeps SiSC-Forge pipeline ``dft.nosym`` (SCF+PH+NSCF) from #90 so this is a
-# *grid* control, not a symmetry-on replay of the upstream tutorial.
 #
-# Prefer ``examples/mgb2_epw_validation.yaml`` for the workstation golden.
-# Use this when bisecting gmap_sym / comparing to upstream EPW grids.
+# This file is a *grid / gmap_sym bisect* sibling that keeps pipeline
+# ``dft.nosym`` + ``ph_search_sym: false`` as a **fallback** path — not the
+# documented golden. Prefer ``examples/mgb2_epw_validation.yaml``
+# (ibrav=4 + ``epw.nscf_nosym: false``) or live campaign
+# ``mgb2_epw_validation_ibrav4_nscf_sym`` (λ≈0.46, Tc≈7.5 K).
 #
-# Ops tip after #90: if gmap_sym still aborts with nosym on, try nproc=1 /
+# Use this when bisecting gmap_sym / comparing to upstream EPW grids after the
+# sym-NSCF golden still fails. Ops tip: if gmap_sym aborts, try nproc=1 /
 # epw.npool=1 (possible QE 7.3.1 gmap_sym heap corruption under npool>1).
 #
 #   siscforge run --calculator qe-epw examples/mgb2_epw_validation_qe_control.yaml
@@ -18,8 +20,8 @@
 name: mgb2_epw_validation_qe_control
 description: >
   MgB2 EPW control path with QE EPW/examples/mgb2 grids (nk=nq=6, mp_mesh_k)
-  plus pipeline-wide dft.nosym. Sibling of mgb2_epw_validation — does not
-  replace the screening golden.
+  plus pipeline-wide dft.nosym as a fallback/bisect sibling — does not
+  replace the screening golden (ibrav=4 + epw.nscf_nosym: false).
 version: "0.1"
 dry_run: false
 
@@ -51,6 +53,7 @@ dft:
   do_phonon: true
   phonon_retry_on_d_matrix: true
   phonon_retry_on_fft_symmetry: true
+  # Fallback / bisect only — not the documented golden default
   nosym: true
   ph_search_sym: false
   do_epw: true
