@@ -1,12 +1,113 @@
 {
   "schema": "siscforge.walltime_realized_summary.v1",
-  "n_samples": 2,
-  "median_ratio": 12.6096,
-  "mean_ratio": 11.293849999999999,
-  "median_realized_dfpt_h": 115.0,
-  "mean_realized_dfpt_h": 103.0,
-  "source": "seed_nbn_nvac.jsonl",
-  "campaign": "nbn_n_vacancy_phonon_map",
-  "notes": "Packaged seed from Nb8N7 (~115 h) / Zr8N7 (~91 h partial) DFPT supercell screening. Do not mix MgB2 EPW into these anchors.",
-  "updated_at": "2026-09-23T03:26:21.288532+00:00"
+  "updated_at": "2026-09-22T20:21:22",
+  "machine": "Ryzen AI Max desktop, nproc=16",
+  "finding": "screening-tier DFPT band for 15-atom k=8\u00b3 q=2\u00b3 under-predicts by ~5\u201310\u00d7 (mid ~10\u201312 h vs realized ~90\u2013110+ h). Prefer calibration anchors or supercell_screening tier.",
+  "heuristic_mid_h_15atom": 9.12,
+  "nb8n7_realized_dfpt_h": 115.4,
+  "nb8n7_ratio": 12.65,
+  "records": [
+    {
+      "schema": "siscforge.walltime_realized.v1",
+      "candidate_id": "c98c93a3-\u2026",
+      "candidate_id_short": "c98c93a3",
+      "formula": "Nb8N7",
+      "campaign": "nbn_n_vacancy_phonon_map",
+      "workdir": "/mnt/common/siscforge/outputs/nbn_n_vacancy_phonon_map/qe_work/Nb8N7_c98c93a3/02_scf",
+      "host": "pixnbits-Desktop-AMD-Ryzen-AI-Max-300-Series",
+      "nproc": 16,
+      "n_atoms": 15,
+      "kpoints": [
+        8,
+        8,
+        8
+      ],
+      "qpoints": [
+        2,
+        2,
+        2
+      ],
+      "quality_tag": "screening",
+      "do_epw": false,
+      "tier_predicted": "screening",
+      "predicted_dfpt_lo_h": 2.03,
+      "predicted_dfpt_hi_h": 16.22,
+      "predicted_dfpt_mid_h": 9.12,
+      "realized_dfpt_h": 115.4,
+      "realized_per_q_h": {
+        "q1": 13.02,
+        "q2": 28.3,
+        "q3": 15.45,
+        "q4": 27.71,
+        "q5": 15.51,
+        "q6": 15.41
+      },
+      "ratio_realized_over_mid": 12.65,
+      "status": "finished",
+      "notes": "dyn mtimes as q-complete proxies; DFPT start \u2248 dyn0 mtime",
+      "recorded_at": "2026-09-22T20:21:22"
+    },
+    {
+      "schema": "siscforge.walltime_realized.v1",
+      "candidate_id_short": "87d072cb",
+      "formula": "Nb4N3",
+      "campaign": "nbn_n_vacancy_phonon_map",
+      "nproc": 16,
+      "n_atoms": 14,
+      "kpoints": [
+        8,
+        8,
+        8
+      ],
+      "qpoints": [
+        2,
+        2,
+        2
+      ],
+      "quality_tag": "screening",
+      "do_epw": false,
+      "tier_predicted": "screening",
+      "predicted_dfpt_mid_h": 8.28,
+      "realized_dfpt_h": null,
+      "realized_partial": {
+        "q6_only_recover_h": 12.32,
+        "note": "full-cell DFPT incomplete plain dyn3\u20135; multi-day before reboot"
+      },
+      "status": "finished_unstable_partial_timings",
+      "recorded_at": "2026-09-22T20:21:22"
+    },
+    {
+      "schema": "siscforge.walltime_realized.v1",
+      "candidate_id_short": "5283d894",
+      "formula": "Zr8N7",
+      "campaign": "nbn_n_vacancy_phonon_map",
+      "nproc": 16,
+      "n_atoms": 15,
+      "kpoints": [
+        8,
+        8,
+        8
+      ],
+      "qpoints": [
+        2,
+        2,
+        2
+      ],
+      "quality_tag": "screening",
+      "do_epw": false,
+      "tier_predicted": "screening",
+      "predicted_dfpt_mid_h": 9.12,
+      "realized_dfpt_h": null,
+      "realized_per_q_h": {
+        "q1": 12.08,
+        "q2": 25.5,
+        "q3": 14.8,
+        "q4": 25.43
+      },
+      "elapsed_dfpt_h_so_far": 90.76,
+      "dfpt_progress": "q5/6 ~43/46 irreps",
+      "status": "in_progress",
+      "recorded_at": "2026-09-22T20:21:22"
+    }
+  ]
 }
