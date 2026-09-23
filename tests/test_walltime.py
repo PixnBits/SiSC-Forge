@@ -6,17 +6,26 @@ from siscforge.models.candidate import StructureCandidate
 from siscforge.models.config import DFTConfig, EPWConfig, RunConfig
 from siscforge.walltime import (
     WalltimeTracker,
+    append_realized_record,
+    atoms_band,
+    calibrate_estimate_with_realized,
+    clamp_observed_scale,
     dfpt_q_grid,
     estimate_campaign_walltime,
     estimate_candidate_walltime,
     format_campaign_estimate_lines,
     format_duration_band,
     heartbeat_eta_suffix,
+    k_band,
+    load_prior_realized,
+    load_realized_jsonl,
     n_atoms_from_candidate,
+    observed_scale_from_records,
     parse_ph_progress,
     remaining_time_hint,
     resolve_walltime_tier,
     should_print_walltime_estimate,
+    walltime_class_key,
 )
 
 
@@ -217,10 +226,11 @@ def test_tracker_observed_scale() -> None:
     scale = tr.observed_scale()
     assert scale is not None
     assert abs(scale - 2.0) < 1e-6
-    # Clamp high
+    # Clamp high — ceiling raised to 5.0 (was 3.0)
     tr.observed_h.append(100.0)
     tr.predictions_h.append(1.0)
-    assert tr.observed_scale() <= 3.0
+    assert tr.observed_scale() <= 5.0
+    assert tr.observed_scale() == 5.0
 
 
 def test_n_atoms_defaults() -> None:
@@ -298,3 +308,174 @@ def test_denser_k_increases_estimate() -> None:
     hi = estimate_candidate_walltime(_phonon_only_dense_q(kpoints=[12, 12, 12]), n_atoms=2)
     assert hi.dfpt_lo_h > lo.dfpt_lo_h
     assert hi.full_hi_h > lo.full_hi_h
+
+
+def _phonon_only_supercell_screening(**kwargs) -> DFTConfig:
+    """15-atom-class supercell screening: k=8³ q=2³ phonon-only."""
+    data = dict(
+        quality_tag="screening",
+        nproc=16,
+        qpoints=[2, 2, 2],
+        kpoints=[8, 8, 8],
+        do_epw=False,
+        epw=EPWConfig(enabled=False, nqc=[2, 2, 2]),
+    )
+    data.update(kwargs)
+    return DFTConfig(**data)
+
+
+def test_atoms_and_k_bands() -> None:
+    assert atoms_band(2) == "le4"
+    assert atoms_band(8) == "5to10"
+    assert atoms_band(15) == "11to20"
+    assert atoms_band(24) == "gt20"
+    assert k_band(8) == "lt64"
+    assert k_band(64) == "64to511"
+    assert k_band(512) == "512to1727"
+    assert k_band(1728) == "ge1728"
+
+
+def test_walltime_class_key_stable() -> None:
+    k1 = walltime_class_key(
+        tier="screening",
+        do_epw=False,
+        q_product=8,
+        k_product=512,
+        n_atoms=15,
+        nproc=16,
+    )
+    k2 = walltime_class_key(
+        tier="screening",
+        do_epw=False,
+        q_product=8,
+        k_product=600,
+        n_atoms=14,
+        nproc=16,
+    )
+    assert k1 == k2  # same bands
+    k3 = walltime_class_key(
+        tier="screening",
+        do_epw=True,
+        q_product=8,
+        k_product=512,
+        n_atoms=15,
+        nproc=16,
+    )
+    assert k1 != k3
+
+
+def test_supercell_screening_mid_covers_100h() -> None:
+    """15-atom k=8³ q=2³ screening mid must land ~80–120 h (not ~9 h)."""
+    dft = _phonon_only_supercell_screening()
+    est = estimate_candidate_walltime(dft, n_atoms=15)
+    mid = 0.5 * (est.dfpt_lo_h + est.dfpt_hi_h)
+    assert est.tier == "screening"
+    assert 80.0 <= mid <= 120.0
+    # Band must cover ~100 h+ (Nb8N7 class)
+    assert est.dfpt_lo_h <= 100.0 <= est.dfpt_hi_h or est.dfpt_hi_h >= 100.0
+    assert est.dfpt_hi_h >= 80.0
+
+
+def test_realized_jsonl_roundtrip(tmp_path) -> None:
+    rec = {
+        "schema": "siscforge.walltime_realized.v1",
+        "candidate_id": "Nb8N7_test",
+        "formula": "Nb8N7",
+        "n_atoms": 15,
+        "nproc": 16,
+        "kpoints": [8, 8, 8],
+        "qpoints": [2, 2, 2],
+        "quality_tag": "screening",
+        "do_epw": False,
+        "tier": "screening",
+        "predicted_dfpt_lo_h": 2.0,
+        "predicted_dfpt_hi_h": 16.0,
+        "predicted_dfpt_mid_h": 9.0,
+        "realized_dfpt_h": 115.0,
+        "ratio_realized_over_predicted_mid": 115.0 / 9.0,
+        "campaign": "test",
+    }
+    path = append_realized_record(tmp_path, rec)
+    assert path is not None and path.is_file()
+    rows = load_realized_jsonl(path)
+    assert len(rows) == 1
+    assert rows[0]["candidate_id"] == "Nb8N7_test"
+    summary = (tmp_path / "walltime_realized_summary.json").read_text()
+    assert "siscforge.walltime_realized_summary.v1" in summary
+    assert '"n_samples": 1' in summary
+
+    # Second append
+    rec2 = dict(rec)
+    rec2["candidate_id"] = "Zr8N7_test"
+    rec2["realized_dfpt_h"] = 91.0
+    append_realized_record(tmp_path, rec2)
+    rows2 = load_realized_jsonl(path)
+    assert len(rows2) == 2
+
+    # Dry-run must not write
+    before = path.read_text()
+    assert append_realized_record(tmp_path, rec, dry_run=True) is None
+    assert path.read_text() == before
+
+
+def test_observed_scale_from_seed_allows_gt3() -> None:
+    """Seed Nb8N7 ratio ~12.6 must clamp to 5.0 (ceiling), not 3.0."""
+    priors = load_prior_realized(include_packaged_seed=True)
+    assert priors, "packaged seed_nbn_nvac.jsonl must be discoverable"
+    scale = observed_scale_from_records(priors)
+    assert scale is not None
+    assert scale > 3.0
+    assert scale == 5.0
+    assert clamp_observed_scale(12.6) == 5.0
+
+
+def test_seed_nb8n7_moves_estimate_up() -> None:
+    """Loading seed + calibrate must raise estimate for the Nb8N7 class."""
+    dft = _phonon_only_supercell_screening()
+    base = estimate_candidate_walltime(dft, n_atoms=15)
+    priors = load_prior_realized(include_packaged_seed=True)
+    cal = calibrate_estimate_with_realized(base, priors)
+    base_mid = 0.5 * (base.dfpt_lo_h + base.dfpt_hi_h)
+    cal_mid = 0.5 * (cal.dfpt_lo_h + cal.dfpt_hi_h)
+    # Anchored to ~115 h median realized → mid near that (or at least >= base)
+    assert cal_mid >= base_mid
+    assert cal.dfpt_hi_h >= 100.0
+    assert cal.observed_adjustment is not None
+    assert cal.observed_adjustment > 3.0
+
+
+def test_tracker_persist_and_load_priors(tmp_path) -> None:
+    tr = WalltimeTracker(output_dir=tmp_path, campaign="unit", persist=True)
+    tr.start(
+        "c1",
+        meta={
+            "formula": "Nb8N7",
+            "n_atoms": 15,
+            "nproc": 16,
+            "kpoints": [8, 8, 8],
+            "qpoints": [2, 2, 2],
+            "quality_tag": "screening",
+            "do_epw": False,
+            "tier": "screening",
+        },
+    )
+    # Fake elapsed by finishing immediately then overwriting via second record
+    hours = tr.finish(
+        "c1",
+        predicted_dfpt_lo_h=40.0,
+        predicted_dfpt_hi_h=160.0,
+        predicted_dfpt_mid_h=100.0,
+    )
+    assert hours is not None
+    assert (tmp_path / "walltime_realized.jsonl").is_file()
+    assert (tmp_path / "walltime_realized_summary.json").is_file()
+
+    tr2 = WalltimeTracker(output_dir=tmp_path, persist=False)
+    n = tr2.load_priors(include_packaged_seed=True)
+    assert n >= 1
+    # Dry-run tracker must not write
+    dry = WalltimeTracker(output_dir=tmp_path, persist=False)
+    dry.start("x")
+    before = (tmp_path / "walltime_realized.jsonl").read_text()
+    dry.finish("x", predicted_dfpt_mid_h=1.0)
+    assert (tmp_path / "walltime_realized.jsonl").read_text() == before

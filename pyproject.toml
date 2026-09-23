@@ -76,3 +76,6 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 # typer.Option / typer.Argument in defaults is the idiomatic Typer pattern
 ignore = ["B008"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data/walltime" = "siscforge/data/walltime"

@@ -1711,6 +1711,7 @@ def run_cmd(
     } and getattr(run_cfg, "estimate_walltime", True):
         from siscforge.walltime import (
             WalltimeTracker,
+            calibrate_estimate_with_realized,
             estimate_campaign_walltime,
             format_campaign_estimate_lines,
             should_print_walltime_estimate,
@@ -1724,7 +1725,22 @@ def run_cmd(
                 candidates=expensive_candidates,
                 scale=float(getattr(run_cfg, "walltime_scale", 1.0) or 1.0),
             )
-            walltime_tracker = WalltimeTracker()
+            # Dry-run must not create/wipe realized stores
+            persist = not bool(getattr(config, "dry_run", False) or dry_run)
+            walltime_tracker = WalltimeTracker(
+                output_dir=out if persist else None,
+                campaign=config.name,
+                persist=persist,
+            )
+            n_prior = walltime_tracker.load_priors(include_packaged_seed=True)
+            priors = walltime_tracker.prior_records
+            if priors:
+                walltime_est = calibrate_estimate_with_realized(walltime_est, priors)
+            if n_prior:
+                console.print(
+                    f"[dim]Walltime calibration: loaded {n_prior} prior "
+                    f"realized sample(s) (seed + store)[/dim]"
+                )
             for line in format_campaign_estimate_lines(walltime_est):
                 if line.startswith("Estimated"):
                     console.print(f"[bold cyan]{line}[/bold cyan]")
@@ -1904,15 +1920,46 @@ def run_cmd(
         si = si_by_id[cand.candidate_id]
         params = {**calc_params, "si_feasibility": si}
         pred_mid_h = None
+        pred_dfpt_lo = pred_dfpt_hi = pred_dfpt_mid = None
+        cand_walltime_meta: dict | None = None
         if walltime_est is not None:
-            obs_scale = (
-                walltime_tracker.observed_scale() if walltime_tracker is not None else None
+            from siscforge.walltime import (
+                calibrate_estimate_with_realized,
+                dfpt_q_grid,
+                estimate_candidate_walltime,
+                n_atoms_from_candidate,
+                walltime_class_key,
             )
-            if obs_scale is not None and abs(obs_scale - 1.0) > 0.15:
-                from siscforge.walltime import estimate_candidate_walltime
 
+            dft_c = calc_params.get("dft", config.dft)
+            adj = estimate_candidate_walltime(
+                dft_c,
+                candidate=cand,
+                n_candidates=1,
+                scale=float(getattr(run_cfg, "walltime_scale", 1.0) or 1.0),
+            )
+            if walltime_tracker is not None and walltime_tracker.prior_records:
+                adj = calibrate_estimate_with_realized(
+                    adj, walltime_tracker.prior_records
+                )
+            ck = walltime_class_key(
+                tier=adj.tier,
+                do_epw=adj.do_epw,
+                q_product=adj.q_product,
+                k_product=adj.k_product,
+                n_atoms=adj.n_atoms,
+                nproc=adj.nproc,
+            )
+            obs_scale = (
+                walltime_tracker.observed_scale(class_key=ck)
+                if walltime_tracker is not None
+                else None
+            )
+            if obs_scale is not None and abs(obs_scale - 1.0) > 0.15 and (
+                adj.observed_adjustment is None
+            ):
                 adj = estimate_candidate_walltime(
-                    calc_params.get("dft", config.dft),
+                    dft_c,
                     candidate=cand,
                     n_candidates=1,
                     scale=float(getattr(run_cfg, "walltime_scale", 1.0) or 1.0),
@@ -1921,17 +1968,38 @@ def run_cmd(
                 console.print(
                     f"[dim]  walltime hint (adjusted): {adj.per_candidate_line()}[/dim]"
                 )
-                pred_mid_h = 0.5 * (adj.full_lo_h + adj.full_hi_h)
-            else:
-                pred_mid_h = 0.5 * (walltime_est.full_lo_h + walltime_est.full_hi_h)
+            elif adj.observed_adjustment is not None:
+                console.print(
+                    f"[dim]  walltime hint (calibrated): {adj.per_candidate_line()}[/dim]"
+                )
+            pred_mid_h = 0.5 * (adj.full_lo_h + adj.full_hi_h)
+            pred_dfpt_lo = adj.dfpt_lo_h
+            pred_dfpt_hi = adj.dfpt_hi_h
+            pred_dfpt_mid = 0.5 * (adj.dfpt_lo_h + adj.dfpt_hi_h)
+            cand_walltime_meta = {
+                "formula": cand.formula,
+                "n_atoms": n_atoms_from_candidate(cand),
+                "nproc": adj.nproc,
+                "kpoints": list(getattr(dft_c, "kpoints", None) or []),
+                "qpoints": list(dfpt_q_grid(dft_c)),
+                "quality_tag": getattr(dft_c, "quality_tag", None),
+                "do_epw": adj.do_epw,
+                "tier": adj.tier,
+                "campaign": config.name,
+                "dry_run": bool(getattr(config, "dry_run", False) or dry_run),
+            }
         if walltime_tracker is not None:
-            walltime_tracker.start(cand.candidate_id)
+            walltime_tracker.start(cand.candidate_id, meta=cand_walltime_meta)
         try:
             result = calc.run(cand, **params)
         except KeyboardInterrupt:
             if walltime_tracker is not None:
                 walltime_tracker.finish(
-                    cand.candidate_id, predicted_mid_h=pred_mid_h
+                    cand.candidate_id,
+                    predicted_mid_h=pred_mid_h,
+                    predicted_dfpt_lo_h=pred_dfpt_lo,
+                    predicted_dfpt_hi_h=pred_dfpt_hi,
+                    predicted_dfpt_mid_h=pred_dfpt_mid,
                 )
             console.print(
                 "\n[yellow]Interrupted.[/yellow] Re-run the same command to resume "
@@ -1945,7 +2013,11 @@ def run_cmd(
 
             if walltime_tracker is not None:
                 walltime_tracker.finish(
-                    cand.candidate_id, predicted_mid_h=pred_mid_h
+                    cand.candidate_id,
+                    predicted_mid_h=pred_mid_h,
+                    predicted_dfpt_lo_h=pred_dfpt_lo,
+                    predicted_dfpt_hi_h=pred_dfpt_hi,
+                    predicted_dfpt_mid_h=pred_dfpt_mid,
                 )
 
             # Missing QE install is environment-wide — always abort.
@@ -1988,7 +2060,11 @@ def run_cmd(
 
         if walltime_tracker is not None:
             obs_h = walltime_tracker.finish(
-                cand.candidate_id, predicted_mid_h=pred_mid_h
+                cand.candidate_id,
+                predicted_mid_h=pred_mid_h,
+                predicted_dfpt_lo_h=pred_dfpt_lo,
+                predicted_dfpt_hi_h=pred_dfpt_hi,
+                predicted_dfpt_mid_h=pred_dfpt_mid,
             )
             if obs_h is not None and obs_h >= 1.0 / 60.0:
                 # Only mention when at least ~1 min (avoid noise on mock)
