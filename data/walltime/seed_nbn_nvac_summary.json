@@ -1,0 +1,12 @@
+{
+  "schema": "siscforge.walltime_realized_summary.v1",
+  "n_samples": 2,
+  "median_ratio": 12.6096,
+  "mean_ratio": 11.293849999999999,
+  "median_realized_dfpt_h": 115.0,
+  "mean_realized_dfpt_h": 103.0,
+  "source": "seed_nbn_nvac.jsonl",
+  "campaign": "nbn_n_vacancy_phonon_map",
+  "notes": "Packaged seed from Nb8N7 (~115 h) / Zr8N7 (~91 h partial) DFPT supercell screening. Do not mix MgB2 EPW into these anchors.",
+  "updated_at": "2026-09-23T03:26:21.288532+00:00"
+}

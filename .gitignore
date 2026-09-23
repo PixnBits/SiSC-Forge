@@ -97,7 +97,9 @@ dmypy.json
 cython_debug/
 
 # Scientific / project specific
-data/
+/data/*
+!/data/walltime/
+!/data/walltime/**
 results/
 outputs/
 *.db
