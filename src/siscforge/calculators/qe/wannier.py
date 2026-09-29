@@ -27,7 +27,10 @@ replace or weaken that path.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -990,6 +993,11 @@ _SAVE_MARKERS: tuple[str, ...] = (
     "data-file.xml",
 )
 
+# Fingerprint next to the isolated ``wannier/out/{prefix}.save``.
+# Missing sidecar (legacy stores) is treated as unknown → re-stage.
+SAVE_STAGE_SIDECAR = "siscforge_save_stage.json"
+SAVE_STAGE_FINGERPRINT_VERSION = 1
+
 
 def is_qe_save_dir(path: Path | str) -> bool:
     """True when *path* looks like a QE ``{prefix}.save`` directory.
@@ -1032,28 +1040,193 @@ def find_upstream_save_dir(
     return None
 
 
+def save_stage_sidecar_path(wannier_dir: Path | str) -> Path:
+    """Path of the isolated-save fingerprint sidecar (``wannier/out/``)."""
+    return Path(wannier_dir) / "out" / SAVE_STAGE_SIDECAR
+
+
+def _charge_density_marker(save_dir: Path) -> Path | None:
+    """First present charge-density / schema marker under a ``.save`` dir."""
+    for name in _SAVE_MARKERS:
+        p = save_dir / name
+        if p.is_file():
+            return p
+    return None
+
+
+def save_stage_fingerprint(
+    src_save: Path | str,
+    *,
+    kmesh: Sequence[int] | None = None,
+    nbnd: int | None = None,
+    include_hubbard: bool = False,
+) -> dict[str, Any]:
+    """Lightweight fingerprint of inputs that must match to reuse a staged save.
+
+    Records the upstream path, Wannier nscf k-mesh / ``nbnd`` / Hubbard flag,
+    and a cheap mtime+size of the charge-density marker. Does **not** hash
+    multi-GB wavefunction files.
+    """
+    src = Path(src_save)
+    try:
+        src_key = str(src.resolve())
+    except OSError:
+        src_key = str(src)
+    marker = _charge_density_marker(src) if src.is_dir() else None
+    charge_name: str | None = None
+    charge_mtime: float | None = None
+    charge_size: int | None = None
+    if marker is not None:
+        try:
+            st = marker.stat()
+            charge_name = marker.name
+            charge_mtime = float(st.st_mtime)
+            charge_size = int(st.st_size)
+        except OSError:
+            charge_name = marker.name
+    mesh = [int(x) for x in kmesh] if kmesh is not None else []
+    return {
+        "version": SAVE_STAGE_FINGERPRINT_VERSION,
+        "src_save": src_key,
+        "kmesh": mesh,
+        "nbnd": int(nbnd) if nbnd is not None else None,
+        "include_hubbard": bool(include_hubbard),
+        "charge_marker": charge_name,
+        "charge_mtime": charge_mtime,
+        "charge_size": charge_size,
+    }
+
+
+def write_save_stage_sidecar(
+    wannier_dir: Path | str,
+    fingerprint: dict[str, Any],
+) -> Path:
+    """Persist *fingerprint* as ``wannier/out/siscforge_save_stage.json``."""
+    path = save_stage_sidecar_path(wannier_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(fingerprint, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def read_save_stage_sidecar(wannier_dir: Path | str) -> dict[str, Any] | None:
+    """Load the isolated-save sidecar, or ``None`` if missing / unreadable."""
+    path = save_stage_sidecar_path(wannier_dir)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_stage_matches(
+    wannier_dir: Path | str,
+    src_save: Path | str,
+    *,
+    kmesh: Sequence[int] | None = None,
+    nbnd: int | None = None,
+    include_hubbard: bool = False,
+) -> bool:
+    """True when the sidecar exists and equals the current nscf fingerprint."""
+    saved = read_save_stage_sidecar(wannier_dir)
+    if saved is None:
+        return False
+    expected = save_stage_fingerprint(
+        src_save,
+        kmesh=kmesh,
+        nbnd=nbnd,
+        include_hubbard=include_hubbard,
+    )
+    return saved == expected
+
+
+def resolve_nscf_nbnd(config: DFTConfig) -> int:
+    """Bands count written into Wannier nscf (same precedence as the input builder)."""
+    if config.wannier.num_bands is not None:
+        return int(config.wannier.num_bands)
+    if config.nbnd is not None:
+        return int(config.nbnd)
+    n_wann = int(config.wannier.num_wann) if config.wannier.num_wann else 8
+    return max(24, n_wann + 8)
+
+
+def _remove_isolated_staged_save(
+    dest: Path,
+    src: Path,
+    sidecar: Path,
+    wannier_dir: Path,
+) -> None:
+    """Drop the isolated copy + sidecar + wannier-local nscf logs.
+
+    Never deletes or rewrites *src* (the sacred SCF / DFT+U save).
+    """
+    dest_r = dest.resolve()
+    src_r = src.resolve()
+    if dest_r == src_r:
+        raise RuntimeError(
+            "refusing to remove upstream save (isolated dest resolves to src)"
+        )
+    if dest_r.parent.name != "out" or not dest_r.name.endswith(".save"):
+        raise RuntimeError(f"refusing to remove unexpected dest {dest_r}")
+    if dest.exists():
+        shutil.rmtree(dest)
+    if sidecar.is_file():
+        sidecar.unlink()
+    # Stale JOB DONE must not skip nscf after a fingerprint-driven re-stage.
+    for name in ("nscf.out", "nscf.in"):
+        p = wannier_dir / name
+        if p.is_file():
+            p.unlink()
+
+
 def stage_save_for_wannier(
     src_save: Path | str,
     wannier_dir: Path | str,
     prefix: str = "siscforge",
+    *,
+    kmesh: Sequence[int] | None = None,
+    nbnd: int | None = None,
+    include_hubbard: bool = False,
 ) -> Path:
     """Copy upstream ``{prefix}.save`` into ``wannier/out/`` (never delete src).
 
-    Reuses an existing isolated copy so resume does not rewrite the SCF
-    directory. The copy keeps EPW / DFT+U wavefunctions from being overwritten
-    by the Wannier nscf k-mesh.
-    """
-    import shutil
+    This is a **full recursive copy**. Real QE ``.save`` directories often
+    hold multi-GB wavefunction files; the I/O and disk cost is intentional
+    so SCF / DFT+U / EPW artifacts stay sacred and the Wannier nscf k-mesh
+    cannot overwrite them. Hardlinks are **not** used: nscf rewrites
+    wavefunctions in the isolated copy and a shared inode would mutate
+    the upstream save.
 
+    Resume integrity: a sidecar (``siscforge_save_stage.json``) records the
+    source path, k-mesh, ``nbnd``, Hubbard flag, and a cheap charge-density
+    marker stat. An existing dest is reused only when that fingerprint still
+    matches. A missing sidecar (legacy store) or a mismatch removes **only**
+    the isolated dest + sidecar (and wannier-local ``nscf.out`` / ``nscf.in``)
+    then re-copies from the sacred upstream.
+    """
     src = Path(src_save)
-    dest_out = Path(wannier_dir) / "out"
+    wannier_dir = Path(wannier_dir)
+    dest_out = wannier_dir / "out"
     dest_out.mkdir(parents=True, exist_ok=True)
     dest = dest_out / f"{prefix}.save"
+    sidecar = dest_out / SAVE_STAGE_SIDECAR
     if dest.resolve() == src.resolve():
         return dest
-    if dest.exists():
+    expected = save_stage_fingerprint(
+        src, kmesh=kmesh, nbnd=nbnd, include_hubbard=include_hubbard
+    )
+    if dest.exists() and save_stage_matches(
+        wannier_dir, src, kmesh=kmesh, nbnd=nbnd, include_hubbard=include_hubbard
+    ):
         return dest
+    if dest.exists() or sidecar.is_file():
+        _remove_isolated_staged_save(dest, src, sidecar, wannier_dir)
     shutil.copytree(src, dest)
+    write_save_stage_sidecar(wannier_dir, expected)
     return dest
 
 
@@ -1398,7 +1571,25 @@ def prepare_amn_mmn(
         )
 
     try:
-        stage_save_for_wannier(src_save, work_dir, prefix=prefix)
+        mesh = resolve_kmesh(config, structure)
+        hubbard = _hubbard_for_save(src_save, config)
+        n_bands = resolve_nscf_nbnd(config)
+        dest = Path(work_dir) / "out" / f"{prefix}.save"
+        reused = dest.exists() and save_stage_matches(
+            work_dir,
+            src_save,
+            kmesh=mesh,
+            nbnd=n_bands,
+            include_hubbard=hubbard,
+        )
+        stage_save_for_wannier(
+            src_save,
+            work_dir,
+            prefix=prefix,
+            kmesh=mesh,
+            nbnd=n_bands,
+            include_hubbard=hubbard,
+        )
     except OSError as exc:
         log.append(f"wannier P3.2.1 save stage failed: {exc}")
         return _prep_failure_result(
@@ -1410,9 +1601,11 @@ def prepare_amn_mmn(
             failure_class="nscf_failed",
             note=f"nscf failed: could not stage isolated save copy ({exc})",
         )
-    log.append(f"staged isolated save from {src_save} → {work_dir / 'out'}")
+    if reused:
+        log.append(f"reused isolated save at {dest}")
+    else:
+        log.append(f"staged isolated save from {src_save} → {work_dir / 'out'}")
 
-    mesh = resolve_kmesh(config, structure)
     nscf_out = work_dir / "nscf.out"
     if nscf_job_done(nscf_out):
         log.append("skip nscf (existing JOB DONE)")
@@ -1424,7 +1617,7 @@ def prepare_amn_mmn(
             prefix=prefix,
             qe_env=env,
             kmesh=mesh,
-            include_hubbard=_hubbard_for_save(src_save, config),
+            include_hubbard=hubbard,
         )
         log.append(step.message)
         if not step.success:

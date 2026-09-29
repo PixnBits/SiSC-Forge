@@ -516,6 +516,13 @@ Known limitations of the **controlled launcher**:
 - Real (non-mock) Wannier artifacts use **P3.2.1** automated nscf +
   `pw2wannier90` when `pw.x` / `pw2wannier90.x` and an upstream
   `{prefix}.save` are present; otherwise the path classifies cleanly.
+  The isolated `wannier/out/{prefix}.save` is a **full copy** of that
+  upstream save (often multi-GB). That I/O cost is intentional so
+  SCF / DFT+U / EPW artifacts stay sacred. Resume reuses the dest only
+  when `wannier/out/siscforge_save_stage.json` still matches the current
+  k-mesh / `nbnd` / Hubbard inputs; a mismatch re-copies from upstream
+  and never deletes the SCF / DFT+U save. See
+  [phase3-p32-wannier.md](phase3-p32-wannier.md).
 - Pairing eigenvalue → `performance_score` is **P3.4**.
 
 Optional real-path pytest (skipped unless the stack is importable):

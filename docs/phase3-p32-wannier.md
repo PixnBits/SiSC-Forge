@@ -75,9 +75,12 @@ When standalone Wannier is enabled:
 1. Finish SCF (or DFT+U SCF) — artifacts remain sacred on Wannier failure.
 2. SiSC-Forge writes `{seed}.win` under a sibling `wannier/` directory.
 3. **P3.2.1 (automated, default on):** if `pw.x` + `pw2wannier90.x` and an
-   upstream `{prefix}.save` exist, copy the save into `wannier/out/` (isolated
-   so EPW / DFT+U wavefunctions are not overwritten), run nscf on the Wannier
-   k-mesh (`resolve_kmesh`), `wannier90.x -pp`, then `pw2wannier90.x`.
+   upstream `{prefix}.save` exist, **full-copy** the save into `wannier/out/`
+   (isolated so EPW / DFT+U wavefunctions are not overwritten), run nscf on
+   the Wannier k-mesh (`resolve_kmesh`), `wannier90.x -pp`, then
+   `pw2wannier90.x`. Resume reuses that isolated copy only when
+   `wannier/out/siscforge_save_stage.json` still matches the current nscf
+   inputs (k-mesh / `nbnd` / Hubbard / upstream charge-density marker).
 4. Gated `wannier90.x` parses spreads into `WannierResult` + `ready_for_dmft`.
 
 Soft dependency: missing binaries or charge density → `missing_files` /
@@ -134,6 +137,53 @@ Wannier work is written under a sibling `wannier/` directory. NSCF reads a
 candidate directory is not overwritten. Same philosophy as EPW-after-DFPT
 remediation.
 
+Only the isolated `wannier/out/{prefix}.save` and its sidecar
+(`siscforge_save_stage.json`) may be removed or replaced. The upstream SCF /
+DFT+U `.save` is never deleted, moved, or rewritten.
+
+## Isolated `.save` staging (disk cost + resume integrity)
+
+P3.2.1 stages a **full `copytree`** of `{prefix}.save` into `wannier/out/`.
+That is intentional for correctness today:
+
+- SCF / DFT+U / EPW artifacts stay sacred (nscf must not overwrite their
+  wavefunctions or charge density).
+- The Wannier nscf k-mesh is free to rewrite the **isolated** copy.
+
+Real QE `.save` directories often hold **multi-GB** `wfc*.dat` / HDF5
+wavefunction files. High-throughput campaigns therefore pay a full recursive
+copy (space + I/O) every time the isolated dest is missing or invalidated.
+That cost is documented, not accidental.
+
+### Resume fingerprint
+
+`stage_save_for_wannier` writes `wannier/out/siscforge_save_stage.json` with
+a lightweight fingerprint of the inputs that matter for nscf restart:
+
+- resolved upstream save path
+- Wannier k-mesh
+- `nbnd` / bands setting
+- whether Hubbard / DFT+U extras were requested
+- name + mtime + size of the upstream charge-density / schema marker
+
+It does **not** hash multi-GB wavefunctions.
+
+| On-disk state | Action |
+|---------------|--------|
+| Dest exists **and** sidecar matches current fingerprint | Reuse dest (no second copy) |
+| Dest exists but sidecar missing (legacy store) or fingerprint mismatch | Remove **only** the isolated dest + sidecar (and wannier-local `nscf.out` / `nscf.in` so a stale `JOB DONE` cannot skip nscf), then re-copy from the sacred upstream |
+| Dest missing | Full copy + write sidecar |
+
+### Future residuals (not in this package)
+
+- **Same-filesystem reflink** (`cp --reflink` / `FICLONE`) when the FS
+  supports copy-on-write. Safe because writes allocate new extents.
+- **Hardlinks (`os.link`)** are **not** a future default: Wannier nscf
+  rewrites wavefunctions in the isolated dest, and a shared inode would
+  mutate the sacred upstream.
+- **Charge-density-only staging** when wavefunctions are not required for
+  the nscf restart (smaller dest; still never touch upstream).
+
 ## Limits (documented)
 
 - Screening defaults use `proj=random` + coarse k (EPW lessons).
@@ -177,4 +227,6 @@ remediation.
 - Real path: automated nscf + `pw2wannier90` when binaries + charge density
   are present; clean `missing_files` / `binary_missing` without binaries
 - `nscf_failed` / `pw2wannier_failed` set the matching `failure_class`
+- Isolated `{prefix}.save` is a **full copy** (documented multi-GB cost);
+  stale dest is re-staged when k-mesh / `nbnd` / Hubbard / charge marker change
 - `ready_for_dmft` still respects P3.2 spread / `.chk` thresholds
