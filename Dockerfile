@@ -183,6 +183,7 @@ COPY tests ./tests
 COPY examples ./examples
 COPY docs ./docs
 COPY pseudos ./pseudos
+COPY data ./data
 
 # Virtualenv + package (dev + qe + phonopy extras)
 RUN python3 -m venv /opt/siscforge-venv \
