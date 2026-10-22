@@ -10,9 +10,13 @@ This module is **heuristic and non-blocking**:
 
 * Missing frequency lists → conservative class (never auto-promote to
   “stable” or to EPW).
-* When a Gamma ``.dyn`` (or an in-memory Gamma force-constant matrix) is
-  attached, crystal ASR replaces the raw Gamma frequencies **before**
-  acoustic/optical classification. No dyn → behaviour is unchanged.
+* Crystal ASR at Gamma is a **diagnostic**. It never changes
+  ``soft_mode_class``, ``dynamically_stable``, ``has_imaginary_modes``,
+  or the EPW gate. Classification always uses the raw ``PhononResult``
+  already on the record, so it cannot depend on where a store is read
+  from. Corrected Gamma frequencies are extra report fields when that
+  record already carries them (or an in-memory Gamma matrix). This module
+  does not search work directories, metadata, provenance, or notes.
   Stored phonon records are not rewritten.
 * Labels such as ``likely_mesh_artefact`` are *suspects*, not proof.
 * The report must never be treated as a go-ahead to launch EPW on
@@ -26,7 +30,6 @@ launch EPW on imaginary-mode cells.
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 from pathlib import Path
 from typing import Any, Literal, TypedDict
@@ -35,7 +38,6 @@ from siscforge.calculators.qe.asr import (
     discover_dyn_files,
     frequencies_cm1,
     gamma_asr_frequencies,
-    gamma_asr_from_dyn,
     parse_qe_dyn,
 )
 from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
@@ -120,6 +122,8 @@ class SoftModeRow(TypedDict):
     n_q_imaginary: int | None
     gamma_raw_frequencies_cm1: list[float] | None
     gamma_asr_frequencies_cm1: list[float] | None
+    # Diagnostic only: "crystal" when ASR frequencies are attached.
+    # Never an input to soft_mode_class, stability, or the EPW gate.
     asr_applied: str | None
 
 
@@ -246,17 +250,22 @@ def _acoustic_vs_optical(
     n_atoms: int | None,
     n_modes: int | None,
     imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
-    asr_corrected: bool = False,
 ) -> tuple[str, str | None]:
     """Return (label, asr_signal) when a single-q / Gamma list is detectable.
 
     A flat mesh dump (n_modes ≫ 3 N_at) is **undetermined** — first-three
     slicing would be wrong. Missing data is also undetermined.
 
-    After crystal ASR the three acoustic eigenvalues sit at ~0 and are not
-    necessarily the lowest three (an optical instability can lie below
-    them). ``asr_corrected=True`` treats the three modes nearest zero as
-    that acoustic triplet.
+    Classification uses the raw list as stored: the first three entries are
+    the acoustic branches (QE / :func:`frequencies_cm1` sort ascending, so
+    those are the lowest three). Crystal ASR is not applied here. On an
+    ASR-corrected dynamical matrix the acoustic modes are the three
+    eigenvectors with the largest overlap onto the normalised ``√m · u``
+    translation subspace (:func:`siscforge.calculators.qe.asr.acoustic_indices_by_overlap`),
+    because ``P C P`` puts those vectors exactly in ``ker(D)``. That label
+    is diagnostic. The three frequencies closest to zero are the same modes
+    only when no optical eigenvalue is also near zero, and they must not
+    change ``soft_mode_class``.
     """
     if not freqs:
         return "undetermined", None
@@ -270,14 +279,9 @@ def _acoustic_vs_optical(
         return "undetermined", None
 
     thr = -abs(float(imag_threshold_cm1))
-    if asr_corrected:
-        order = sorted(range(len(freqs)), key=lambda i: (abs(float(freqs[i])), i))
-        acoustic_idx = set(order[:3])
-        acoustic = [float(freqs[i]) for i in order[:3]]
-        optical = [float(freqs[i]) for i in range(len(freqs)) if i not in acoustic_idx]
-    else:
-        acoustic = freqs[:3]
-        optical = freqs[3:]
+    # Raw record only. Do not re-pick branches from an ASR spectrum.
+    acoustic = freqs[:3]
+    optical = freqs[3:]
     imag_ac = any(f < thr for f in acoustic)
     imag_op = any(f < thr for f in optical)
     asr: str | None = None
@@ -391,7 +395,6 @@ def _classify_acoustic_over_q(
             n_atoms=n_atoms,
             n_modes=len(freqs) if freqs else None,
             imag_threshold_cm1=imag_threshold_cm1,
-            asr_corrected=bool(qp.get("asr_corrected")),
         )
         if label == "undetermined":
             continue
@@ -475,157 +478,45 @@ def _asr_row_fields(
     }
 
 
-class _GammaASRPack:
-    """Crystal-ASR Gamma spectrum ready to splice into a classification."""
-
-    __slots__ = ("asr_cm1", "nat", "raw_cm1")
-
-    def __init__(self, raw_cm1: list[float], asr_cm1: list[float], nat: int) -> None:
-        self.raw_cm1 = raw_cm1
-        self.asr_cm1 = asr_cm1
-        self.nat = nat
-
-
-def _dyn_search_roots(ph: PhononResult, ev: CandidateEvaluation) -> list[Path]:
-    """Directories or dyn paths that might hold this candidate's Gamma matrix."""
-    roots: list[Path] = []
-    raw = ph.raw or {}
-    for key in ("ph_dir", "qe_work_dir", "work_dir"):
-        val = raw.get(key)
-        if isinstance(val, str) and val.strip():
-            roots.append(Path(val.strip()))
-    meta = ev.candidate.metadata or {}
-    for key in ("ph_dir", "qe_work_dir", "work_dir", "gamma_dyn_path"):
-        val = meta.get(key)
-        if isinstance(val, str) and val.strip():
-            roots.append(Path(val.strip()))
-    prov = getattr(ev, "provenance", None)
-    params = getattr(prov, "parameters", None) or {}
-    work = params.get("work_dir") if isinstance(params, dict) else None
-    if isinstance(work, str) and work.strip():
-        roots.append(Path(work.strip()))
-    notes = ev.notes or ""
-    for match in re.finditer(r"work_dir=([^\s;]+)", notes):
-        roots.append(Path(match.group(1)))
-    return roots
-
-
-def _lookup_gamma_asr(ph: PhononResult, ev: CandidateEvaluation) -> _GammaASRPack | None:
-    """Load a Gamma dyn / matrix when one is attached. Never raises."""
-    raw = ph.raw or {}
-    explicit = raw.get("gamma_dyn_path") or raw.get("dyn_path")
-    if isinstance(explicit, str) and explicit.strip():
-        try:
-            path = Path(explicit.strip())
-            if path.is_file():
-                raw_f, asr_f = gamma_asr_from_dyn(path)
-                if len(raw_f) >= 3 and len(raw_f) % 3 == 0:
-                    return _GammaASRPack(raw_f, asr_f, len(raw_f) // 3)
-        except (OSError, ValueError):
-            return None
+def _stored_frequency_list(value: Any) -> list[float] | None:
+    """Finite cm⁻¹ list already stored on a phonon record, or None."""
+    if not isinstance(value, list) or not value:
         return None
+    out: list[float] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            return None
+        number = float(item)
+        if number != number or number in {float("inf"), float("-inf")}:
+            return None
+        out.append(number)
+    return out
 
+
+def _diagnostic_asr_fields(ph: PhononResult) -> dict[str, Any]:
+    """Crystal-ASR Gamma frequencies for the report. Never used for class.
+
+    Reads lists or a Gamma force-constant matrix already stored on *ph*.
+    Does not open ``gamma_dyn_path`` and does not search work directories,
+    metadata, provenance, or notes. A missing or unusable matrix leaves the
+    diagnostic fields empty; it does not change the raw classification.
+    """
+    raw = ph.raw or {}
+    stored_raw = _stored_frequency_list(raw.get("gamma_raw_frequencies_cm1"))
+    stored_asr = _stored_frequency_list(raw.get("gamma_asr_frequencies_cm1"))
+    if stored_raw is not None and stored_asr is not None:
+        return _asr_row_fields(stored_raw, stored_asr, "crystal")
     matrix = raw.get("gamma_force_constants")
     masses = raw.get("gamma_masses_ry")
-    if matrix is not None and masses is not None:
-        try:
-            raw_f, asr_f = gamma_asr_frequencies(matrix, masses)
-            if len(raw_f) >= 3 and len(raw_f) % 3 == 0:
-                return _GammaASRPack(raw_f, asr_f, len(raw_f) // 3)
-        except (TypeError, ValueError):
-            return None
-        return None
-
-    seen: set[Path] = set()
-    for root in _dyn_search_roots(ph, ev):
-        try:
-            resolved = root.resolve()
-        except OSError:
-            resolved = root
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if root.is_file():
-            candidates = [root]
-        elif root.is_dir():
-            try:
-                candidates = discover_dyn_files(root)
-            except OSError:
-                continue
-        else:
-            continue
-        for candidate in candidates:
-            try:
-                parsed = parse_qe_dyn(candidate)
-            except (OSError, ValueError):
-                continue
-            if not parsed.is_gamma:
-                continue
-            try:
-                raw_f, asr_f = gamma_asr_frequencies(
-                    parsed.force_constants, parsed.masses_ry
-                )
-            except (TypeError, ValueError):
-                continue
-            if len(raw_f) >= 3 and len(raw_f) % 3 == 0:
-                return _GammaASRPack(raw_f, asr_f, parsed.nat)
-    return None
-
-
-def _inject_gamma_asr(
-    freqs: list[float],
-    qpoints: list[dict[str, Any]],
-    pack: _GammaASRPack,
-) -> tuple[list[float], list[dict[str, Any]], bool, bool]:
-    """Replace Gamma blocks with crystal-ASR frequencies.
-
-    Returns ``(freqs, qpoints, injected, flat_is_asr)``. Finite-q blocks
-    are left unchanged. A flat list is replaced only when it is exactly
-    one q-point (3 N_at), which is the single-q Gamma case.
-    """
-    asr = [float(value) for value in pack.asr_cm1]
-    n = 3 * int(pack.nat)
-    if len(asr) != n or n < 3:
-        return list(freqs), [dict(qp) for qp in qpoints], False, False
-    injected = False
-    new_q: list[dict[str, Any]] = []
-    for qp in qpoints:
-        block = list(qp.get("frequencies_cm1") or [])
-        if qp.get("is_gamma") and len(block) == n:
-            new_q.append(
-                {
-                    **qp,
-                    "frequencies_cm1": list(asr),
-                    "min_frequency_cm1": float(min(asr)),
-                    "asr_corrected": True,
-                }
-            )
-            injected = True
-        else:
-            new_q.append(dict(qp))
-    new_freqs = [float(value) for value in freqs]
-    flat_is_asr = False
-    if len(new_freqs) == n:
-        new_freqs = list(asr)
-        flat_is_asr = True
-        injected = True
-    return new_freqs, new_q, injected, flat_is_asr
-
-
-def _spectrum_has_imaginary(
-    freqs: list[float],
-    qpoints: list[dict[str, Any]],
-    *,
-    imag_threshold_cm1: float,
-) -> bool:
-    thr = -abs(float(imag_threshold_cm1))
-    if qpoints:
-        for qp in qpoints:
-            for value in qp.get("frequencies_cm1") or []:
-                if float(value) < thr:
-                    return True
-        return False
-    return any(float(value) < thr for value in freqs)
+    if matrix is None or masses is None:
+        return _asr_row_fields()
+    try:
+        raw_f, asr_f = gamma_asr_frequencies(matrix, masses)
+    except (TypeError, ValueError):
+        return _asr_row_fields()
+    if len(raw_f) < 3 or len(raw_f) % 3 != 0:
+        return _asr_row_fields()
+    return _asr_row_fields(raw_f, asr_f, "crystal")
 
 
 def classify_soft_mode(
@@ -633,7 +524,13 @@ def classify_soft_mode(
     *,
     imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
 ) -> SoftModeRow:
-    """Classify one evaluation. Conservative when frequencies are missing."""
+    """Classify one evaluation from the raw phonon record.
+
+    Conservative when frequencies are missing. Crystal ASR, when the record
+    already carries a Gamma matrix or precomputed lists, is copied onto the
+    row as ``gamma_raw_frequencies_cm1`` / ``gamma_asr_frequencies_cm1`` /
+    ``asr_applied`` and is not an input to ``soft_mode_class``.
+    """
     c = ev.candidate
     formula = c.formula
     ph = ev.phonon
@@ -667,39 +564,20 @@ def classify_soft_mode(
     nat = n_atoms(ev)
     n_modes = ph.n_modes if ph.n_modes is not None else (len(freqs) or None)
     qpoints = _spectra_for_locus(ph, freqs, n_atoms=nat)
-    gamma_raw: list[float] | None = None
-    gamma_asr: list[float] | None = None
-    asr_name: str | None = None
-    asr_injected = False
-    flat_asr = False
-    pack: _GammaASRPack | None = None
-    if status in {"ok", "mock"}:
-        pack = _lookup_gamma_asr(ph, ev)
-        if pack is not None:
-            freqs, qpoints, asr_injected, flat_asr = _inject_gamma_asr(
-                freqs, qpoints, pack
-            )
-            if asr_injected:
-                gamma_raw = list(pack.raw_cm1)
-                gamma_asr = list(pack.asr_cm1)
-                asr_name = "crystal"
-    asr_fields = _asr_row_fields(gamma_raw, gamma_asr, asr_name)
-    nat_for_split = nat
-    if nat_for_split is None and asr_injected and pack is not None:
-        nat_for_split = pack.nat
+    # Diagnostic only. freqs / qpoints / flags below stay the raw record.
+    asr_fields = _diagnostic_asr_fields(ph)
     if qpoints:
         ac_op, asr = _classify_acoustic_over_q(
             qpoints,
-            n_atoms=nat_for_split,
+            n_atoms=nat,
             imag_threshold_cm1=imag_threshold_cm1,
         )
     else:
         ac_op, asr = _acoustic_vs_optical(
             freqs,
-            n_atoms=nat_for_split,
-            n_modes=len(freqs) if flat_asr else n_modes,
+            n_atoms=nat,
+            n_modes=n_modes,
             imag_threshold_cm1=imag_threshold_cm1,
-            asr_corrected=flat_asr,
         )
     locus, gamma_min, finite_min, n_q_imag = _softness_locus(
         qpoints, imag_threshold_cm1=imag_threshold_cm1
@@ -739,38 +617,24 @@ def classify_soft_mode(
             **asr_fields,
         )
 
-    corrected_imag = (
-        _spectrum_has_imaginary(
-            freqs, qpoints, imag_threshold_cm1=imag_threshold_cm1
-        )
-        if asr_injected
-        else None
-    )
     raw_clean = bool(ph.dynamically_stable) and not ph.has_imaginary_modes and (
         ph.min_frequency_cm1 is None
         or float(ph.min_frequency_cm1) >= -abs(imag_threshold_cm1)
     )
-    # Crystal ASR can remove a spurious acoustic triplet. Trust the corrected
-    # spectrum when a Gamma matrix was actually spliced in; otherwise keep
-    # the raw phonon flags exactly as before.
-    asr_clean = asr_injected and corrected_imag is False
-    asr_still_imag = asr_injected and corrected_imag is True
-    if asr_clean or (raw_clean and not asr_still_imag):
-        stable_reasons = ["no_imaginary_modes"]
-        if asr_injected:
-            stable_reasons.append("crystal_asr_applied")
+    # Raw phonon flags only. ASR must not promote a cell to stable.
+    if raw_clean:
         return SoftModeRow(
             candidate_id=c.candidate_id,
             formula=formula,
             strain=c.in_plane_strain,
             min_frequency_cm1=ph.min_frequency_cm1,
-            has_imaginary_modes=False if asr_clean else ph.has_imaginary_modes,
-            dynamically_stable=True if asr_clean else ph.dynamically_stable,
+            has_imaginary_modes=ph.has_imaginary_modes,
+            dynamically_stable=ph.dynamically_stable,
             n_modes=n_modes,
             phonon_status=ph.status,
             eval_status=ev.status or "unknown",
             soft_mode_class="stable",
-            reasons=stable_reasons,
+            reasons=["no_imaginary_modes"],
             acoustic_vs_optical=ac_op,
             asr_signal=asr,
             is_binary_nitride=binary,
@@ -801,8 +665,6 @@ def classify_soft_mode(
 
     if asr:
         reasons.append(asr)
-    if asr_injected:
-        reasons.append("crystal_asr_applied")
     if locus == "finite_q":
         reasons.append("softest_q_is_finite_q")
         if gamma_min is not None and gamma_min > -_GAMMA_MILD_CM1:
@@ -1256,9 +1118,11 @@ def evaluation_from_ph_directory(
     """Build an evaluation from a QE directory of ``*.dyn1`` … ``*.dynN``.
 
     Phonon frequencies on the result are the **raw** dynamical-matrix
-    eigenvalues (what ``ph.x`` prints). :func:`classify_soft_mode` applies
-    crystal ASR to the Gamma file before labelling the cell. Finite-q
-    blocks are not sum-rule corrected.
+    eigenvalues (what ``ph.x`` prints). Crystal ASR of the Gamma file is
+    stored beside them as ``gamma_raw_frequencies_cm1`` /
+    ``gamma_asr_frequencies_cm1`` for the report. :func:`classify_soft_mode`
+    does not use those lists to label the cell, and it does not search
+    this directory again. Finite-q blocks are not sum-rule corrected.
     """
     root = Path(ph_dir)
     files = discover_dyn_files(root)
@@ -1286,6 +1150,10 @@ def evaluation_from_ph_directory(
         flat.extend(spectrum)
     if gamma_path is None:
         raise ValueError(f"no Gamma dynamical matrix under {root}")
+    gamma_parsed = parse_qe_dyn(gamma_path)
+    gamma_raw_f, gamma_asr_f = gamma_asr_frequencies(
+        gamma_parsed.force_constants, gamma_parsed.masses_ry
+    )
     from siscforge.calculators.qe.parser import summarize_frequencies
 
     summary = summarize_frequencies(flat)
@@ -1304,8 +1172,11 @@ def evaluation_from_ph_directory(
             "n_qpoints": len(qpoints),
             "gamma_dyn_path": str(gamma_path),
             "ph_dir": str(work),
-            # Parser convention: the stored list is still the raw ph.x spectrum.
+            # Parser convention: the stored spectrum is still the raw ph.x list.
             "asr_applied": False,
+            # Diagnostic copies. classify_soft_mode does not re-read the dyn.
+            "gamma_raw_frequencies_cm1": list(gamma_raw_f),
+            "gamma_asr_frequencies_cm1": list(gamma_asr_f),
         },
     )
     candidate = StructureCandidate(
@@ -1329,9 +1200,11 @@ def classify_ph_directory(
     formula: str = "unknown",
     imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
 ) -> SoftModeRow:
-    """Classify ``*.dyn1..dynN`` in *ph_dir* with crystal ASR at Gamma.
+    """Classify ``*.dyn1..dynN`` in *ph_dir* from the raw dynamical matrices.
 
-    Suitable for a ``qe_work`` phonon directory (for example ``/tmp/v3si_dyn``).
+    Crystal ASR at Gamma is attached as diagnostic frequencies only. It does
+    not change ``soft_mode_class``. Suitable for a ``qe_work`` phonon
+    directory (for example ``/tmp/v3si_dyn``).
     """
     evaluation = evaluation_from_ph_directory(ph_dir, formula=formula)
     return classify_soft_mode(evaluation, imag_threshold_cm1=imag_threshold_cm1)
@@ -1343,10 +1216,11 @@ def evaluation_from_gamma_matrix(
     *,
     formula: str = "synthetic",
 ) -> CandidateEvaluation:
-    """Evaluation whose Gamma matrix is classified by :func:`classify_soft_mode`.
+    """Evaluation whose raw Gamma frequencies :func:`classify_soft_mode` labels.
 
-    The phonon frequency list is the raw diagonalization. Crystal ASR runs
-    inside the classifier, on the same path as a ``.dyn`` file.
+    The phonon frequency list is the raw diagonalization. The force-constant
+    matrix stays on the record so the report can show crystal-ASR frequencies.
+    Those corrected frequencies do not change the class.
     """
     raw_freqs, _corrected = gamma_asr_frequencies(force_constants, masses_ry)
     from siscforge.calculators.qe.parser import summarize_frequencies
@@ -1404,7 +1278,10 @@ def classify_gamma_force_constants(
     formula: str = "synthetic",
     imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
 ) -> SoftModeRow:
-    """Classify one Gamma force-constant matrix with crystal ASR."""
+    """Classify one Gamma force-constant matrix from its raw frequencies.
+
+    Crystal ASR is reported on the row and does not change the class.
+    """
     evaluation = evaluation_from_gamma_matrix(
         force_constants, masses_ry, formula=formula
     )

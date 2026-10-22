@@ -50,6 +50,10 @@ _Q_RE = re.compile(
 )
 _DYN_SUFFIX_RE = re.compile(r"\.dyn(\d+)$", re.IGNORECASE)
 
+# Refuse hostile or accidental inputs before allocating the matrix.
+_MAX_DYN_BYTES = 20 * 1024 * 1024
+_MAX_NAT = 1000
+
 
 @dataclass
 class QEDynMatrix:
@@ -112,6 +116,15 @@ def parse_qe_dyn(path: Path | str) -> QEDynMatrix:
     """
     src = Path(path)
     try:
+        size = src.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"unreadable dyn file {src}: {exc}") from exc
+    if size > _MAX_DYN_BYTES:
+        raise ValueError(
+            f"{src} is {size} bytes; refusing .dyn files larger than "
+            f"{_MAX_DYN_BYTES} bytes"
+        )
+    try:
         text = src.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         raise ValueError(f"unreadable dyn file {src}: {exc}") from exc
@@ -122,6 +135,8 @@ def parse_qe_dyn(path: Path | str) -> QEDynMatrix:
     idx = _header_index(lines)
     header = lines[idx].split()
     ntyp, nat, ibrav = int(header[0]), int(header[1]), int(header[2])
+    if nat > _MAX_NAT:
+        raise ValueError(f"{src}: nat={nat} exceeds {_MAX_NAT}")
     idx += 1
     idx = _skip_blank(lines, idx)
     if ibrav == 0:
@@ -168,6 +183,8 @@ def parse_qe_dyn(path: Path | str) -> QEDynMatrix:
         masses = np.array([species_by_id[t][1] for t in atom_types], dtype=float)
     except KeyError as exc:
         raise ValueError(f"{src}: atom type {exc} is not in the species list") from exc
+    if masses.size != nat or not np.all(np.isfinite(masses)):
+        raise ValueError(f"{src}: masses must be finite")
 
     while idx < len(lines) and not _is_matrix_section(lines[idx]):
         idx += 1
@@ -219,6 +236,9 @@ def parse_qe_dyn(path: Path | str) -> QEDynMatrix:
                 )
             idx += 1
 
+    if not np.all(np.isfinite(force)):
+        raise ValueError(f"{src}: dynamical matrix has non-finite entries")
+
     species = [(species_by_id[i][0], species_by_id[i][1]) for i in sorted(species_by_id)]
     return QEDynMatrix(
         nat=nat,
@@ -247,7 +267,14 @@ def crystal_asr_matrix(force_constants: np.ndarray) -> np.ndarray:
     """Project uniform translations out of *force_constants*: ``C' = P C P``.
 
     ``P = I − Σ_x u_x u_xᵀ`` with ``u_x`` the normalized rigid translation
-    along Cartesian x. *force_constants* is Hermitian-symmetrized first.
+    along Cartesian x (the same displacement on every atom). *force_constants*
+    is Hermitian-symmetrized first.
+
+    The three mass-weighted translations ``v_x ∝ √m · u_x`` then lie exactly
+    in the kernel of ``D_ij = C'_ij / √(m_i m_j)``, so those eigenvalues are
+    exact zeros. Calling the three frequencies closest to zero "acoustic" is
+    the same identification only when no optical eigenvalue sits near zero.
+    Use :func:`acoustic_indices_by_overlap` when the modes themselves matter.
     """
     matrix = hermitian_symmetrize(force_constants)
     n3 = matrix.shape[0]
@@ -272,8 +299,8 @@ def _mass_per_dof(masses_ry: np.ndarray, n3: int) -> np.ndarray:
         raise ValueError(
             f"expected {n3 // 3} atomic masses or {n3} cartesian masses, got {masses.size}"
         )
-    if np.any(per_dof <= 0):
-        raise ValueError("masses must be positive")
+    if not np.all(np.isfinite(per_dof)) or np.any(per_dof <= 0):
+        raise ValueError("masses must be finite and positive")
     return per_dof
 
 
@@ -284,6 +311,8 @@ def frequencies_cm1(force_constants: np.ndarray, masses_ry: np.ndarray) -> list[
     the sign-magnitude square root so imaginary modes stay negative.
     """
     matrix = hermitian_symmetrize(force_constants)
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("force-constant matrix has non-finite entries")
     per_dof = _mass_per_dof(masses_ry, matrix.shape[0])
     scale = np.sqrt(per_dof[:, None] * per_dof[None, :])
     dynamical = matrix / scale
@@ -292,6 +321,55 @@ def frequencies_cm1(force_constants: np.ndarray, masses_ry: np.ndarray) -> list[
     freqs = np.sign(eigenvalues) * np.sqrt(np.abs(eigenvalues)) * RY_TO_CMM1
     freqs.sort()
     return [float(value) for value in freqs]
+
+
+def mass_weighted_translations(masses_ry: np.ndarray, n3: int) -> np.ndarray:
+    """Orthonormal rows spanning ``√m · u_x`` for the three Cartesian translations.
+
+    ``u_x`` is the normalized uniform displacement (the vector ``P`` removes).
+    ``v_x ∝ √m · u_x`` is what crystal ASR places in ``ker(D)``.
+    """
+    per_dof = _mass_per_dof(masses_ry, n3)
+    nat = n3 // 3
+    basis = np.zeros((3, n3), dtype=float)
+    for direction in range(3):
+        for atom in range(nat):
+            basis[direction, 3 * atom + direction] = np.sqrt(per_dof[3 * atom + direction])
+        norm = float(np.linalg.norm(basis[direction]))
+        if norm == 0.0:
+            raise ValueError("mass-weighted translation has zero norm")
+        basis[direction] /= norm
+    return basis
+
+
+def acoustic_indices_by_overlap(
+    dynamical: np.ndarray,
+    masses_ry: np.ndarray,
+) -> list[int]:
+    """Indices of the three eigenvectors closest to the ``√m · u`` subspace.
+
+    Crystal ASR (``C' = P C P``) puts the normalised mass-weighted
+    translations exactly in ``ker(D)``, so those three modes are exact zeros.
+    The three frequencies nearest zero are those modes when every optical
+    eigenvalue is bounded away from zero. A real optical mode near zero can
+    outrank a slightly nonzero acoustic leftover; the subspace overlap does
+    not. Returns the three column indices of ``eigh`` with the largest
+    total projection onto that subspace, sorted by index.
+    """
+    matrix = np.asarray(dynamical)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("dynamical matrix must be square")
+    if matrix.shape[0] % 3 != 0 or matrix.shape[0] < 3:
+        raise ValueError("dynamical matrix dimension must be 3 N_at")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("dynamical matrix has non-finite entries")
+    hermitian = 0.5 * (matrix + matrix.conj().T)
+    _eigenvalues, evecs = np.linalg.eigh(hermitian)
+    basis = mass_weighted_translations(masses_ry, hermitian.shape[0])
+    # basis is (3, n); evecs columns are modes. Sum of |<v_x|mode>|^2.
+    overlaps = np.sum(np.abs(basis @ evecs) ** 2, axis=0)
+    order = np.argsort(-np.real(overlaps), kind="stable")
+    return sorted(int(index) for index in order[:3])
 
 
 def gamma_asr_frequencies(
@@ -319,26 +397,64 @@ def gamma_asr_from_dyn(path: Path | str) -> tuple[list[float], list[float]]:
     return gamma_asr_frequencies(parsed.force_constants, parsed.masses_ry)
 
 
+def _resolve_strict(path: Path) -> Path:
+    try:
+        return path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"unreadable path {path}: {exc}") from exc
+
+
+def _require_inside(root_resolved: Path, candidate: Path) -> Path:
+    """Resolved *candidate* must stay inside *root_resolved*."""
+    resolved = _resolve_strict(candidate)
+    try:
+        resolved.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"{candidate} resolves to {resolved}, outside {root_resolved}"
+        ) from exc
+    return resolved
+
+
+def _resolved_dir_inside(root_resolved: Path, directory: Path) -> Path | None:
+    """Resolved directory if *directory* exists and stays inside *root_resolved*."""
+    if not directory.exists():
+        return None
+    resolved = _resolve_strict(directory)
+    if not resolved.is_dir():
+        return None
+    _require_inside(root_resolved, directory)
+    return resolved
+
+
 def discover_dyn_files(path: Path | str) -> list[Path]:
     """Return ``*.dyn1`` … ``*.dynN`` under a ph directory or qe work dir.
 
     ``*.dyn0`` is the q-mesh list, not a matrix, and is skipped. Looks in
     *path* itself, ``02_scf/``, ``ph/``, ``phonon/``, and one level of
     ``<child>/02_scf`` (the calculator layout).
+
+    Symlinks are resolved with ``Path.resolve(strict=True)``. Every resolved
+    ``.dyn`` path, and every directory actually searched, must stay inside
+    the resolved *path*. A link that escapes raises ``ValueError``.
     """
     root = Path(path)
-    if root.is_file():
+    try:
+        root_resolved = root.resolve(strict=True)
+    except OSError:
+        return []
+    if root_resolved.is_file():
         match = _DYN_SUFFIX_RE.search(root.name)
         if match is not None and int(match.group(1)) != 0:
             return [root]
         return []
-    if not root.is_dir():
+    if not root_resolved.is_dir():
         return []
 
-    search_dirs = [root]
+    search_dirs: list[Path] = [root]
     for name in ("02_scf", "ph", "phonon"):
         sub = root / name
-        if sub.is_dir():
+        if _resolved_dir_inside(root_resolved, sub) is not None:
             search_dirs.append(sub)
     try:
         children = list(root.iterdir())
@@ -348,7 +464,7 @@ def discover_dyn_files(path: Path | str) -> list[Path]:
         if not child.is_dir():
             continue
         nested = child / "02_scf"
-        if nested.is_dir():
+        if _resolved_dir_inside(root_resolved, nested) is not None:
             search_dirs.append(nested)
 
     found: list[Path] = []
@@ -370,7 +486,9 @@ def discover_dyn_files(path: Path | str) -> list[Path]:
             match = _DYN_SUFFIX_RE.search(entry.name)
             if match is None or int(match.group(1)) == 0:
                 continue
-            resolved = entry.resolve()
+            resolved = _require_inside(root_resolved, entry)
+            if not resolved.is_file():
+                continue
             if resolved in seen:
                 continue
             seen.add(resolved)
@@ -380,9 +498,22 @@ def discover_dyn_files(path: Path | str) -> list[Path]:
 
 
 def find_gamma_dyn(path: Path | str) -> Path | None:
-    """First Gamma ``.dyn`` file at *path* (file or directory), if any."""
+    """First Gamma ``.dyn`` file at *path* (file or directory), if any.
+
+    A directory is scanned with :func:`discover_dyn_files`, so a symlink
+    that resolves outside *path* raises ``ValueError`` instead of being read.
+    """
     root = Path(path)
-    candidates = [root] if root.is_file() else discover_dyn_files(root)
+    if root.is_file():
+        try:
+            root.resolve(strict=True)
+        except OSError:
+            return None
+        candidates = [root]
+    elif root.is_dir():
+        candidates = discover_dyn_files(root)
+    else:
+        return None
     for candidate in candidates:
         try:
             parsed = parse_qe_dyn(candidate)

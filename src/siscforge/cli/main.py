@@ -7,7 +7,7 @@ Subcommands:
   - ``shortlist`` — build a focused EPW campaign from an AL / phonon store
   - ``pilot``     — denser-q phonon-only recovery campaign from a map store
   - ``soft-modes``— campaign-level soft-mode report from a phonon store
-  - ``gamma-asr`` — crystal-ASR Gamma classification of a QE ``*.dyn`` directory
+  - ``gamma-asr`` — raw Gamma classification plus a crystal-ASR diagnostic table
   - ``refine``    — promote store winners to denser-grid / production-tier EPW
   - ``al-status`` / ``al-seed`` / ``al-promote`` / ``al-train`` / ``al-audit`` / ``al-rollback`` — Phase 1.5 flywheel
 
@@ -797,7 +797,10 @@ def soft_modes_cmd(
 def gamma_asr_cmd(
     ph_dir: Path = typer.Argument(
         ...,
-        help="QE ph / qe_work directory containing *.dyn1..dynN (or one Gamma .dyn file).",
+        metavar="PH_DIR",
+        help=(
+            "directory containing QE *.dyn1..dynN files, or a single *.dynN file"
+        ),
         exists=True,
         file_okay=True,
         dir_okay=True,
@@ -810,11 +813,12 @@ def gamma_asr_cmd(
         help="Formula label stored on the classification row.",
     ),
 ) -> None:
-    """Classify a QE phonon directory with crystal ASR at Gamma.
+    """Classify a QE phonon directory from the raw Gamma dynamical matrix.
 
-    Raw ``ph.x`` Gamma frequencies are replaced by the crystal acoustic-sum-rule
-    projection before soft-mode labelling. Finite-q thresholds are unchanged.
-    Prints raw vs ASR-corrected Gamma frequencies. Does not write a campaign store.
+    The class, dynamical-stability flags, and EPW gate use the raw ``ph.x``
+    frequencies. Crystal ASR is printed beside them as a diagnostic and does
+    not change that class. Finite-q thresholds are unchanged. Does not write
+    a campaign store.
     """
     from siscforge.calculators.qe.epw_recipes import epw_blocked_on_soft_phonon
     from siscforge.models.config import DFTConfig

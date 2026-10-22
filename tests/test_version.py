@@ -31,4 +31,5 @@ def test_init_fallback_matches_pyproject() -> None:
 def test_cli_version_flag() -> None:
     result = CliRunner().invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "0.4.4" in result.stdout
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
+    assert "0.4.4" in plain
