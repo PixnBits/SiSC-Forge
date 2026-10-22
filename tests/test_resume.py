@@ -30,6 +30,11 @@ from siscforge.structure.nitrides import build_binary_nitride
 runner = CliRunner()
 
 
+def _plain(text: str) -> str:
+    """Drop ANSI/CSI color so assertions survive NO_COLOR and FORCE_COLOR."""
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+
+
 def _nbn(strain: float = 0.0) -> StructureCandidate:
     return structure_to_candidate(
         build_binary_nitride("Nb"),
@@ -166,10 +171,11 @@ def test_cli_resume_skips_finished(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["run", "--dry-run", str(yaml_path)])
     assert result.exit_code == 0, result.stdout + result.stderr
-    assert "skip (already" in result.stdout
-    assert "Checkpoint summary" in result.stdout
-    assert "skipped=2" in result.stdout
-    assert "ran=1" in result.stdout
+    text = _plain(result.stdout)
+    assert "skip (already" in text
+    assert "Checkpoint summary" in text
+    assert "skipped=2" in text
+    assert "ran=1" in text
 
     evals = EvaluationStore(out).load_evaluations()
     # 3 expensive + no deferred
@@ -227,7 +233,7 @@ def test_resume_refreshes_si_score_from_campaign_weights(tmp_path: Path) -> None
 
     result = runner.invoke(app, ["run", "--dry-run", str(yaml_path)])
     assert result.exit_code == 0, result.stdout + result.stderr
-    assert "skip (already" in result.stdout
+    assert "skip (already" in _plain(result.stdout)
 
     evals = EvaluationStore(out).load_evaluations()
     assert len(evals) >= 1
@@ -262,8 +268,9 @@ def test_cli_force_rerun_recomputes(tmp_path: Path) -> None:
         app, ["run", "--dry-run", "--force-rerun", str(yaml_path)]
     )
     assert r2.exit_code == 0, r2.stdout
-    assert "skipped=0" in r2.stdout or "skip (already" not in r2.stdout
-    assert "ran=2" in r2.stdout
+    text = _plain(r2.stdout)
+    assert "skipped=0" in text or "skip (already" not in text
+    assert "ran=2" in text
 
 
 class _FlakyCalc(BaseCalculator):

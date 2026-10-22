@@ -7,6 +7,7 @@ Subcommands:
   - ``shortlist`` — build a focused EPW campaign from an AL / phonon store
   - ``pilot``     — denser-q phonon-only recovery campaign from a map store
   - ``soft-modes``— campaign-level soft-mode report from a phonon store
+  - ``gamma-asr`` — raw Gamma classification plus a crystal-ASR diagnostic table
   - ``refine``    — promote store winners to denser-grid / production-tier EPW
   - ``al-status`` / ``al-seed`` / ``al-promote`` / ``al-train`` / ``al-audit`` / ``al-rollback`` — Phase 1.5 flywheel
 
@@ -790,6 +791,77 @@ def soft_modes_cmd(
             f"  siscforge pilot {store_dir} -o {store_dir}_pilot_q3.yaml "
             f"--mode binaries --qpoints 3,3,3"
         )
+
+
+@app.command("gamma-asr")
+def gamma_asr_cmd(
+    ph_dir: Path = typer.Argument(
+        ...,
+        metavar="PH_DIR",
+        help=(
+            "directory containing QE *.dyn1..dynN files, or a single *.dynN file"
+        ),
+        exists=True,
+        file_okay=True,
+        dir_okay=True,
+        readable=True,
+    ),
+    formula: str = typer.Option(
+        "unknown",
+        "--formula",
+        "-f",
+        help="Formula label stored on the classification row.",
+    ),
+) -> None:
+    """Classify a QE phonon directory from the raw Gamma dynamical matrix.
+
+    The class, dynamical-stability flags, and EPW gate use the raw ``ph.x``
+    frequencies. Crystal ASR is printed beside them as a diagnostic and does
+    not change that class. Finite-q thresholds are unchanged. Does not write
+    a campaign store.
+    """
+    from siscforge.calculators.qe.epw_recipes import epw_blocked_on_soft_phonon
+    from siscforge.models.config import DFTConfig
+    from siscforge.shortlist import is_dynamically_stable
+    from siscforge.soft_modes import classify_soft_mode, evaluation_from_ph_directory
+
+    try:
+        evaluation = evaluation_from_ph_directory(ph_dir, formula=formula)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    row = classify_soft_mode(evaluation)
+    phonon = evaluation.phonon
+    blocked = epw_blocked_on_soft_phonon(phonon, DFTConfig(do_epw=True))
+    eligible = is_dynamically_stable(evaluation)
+    console.print(
+        f"[bold]{row.get('formula') or formula}[/bold]  "
+        f"class=[green]{row.get('soft_mode_class')}[/green]  "
+        f"asr={row.get('asr_applied') or 'none'}  "
+        f"acoustic/optical={row.get('acoustic_vs_optical')}"
+    )
+    console.print(
+        f"DFPT dynamically_stable="
+        f"{getattr(phonon, 'dynamically_stable', None)}  "
+        f"has_imaginary_modes={getattr(phonon, 'has_imaginary_modes', None)}  "
+        f"EPW blocked={blocked}  "
+        f"EPW-eligible survivor={eligible}"
+    )
+    raw_f = list(row.get("gamma_raw_frequencies_cm1") or [])
+    asr_f = list(row.get("gamma_asr_frequencies_cm1") or [])
+    if raw_f or asr_f:
+        table = Table(title="Gamma frequencies (cm⁻¹)")
+        table.add_column("mode", justify="right")
+        table.add_column("raw", justify="right")
+        table.add_column("crystal ASR", justify="right")
+        width = max(len(raw_f), len(asr_f))
+        for index in range(width):
+            raw_cell = f"{raw_f[index]:.2f}" if index < len(raw_f) else "—"
+            asr_cell = f"{asr_f[index]:.2f}" if index < len(asr_f) else "—"
+            table.add_row(str(index + 1), raw_cell, asr_cell)
+        console.print(table)
+    else:
+        console.print("[yellow]No Gamma dynamical matrix was classified.[/yellow]")
 
 
 # ---------------------------------------------------------------------------

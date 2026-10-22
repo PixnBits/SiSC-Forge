@@ -10,6 +10,14 @@ This module is **heuristic and non-blocking**:
 
 * Missing frequency lists → conservative class (never auto-promote to
   “stable” or to EPW).
+* Crystal ASR at Gamma is a **diagnostic**. It never changes
+  ``soft_mode_class``, ``dynamically_stable``, ``has_imaginary_modes``,
+  or the EPW gate. Classification always uses the raw ``PhononResult``
+  already on the record, so it cannot depend on where a store is read
+  from. Corrected Gamma frequencies are extra report fields when that
+  record already carries them (or an in-memory Gamma matrix). This module
+  does not search work directories, metadata, provenance, or notes.
+  Stored phonon records are not rewritten.
 * Labels such as ``likely_mesh_artefact`` are *suspects*, not proof.
 * The report must never be treated as a go-ahead to launch EPW on
   imaginary-mode cells.
@@ -26,7 +34,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from siscforge.models.candidate import CandidateEvaluation
+from siscforge.calculators.qe.asr import (
+    discover_dyn_files,
+    frequencies_cm1,
+    gamma_asr_frequencies,
+    parse_qe_dyn,
+)
+from siscforge.models.candidate import CandidateEvaluation, StructureCandidate
 from siscforge.models.results import PhononResult
 from siscforge.store import EvaluationStore
 
@@ -106,6 +120,11 @@ class SoftModeRow(TypedDict):
     gamma_min_frequency_cm1: float | None
     finite_q_min_frequency_cm1: float | None
     n_q_imaginary: int | None
+    gamma_raw_frequencies_cm1: list[float] | None
+    gamma_asr_frequencies_cm1: list[float] | None
+    # Diagnostic only: "crystal" when ASR frequencies are attached.
+    # Never an input to soft_mode_class, stability, or the EPW gate.
+    asr_applied: str | None
 
 
 def reduced_formula(formula: str) -> str:
@@ -236,6 +255,17 @@ def _acoustic_vs_optical(
 
     A flat mesh dump (n_modes ≫ 3 N_at) is **undetermined** — first-three
     slicing would be wrong. Missing data is also undetermined.
+
+    Classification uses the raw list as stored: the first three entries are
+    the acoustic branches (QE / :func:`frequencies_cm1` sort ascending, so
+    those are the lowest three). Crystal ASR is not applied here. On an
+    ASR-corrected dynamical matrix the acoustic modes are the three
+    eigenvectors with the largest overlap onto the normalised ``√m · u``
+    translation subspace (:func:`siscforge.calculators.qe.asr.acoustic_indices_by_overlap`),
+    because ``P C P`` puts those vectors exactly in ``ker(D)``. That label
+    is diagnostic. The three frequencies closest to zero are the same modes
+    only when no optical eigenvalue is also near zero, and they must not
+    change ``soft_mode_class``.
     """
     if not freqs:
         return "undetermined", None
@@ -249,6 +279,7 @@ def _acoustic_vs_optical(
         return "undetermined", None
 
     thr = -abs(float(imag_threshold_cm1))
+    # Raw record only. Do not re-pick branches from an ASR spectrum.
     acoustic = freqs[:3]
     optical = freqs[3:]
     imag_ac = any(f < thr for f in acoustic)
@@ -434,12 +465,72 @@ def _blank_locus() -> dict[str, Any]:
     }
 
 
+def _asr_row_fields(
+    raw: list[float] | None = None,
+    corrected: list[float] | None = None,
+    applied: str | None = None,
+) -> dict[str, Any]:
+    """Optional report fields. ``applied`` is ``"crystal"`` or ``None``."""
+    return {
+        "gamma_raw_frequencies_cm1": raw,
+        "gamma_asr_frequencies_cm1": corrected,
+        "asr_applied": applied,
+    }
+
+
+def _stored_frequency_list(value: Any) -> list[float] | None:
+    """Finite cm⁻¹ list already stored on a phonon record, or None."""
+    if not isinstance(value, list) or not value:
+        return None
+    out: list[float] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            return None
+        number = float(item)
+        if number != number or number in {float("inf"), float("-inf")}:
+            return None
+        out.append(number)
+    return out
+
+
+def _diagnostic_asr_fields(ph: PhononResult) -> dict[str, Any]:
+    """Crystal-ASR Gamma frequencies for the report. Never used for class.
+
+    Reads lists or a Gamma force-constant matrix already stored on *ph*.
+    Does not open ``gamma_dyn_path`` and does not search work directories,
+    metadata, provenance, or notes. A missing or unusable matrix leaves the
+    diagnostic fields empty; it does not change the raw classification.
+    """
+    raw = ph.raw or {}
+    stored_raw = _stored_frequency_list(raw.get("gamma_raw_frequencies_cm1"))
+    stored_asr = _stored_frequency_list(raw.get("gamma_asr_frequencies_cm1"))
+    if stored_raw is not None and stored_asr is not None:
+        return _asr_row_fields(stored_raw, stored_asr, "crystal")
+    matrix = raw.get("gamma_force_constants")
+    masses = raw.get("gamma_masses_ry")
+    if matrix is None or masses is None:
+        return _asr_row_fields()
+    try:
+        raw_f, asr_f = gamma_asr_frequencies(matrix, masses)
+    except (TypeError, ValueError):
+        return _asr_row_fields()
+    if len(raw_f) < 3 or len(raw_f) % 3 != 0:
+        return _asr_row_fields()
+    return _asr_row_fields(raw_f, asr_f, "crystal")
+
+
 def classify_soft_mode(
     ev: CandidateEvaluation,
     *,
     imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
 ) -> SoftModeRow:
-    """Classify one evaluation. Conservative when frequencies are missing."""
+    """Classify one evaluation from the raw phonon record.
+
+    Conservative when frequencies are missing. Crystal ASR, when the record
+    already carries a Gamma matrix or precomputed lists, is copied onto the
+    row as ``gamma_raw_frequencies_cm1`` / ``gamma_asr_frequencies_cm1`` /
+    ``asr_applied`` and is not an input to ``soft_mode_class``.
+    """
     c = ev.candidate
     formula = c.formula
     ph = ev.phonon
@@ -465,6 +556,7 @@ def classify_soft_mode(
             is_binary_nitride=binary,
             is_known_stable_binary=known,
             **_blank_locus(),
+            **_asr_row_fields(),
         )
 
     status = (ph.status or "unknown").lower()
@@ -472,6 +564,8 @@ def classify_soft_mode(
     nat = n_atoms(ev)
     n_modes = ph.n_modes if ph.n_modes is not None else (len(freqs) or None)
     qpoints = _spectra_for_locus(ph, freqs, n_atoms=nat)
+    # Diagnostic only. freqs / qpoints / flags below stay the raw record.
+    asr_fields = _diagnostic_asr_fields(ph)
     if qpoints:
         ac_op, asr = _classify_acoustic_over_q(
             qpoints,
@@ -520,29 +614,34 @@ def classify_soft_mode(
             is_binary_nitride=binary,
             is_known_stable_binary=known,
             **locus_fields,
+            **asr_fields,
         )
 
-    if ph.dynamically_stable and not ph.has_imaginary_modes:
-        min_f = ph.min_frequency_cm1
-        if min_f is None or float(min_f) >= -abs(imag_threshold_cm1):
-            return SoftModeRow(
-                candidate_id=c.candidate_id,
-                formula=formula,
-                strain=c.in_plane_strain,
-                min_frequency_cm1=ph.min_frequency_cm1,
-                has_imaginary_modes=ph.has_imaginary_modes,
-                dynamically_stable=ph.dynamically_stable,
-                n_modes=n_modes,
-                phonon_status=ph.status,
-                eval_status=ev.status or "unknown",
-                soft_mode_class="stable",
-                reasons=["no_imaginary_modes"],
-                acoustic_vs_optical=ac_op,
-                asr_signal=asr,
-                is_binary_nitride=binary,
-                is_known_stable_binary=known,
-                **locus_fields,
-            )
+    raw_clean = bool(ph.dynamically_stable) and not ph.has_imaginary_modes and (
+        ph.min_frequency_cm1 is None
+        or float(ph.min_frequency_cm1) >= -abs(imag_threshold_cm1)
+    )
+    # Raw phonon flags only. ASR must not promote a cell to stable.
+    if raw_clean:
+        return SoftModeRow(
+            candidate_id=c.candidate_id,
+            formula=formula,
+            strain=c.in_plane_strain,
+            min_frequency_cm1=ph.min_frequency_cm1,
+            has_imaginary_modes=ph.has_imaginary_modes,
+            dynamically_stable=ph.dynamically_stable,
+            n_modes=n_modes,
+            phonon_status=ph.status,
+            eval_status=ev.status or "unknown",
+            soft_mode_class="stable",
+            reasons=["no_imaginary_modes"],
+            acoustic_vs_optical=ac_op,
+            asr_signal=asr,
+            is_binary_nitride=binary,
+            is_known_stable_binary=known,
+            **locus_fields,
+            **asr_fields,
+        )
 
     # Imaginary / not dynamically stable from here.
     if ac_op == "optical_imaginary":
@@ -588,6 +687,7 @@ def classify_soft_mode(
         is_binary_nitride=binary,
         is_known_stable_binary=known,
         **locus_fields,
+        **asr_fields,
     )
 
 
@@ -786,6 +886,30 @@ def render_soft_mode_markdown(report: dict[str, Any]) -> str:
                 f"`{row.get('soft_mode_class')}` | "
                 f"{row.get('acoustic_vs_optical') or 'undetermined'} |"
             )
+    asr_rows = [row for row in rows if row.get("asr_applied")]
+    if asr_rows:
+        lines.extend(["", "## Gamma frequencies: raw vs crystal ASR", ""])
+
+        def _fmt2(val: float) -> str:
+            return f"{float(val):.2f}"
+
+        for row in asr_rows:
+            raw_f = list(row.get("gamma_raw_frequencies_cm1") or [])
+            asr_f = list(row.get("gamma_asr_frequencies_cm1") or [])
+            label = row.get("formula") or "—"
+            lines.append(
+                f"### {label} (`{row.get('asr_applied')}`, "
+                f"class `{row.get('soft_mode_class')}`)"
+            )
+            lines.append("")
+            lines.append("| mode | raw (cm⁻¹) | ASR (cm⁻¹) |")
+            lines.append("|---:|---:|---:|")
+            width = max(len(raw_f), len(asr_f))
+            for index in range(width):
+                raw_cell = _fmt2(raw_f[index]) if index < len(raw_f) else "—"
+                asr_cell = _fmt2(asr_f[index]) if index < len(asr_f) else "—"
+                lines.append(f"| {index + 1} | {raw_cell} | {asr_cell} |")
+            lines.append("")
     lines.append("")
     return "\n".join(lines)
 
@@ -984,3 +1108,181 @@ def empty_stable_only_message(
         f"Optional: try --mode stable_or_soft "
         f"(soft_min_cm1={soft_min_cm1:g}) only for numeric noise."
     )
+
+
+def evaluation_from_ph_directory(
+    ph_dir: str | Path,
+    *,
+    formula: str = "unknown",
+) -> CandidateEvaluation:
+    """Build an evaluation from a QE directory of ``*.dyn1`` … ``*.dynN``.
+
+    Phonon frequencies on the result are the **raw** dynamical-matrix
+    eigenvalues (what ``ph.x`` prints). Crystal ASR of the Gamma file is
+    stored beside them as ``gamma_raw_frequencies_cm1`` /
+    ``gamma_asr_frequencies_cm1`` for the report. :func:`classify_soft_mode`
+    does not use those lists to label the cell, and it does not search
+    this directory again. Finite-q blocks are not sum-rule corrected.
+    """
+    root = Path(ph_dir)
+    files = discover_dyn_files(root)
+    if not files:
+        raise FileNotFoundError(f"no QE *.dyn1..dynN files in {root}")
+    qpoints: list[dict[str, Any]] = []
+    flat: list[float] = []
+    gamma_path: Path | None = None
+    nat: int | None = None
+    for dyn in files:
+        parsed = parse_qe_dyn(dyn)
+        spectrum = frequencies_cm1(parsed.force_constants, parsed.masses_ry)
+        if nat is None:
+            nat = parsed.nat
+        if parsed.is_gamma and gamma_path is None:
+            gamma_path = dyn
+        qpoints.append(
+            {
+                "q": [float(component) for component in parsed.q],
+                "is_gamma": bool(parsed.is_gamma),
+                "frequencies_cm1": spectrum,
+                "min_frequency_cm1": min(spectrum) if spectrum else None,
+            }
+        )
+        flat.extend(spectrum)
+    if gamma_path is None:
+        raise ValueError(f"no Gamma dynamical matrix under {root}")
+    gamma_parsed = parse_qe_dyn(gamma_path)
+    gamma_raw_f, gamma_asr_f = gamma_asr_frequencies(
+        gamma_parsed.force_constants, gamma_parsed.masses_ry
+    )
+    from siscforge.calculators.qe.parser import summarize_frequencies
+
+    summary = summarize_frequencies(flat)
+    work = root if root.is_dir() else root.parent
+    phonon = PhononResult(
+        min_frequency_cm1=summary["min_frequency_cm1"],
+        max_frequency_cm1=summary["max_frequency_cm1"],
+        n_modes=summary["n_modes"] or None,
+        has_imaginary_modes=summary["has_imaginary_modes"],
+        dynamically_stable=summary["dynamically_stable"],
+        status="ok",
+        quality_tag="screening",
+        raw={
+            "frequencies_cm1": flat,
+            "qpoints": qpoints,
+            "n_qpoints": len(qpoints),
+            "gamma_dyn_path": str(gamma_path),
+            "ph_dir": str(work),
+            # Parser convention: the stored spectrum is still the raw ph.x list.
+            "asr_applied": False,
+            # Diagnostic copies. classify_soft_mode does not re-read the dyn.
+            "gamma_raw_frequencies_cm1": list(gamma_raw_f),
+            "gamma_asr_frequencies_cm1": list(gamma_asr_f),
+        },
+    )
+    candidate = StructureCandidate(
+        formula=(formula or "unknown").strip() or "unknown",
+        material_family="other",
+        metadata={"n_atoms": nat, "ph_dir": str(work)},
+        source="qe_dyn",
+    )
+    return CandidateEvaluation(
+        candidate=candidate,
+        phonon=phonon,
+        status="ok",
+        calculator_name="qe",
+        notes=f"work_dir={work}",
+    )
+
+
+def classify_ph_directory(
+    ph_dir: str | Path,
+    *,
+    formula: str = "unknown",
+    imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
+) -> SoftModeRow:
+    """Classify ``*.dyn1..dynN`` in *ph_dir* from the raw dynamical matrices.
+
+    Crystal ASR at Gamma is attached as diagnostic frequencies only. It does
+    not change ``soft_mode_class``. Suitable for a ``qe_work`` phonon
+    directory (for example ``/tmp/v3si_dyn``).
+    """
+    evaluation = evaluation_from_ph_directory(ph_dir, formula=formula)
+    return classify_soft_mode(evaluation, imag_threshold_cm1=imag_threshold_cm1)
+
+
+def evaluation_from_gamma_matrix(
+    force_constants: Any,
+    masses_ry: Any,
+    *,
+    formula: str = "synthetic",
+) -> CandidateEvaluation:
+    """Evaluation whose raw Gamma frequencies :func:`classify_soft_mode` labels.
+
+    The phonon frequency list is the raw diagonalization. The force-constant
+    matrix stays on the record so the report can show crystal-ASR frequencies.
+    Those corrected frequencies do not change the class.
+    """
+    raw_freqs, _corrected = gamma_asr_frequencies(force_constants, masses_ry)
+    from siscforge.calculators.qe.parser import summarize_frequencies
+
+    summary = summarize_frequencies(raw_freqs)
+    nat = len(raw_freqs) // 3
+    import numpy as np
+
+    matrix = np.asarray(force_constants)
+    if np.iscomplexobj(matrix) and float(np.max(np.abs(matrix.imag))) > 1e-8:
+        stored_matrix = matrix.tolist()
+    else:
+        stored_matrix = np.real(matrix).tolist()
+    stored_masses = [float(value) for value in np.asarray(masses_ry, dtype=float).reshape(-1)]
+    phonon = PhononResult(
+        min_frequency_cm1=summary["min_frequency_cm1"],
+        max_frequency_cm1=summary["max_frequency_cm1"],
+        n_modes=summary["n_modes"] or None,
+        has_imaginary_modes=summary["has_imaginary_modes"],
+        dynamically_stable=summary["dynamically_stable"],
+        status="ok",
+        quality_tag="screening",
+        raw={
+            "frequencies_cm1": list(raw_freqs),
+            "gamma_force_constants": stored_matrix,
+            "gamma_masses_ry": stored_masses,
+            "qpoints": [
+                {
+                    "q": [0.0, 0.0, 0.0],
+                    "is_gamma": True,
+                    "frequencies_cm1": list(raw_freqs),
+                    "min_frequency_cm1": summary["min_frequency_cm1"],
+                }
+            ],
+        },
+    )
+    candidate = StructureCandidate(
+        formula=(formula or "synthetic").strip() or "synthetic",
+        material_family="other",
+        metadata={"n_atoms": nat},
+        source="gamma_matrix",
+    )
+    return CandidateEvaluation(
+        candidate=candidate,
+        phonon=phonon,
+        status="ok",
+        calculator_name="qe",
+    )
+
+
+def classify_gamma_force_constants(
+    force_constants: Any,
+    masses_ry: Any,
+    *,
+    formula: str = "synthetic",
+    imag_threshold_cm1: float = _IMAG_THRESHOLD_CM1,
+) -> SoftModeRow:
+    """Classify one Gamma force-constant matrix from its raw frequencies.
+
+    Crystal ASR is reported on the row and does not change the class.
+    """
+    evaluation = evaluation_from_gamma_matrix(
+        force_constants, masses_ry, formula=formula
+    )
+    return classify_soft_mode(evaluation, imag_threshold_cm1=imag_threshold_cm1)
