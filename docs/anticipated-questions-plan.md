@@ -13,7 +13,7 @@ This document records a proactive plan to help SiSC-Forge anticipate questions a
 Equip the project with living documentation, optional roadmap extensions, and process updates that preemptively address scientific credibility, computational practicality, silicon-integration realism (esp. laser processing for B:Si), device relevance, community adoption, and light/non-equilibrium opportunities—while remaining workstation-first, modular, and scientifically honest.
 
 ## 1. Living FAQ / Anticipated Concerns Document
-Create `docs/anticipated-questions.md` (or `docs/FAQ.md`), linked from README and PRD.
+Create `docs/anticipated-questions.md` (or `docs/FAQ.md`), linked from the README. Linking from the PRD and ROADMAP is step 5 of §5.
 
 Map concerns to existing features / non-goals / residuals:
 - Scientific credibility: Golden recovery (NbN, MgB₂ within 15–20 %), trust layer (pathological λ, mock penalties), coarse phonon maps as gates only (v0.4.4 denser-q pilot), no RTSC guarantee.
@@ -56,11 +56,6 @@ Add `docs/design/light-non-equilibrium.md` as exploratory (not committed Phase).
 6. Track residual accuracy/compute issues (soft-mode heuristics, walltime calibration, GPU QE) as already listed in open issues.
 
 This plan turns likely stakeholder questions into documented answers and lightweight optional extensions, especially around laser processes defining experimental Si superconductivity, without disturbing equilibrium EPW/DMFT or Josephson Tier-1 paths.
-
-**Ready for Grok Bot / agent takeover**
-- All context from the originating conversation (light-induced SC post, SiSC-Forge architecture, team synthesis) is captured above.
-- Preferred next actions: draft `docs/anticipated-questions.md` and `docs/design/light-non-equilibrium.md`, open PRs, update schema if approved.
-- Existing open issues on trust layer, soft-mode heuristics, walltime, DMFT residuals, Si-feasibility accuracy remain relevant and should be cross-referenced.
 
 References:
 - Repo: https://github.com/PixnBits/SiSC-Forge
