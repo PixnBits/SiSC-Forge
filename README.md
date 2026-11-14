@@ -33,6 +33,7 @@ In short: the search is for the missing manufacturing link that would let an alr
 | Technical Specifications | [`docs/specs/SiSC-Forge-Technical-Specifications.md`](docs/specs/SiSC-Forge-Technical-Specifications.md) |
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Setup | [`docs/SETUP.md`](docs/SETUP.md) |
+| Anticipated questions | [`docs/anticipated-questions.md`](docs/anticipated-questions.md) |
 
 ## Current status — **Phase 2 complete; Phase 3 software path complete; Phase 4 Tier-1 complete** (`v0.4.4`)
 
