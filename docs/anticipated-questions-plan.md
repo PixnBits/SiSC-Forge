@@ -16,7 +16,7 @@ Equip the project with living documentation, optional roadmap extensions, and pr
 Create `docs/anticipated-questions.md` (or `docs/FAQ.md`), linked from the README. Linking from the PRD and ROADMAP is step 5 of §5.
 
 Map concerns to existing features / non-goals / residuals:
-- Scientific credibility: Golden recovery (NbN, MgB₂ within 15–20 %), trust layer (pathological λ, mock penalties), coarse phonon maps as gates only (v0.4.4 denser-q pilot), no RTSC guarantee.
+- Scientific credibility: Golden recovery (NbN, MgB₂ within 15–20 %) (Correction: not achieved. MgB₂ golden is a coarse-mesh pipeline validation only, λ≈0.46 and Tc≈7.5 K vs ~39 K exp.; see [anticipated-questions.md](anticipated-questions.md).), trust layer (pathological λ, mock penalties), coarse phonon maps as gates only (v0.4.4 denser-q pilot), no RTSC guarantee.
 - Silicon feasibility & B:Si: Component breakdown, growth-correlation intent; laser hyperdoping as enabling process (melt depth, residual damage, active B fraction).
 - Compute & accessibility: Workstation path (resume, Docker, dry-run), HPC scaling without rewrite, walltime expectations.
 - AL maturity: Family-mean from small seeds, promotion gates, bootstrap messaging.
